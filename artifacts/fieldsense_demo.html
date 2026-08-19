@@ -1,0 +1,1927 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FieldSense AI — Offline Field Intelligence</title>
+  <style>
+    :root {
+      --bg-dark: #0f172a;
+      --panel-bg: #1e293b;
+      --accent-green: #10b981;
+      --accent-yellow: #f59e0b;
+      --accent-red: #ef4444;
+      --accent-blue: #3b82f6;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --border-color: #334155;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { background-color: var(--bg-dark); color: var(--text-main); padding: 20px; line-height: 1.5; }
+    header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--border-color); padding-bottom: 15px; margin-bottom: 20px; }
+    .logo { font-size: 1.5rem; font-weight: bold; letter-spacing: 1px; color: var(--accent-green); }
+    .status-badge { background: var(--panel-bg); border: 1px solid var(--border-color); padding: 6px 12px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .dot-green { background: var(--accent-green); }
+    .dot-blue { background: var(--accent-blue); }
+    
+    .grid-container { display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 20px; margin-bottom: 20px; }
+    @media (max-width: 1024px) { .grid-container { grid-template-columns: 1fr; } }
+
+    .card { background: var(--panel-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; }
+    .card-title { font-size: 1rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; font-weight: 600; }
+    
+    .metric-value { font-size: 2.5rem; font-weight: bold; margin-bottom: 4px; }
+    .status-tag { display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 0.85rem; font-weight: bold; text-transform: uppercase; }
+    .status-HEALTHY { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); border: 1px solid var(--accent-green); }
+    .status-MODERATE { background: rgba(245, 158, 11, 0.2); color: var(--accent-yellow); border: 1px solid var(--accent-yellow); }
+    .status-POOR { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); border: 1px solid var(--accent-red); }
+
+    .map-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+    select { background: var(--bg-dark); color: var(--text-main); border: 1px solid var(--border-color); padding: 8px 12px; border-radius: 6px; font-size: 0.9rem; cursor: pointer; }
+    
+    .map-svg-container { width: 100%; height: 350px; background: #090d16; border-radius: 8px; border: 1px solid var(--border-color); display: flex; justify-content: center; align-items: center; overflow: hidden; }
+
+    .list-item { border-bottom: 1px solid var(--border-color); padding: 12px 0; }
+    .list-item:last-child { border-bottom: none; }
+    .rec-priority { display: inline-block; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; font-weight: bold; margin-right: 6px; }
+    .prio-HIGH, .prio-CRITICAL { background: var(--accent-red); color: #fff; }
+    .prio-MEDIUM { background: var(--accent-yellow); color: #000; }
+    .prio-LOW { background: var(--accent-blue); color: #fff; }
+
+    .progress-bar { width: 100%; height: 8px; background: var(--border-color); border-radius: 4px; overflow: hidden; margin-top: 8px; }
+    .progress-fill { height: 100%; background: var(--accent-blue); width: 0%; transition: width 0.3s ease; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div>
+      <div class="logo">FIELDSENSE AI</div>
+      <div style="font-size: 0.85rem; color: var(--text-muted);">Offline Portable Edge-Intelligence Platform</div>
+    </div>
+    <div style="display: flex; gap: 10px;">
+      <span class="status-badge"><span class="dot dot-green"></span> OFFLINE MODE</span>
+      <span class="status-badge"><span class="dot dot-blue"></span> Data Source: <strong id="dataSource">VIRTUAL</strong></span>
+    </div>
+  </header>
+
+  <div class="grid-container">
+    <!-- Left Column: Summary & Status -->
+    <div style="display: flex; flex-direction: column; gap: 20px;">
+      <div class="card">
+        <div class="card-title">GPS & Sampling Status</div>
+        <div>GPS Fix: <strong id="gpsStatus">FIXED</strong></div>
+        <div style="margin-top: 10px;">
+          Sampling Progress: <strong id="sampleProgress">24 / 25</strong>
+          <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Overall Field Health</div>
+        <div id="healthScore" class="metric-value">72%</div>
+        <span id="healthStatusTag" class="status-tag status-MODERATE">MODERATE</span>
+        <div style="margin-top: 15px; font-size: 0.85rem; color: var(--text-muted);">
+          Evidence Level: <strong id="evidenceLevel">LIMITED</strong>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Diagnostics & Audit</div>
+        <div style="font-size: 0.9rem;">
+          <div>Total Samples: <strong id="diagTotal">25</strong></div>
+          <div>Valid Samples: <strong id="diagValid">24</strong></div>
+          <div>Rejected Samples: <strong id="diagRejected" style="color: var(--accent-red);">1</strong></div>
+          <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 6px;">Reason: UNSTABLE_MEASUREMENT</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Middle Column: Map View -->
+    <div class="card" style="display: flex; flex-direction: column;">
+      <div class="map-header">
+        <div class="card-title" style="margin-bottom: 0;">Field Intelligence Map</div>
+        <select id="layerSelect">
+          <option value="soil_health">Soil Health</option>
+          <option value="nitrogen">Nitrogen Index</option>
+          <option value="moisture">Moisture Index</option>
+          <option value="carbon_readiness">Carbon Readiness</option>
+        </select>
+      </div>
+
+      <div class="map-svg-container" id="mapSvgContainer">
+        <svg id="fieldMapSvg" width="100%" height="100%" viewBox="0 0 400 300"></svg>
+      </div>
+
+      <div id="pointDetails" style="margin-top: 12px; font-size: 0.85rem; color: var(--text-muted);">
+        Click any grid cell on the map to inspect spatial intelligence details.
+      </div>
+    </div>
+
+    <!-- Right Column: Zones & Recommendations -->
+    <div style="display: flex; flex-direction: column; gap: 20px;">
+      <div class="card">
+        <div class="card-title">Management Zones</div>
+        <div id="zonesList"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">What Needs Attention</div>
+        <div id="recsList"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const FIELD_DATA = {
+  "field": {
+    "field_name": "Golden Unstable Field",
+    "session_id": "SES-GOLDEN-UNSTABLE_FIELD",
+    "sample_count": 25,
+    "valid_sample_count": 24,
+    "rejected_sample_count": 1,
+    "coverage_ratio": 1.0,
+    "overall_soil_health": 0.97,
+    "soil_health_status": "HEALTHY",
+    "methodology_version": "0.1"
+  },
+  "gps_status": {
+    "available": true,
+    "latitude": 12.971606,
+    "longitude": 77.594581,
+    "status": "FIXED",
+    "mode": "VIRTUAL"
+  },
+  "sampling_status": {
+    "total_samples": 25,
+    "valid_samples": 24,
+    "rejected_samples": 1,
+    "expected_samples": 25,
+    "progress_ratio": 0.96
+  },
+  "health_summary": {
+    "score": 0.97,
+    "status": "HEALTHY",
+    "nitrogen_score": 0.99,
+    "moisture_score": 0.9,
+    "carbon_readiness_score": 0.96,
+    "evidence_level": "LIMITED"
+  },
+  "map": {
+    "bounds": {
+      "min_latitude": 12.971583,
+      "max_latitude": 12.972219,
+      "min_longitude": 77.594581,
+      "max_longitude": 77.595208
+    },
+    "grid_by_layer": {
+      "soil_health": [
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594581,
+          "value": 0.999,
+          "support_distance": 2.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594673,
+          "value": 0.996,
+          "support_distance": 6.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594766,
+          "value": 0.997,
+          "support_distance": 4.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594858,
+          "value": 0.998,
+          "support_distance": 3.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594951,
+          "value": 0.993,
+          "support_distance": 7.1,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.595043,
+          "value": 0.996,
+          "support_distance": 4.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.595136,
+          "value": 0.991,
+          "support_distance": 5.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594581,
+          "value": 0.996,
+          "support_distance": 7.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594673,
+          "value": 0.995,
+          "support_distance": 9.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594766,
+          "value": 0.995,
+          "support_distance": 8.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594858,
+          "value": 0.993,
+          "support_distance": 9.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594951,
+          "value": 0.991,
+          "support_distance": 10.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.595043,
+          "value": 0.992,
+          "support_distance": 6.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.595136,
+          "value": 0.981,
+          "support_distance": 11.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594581,
+          "value": 1.0,
+          "support_distance": 1.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594673,
+          "value": 0.995,
+          "support_distance": 6.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594766,
+          "value": 0.996,
+          "support_distance": 4.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594858,
+          "value": 0.995,
+          "support_distance": 3.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594951,
+          "value": 0.989,
+          "support_distance": 6.7,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.595043,
+          "value": 0.99,
+          "support_distance": 3.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.595136,
+          "value": 0.97,
+          "support_distance": 4.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594581,
+          "value": 0.995,
+          "support_distance": 6.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594673,
+          "value": 0.992,
+          "support_distance": 10.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594766,
+          "value": 0.993,
+          "support_distance": 5.4,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594858,
+          "value": 0.987,
+          "support_distance": 9.4,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594951,
+          "value": 0.982,
+          "support_distance": 7.7,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.595043,
+          "value": 0.963,
+          "support_distance": 13.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.595136,
+          "value": 0.928,
+          "support_distance": 6.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594581,
+          "value": 0.998,
+          "support_distance": 3.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594673,
+          "value": 0.991,
+          "support_distance": 9.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594766,
+          "value": 0.993,
+          "support_distance": 4.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594858,
+          "value": 0.984,
+          "support_distance": 7.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594951,
+          "value": 0.983,
+          "support_distance": 4.7,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.595043,
+          "value": 0.944,
+          "support_distance": 13.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.595136,
+          "value": 0.913,
+          "support_distance": 8.7,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594581,
+          "value": 1.0,
+          "support_distance": 1.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594673,
+          "value": 0.99,
+          "support_distance": 8.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594766,
+          "value": 0.997,
+          "support_distance": 2.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594858,
+          "value": 0.978,
+          "support_distance": 3.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594951,
+          "value": 0.958,
+          "support_distance": 6.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.595043,
+          "value": 0.922,
+          "support_distance": 4.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.595136,
+          "value": 0.883,
+          "support_distance": 7.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594581,
+          "value": 0.988,
+          "support_distance": 10.1,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594673,
+          "value": 0.981,
+          "support_distance": 11.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594766,
+          "value": 0.972,
+          "support_distance": 7.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594858,
+          "value": 0.952,
+          "support_distance": 9.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594951,
+          "value": 0.926,
+          "support_distance": 9.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.595043,
+          "value": 0.898,
+          "support_distance": 6.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.595136,
+          "value": 0.857,
+          "support_distance": 8.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594581,
+          "value": 0.998,
+          "support_distance": 2.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594673,
+          "value": 0.98,
+          "support_distance": 7.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594766,
+          "value": 0.968,
+          "support_distance": 3.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594858,
+          "value": 0.925,
+          "support_distance": 6.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594951,
+          "value": 0.9,
+          "support_distance": 3.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.595043,
+          "value": 0.846,
+          "support_distance": 3.4,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.595136,
+          "value": 0.801,
+          "support_distance": 7.3,
+          "status": "HEALTHY"
+        }
+      ],
+      "nitrogen": [
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594581,
+          "value": 1.0,
+          "support_distance": 2.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594673,
+          "value": 0.998,
+          "support_distance": 6.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594766,
+          "value": 0.999,
+          "support_distance": 4.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594858,
+          "value": 0.999,
+          "support_distance": 3.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594951,
+          "value": 0.997,
+          "support_distance": 7.1,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.595043,
+          "value": 0.998,
+          "support_distance": 4.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.595136,
+          "value": 0.997,
+          "support_distance": 5.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594581,
+          "value": 0.998,
+          "support_distance": 7.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594673,
+          "value": 0.998,
+          "support_distance": 9.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594766,
+          "value": 0.998,
+          "support_distance": 8.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594858,
+          "value": 0.997,
+          "support_distance": 9.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594951,
+          "value": 0.997,
+          "support_distance": 10.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.595043,
+          "value": 0.997,
+          "support_distance": 6.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.595136,
+          "value": 0.995,
+          "support_distance": 11.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594581,
+          "value": 1.0,
+          "support_distance": 1.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594673,
+          "value": 0.998,
+          "support_distance": 6.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594766,
+          "value": 0.998,
+          "support_distance": 4.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594858,
+          "value": 0.998,
+          "support_distance": 3.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594951,
+          "value": 0.996,
+          "support_distance": 6.7,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.595043,
+          "value": 0.998,
+          "support_distance": 3.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.595136,
+          "value": 0.996,
+          "support_distance": 4.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594581,
+          "value": 0.998,
+          "support_distance": 6.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594673,
+          "value": 0.997,
+          "support_distance": 10.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594766,
+          "value": 0.997,
+          "support_distance": 5.4,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594858,
+          "value": 0.995,
+          "support_distance": 9.4,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594951,
+          "value": 0.993,
+          "support_distance": 7.7,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.595043,
+          "value": 0.988,
+          "support_distance": 13.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.595136,
+          "value": 0.99,
+          "support_distance": 6.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594581,
+          "value": 0.999,
+          "support_distance": 3.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594673,
+          "value": 0.997,
+          "support_distance": 9.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594766,
+          "value": 0.997,
+          "support_distance": 4.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594858,
+          "value": 0.994,
+          "support_distance": 7.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594951,
+          "value": 0.994,
+          "support_distance": 4.7,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.595043,
+          "value": 0.978,
+          "support_distance": 13.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.595136,
+          "value": 0.972,
+          "support_distance": 8.7,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594581,
+          "value": 1.0,
+          "support_distance": 1.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594673,
+          "value": 0.996,
+          "support_distance": 8.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594766,
+          "value": 0.999,
+          "support_distance": 2.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594858,
+          "value": 0.997,
+          "support_distance": 3.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594951,
+          "value": 0.986,
+          "support_distance": 6.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.595043,
+          "value": 0.982,
+          "support_distance": 4.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.595136,
+          "value": 0.931,
+          "support_distance": 7.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594581,
+          "value": 0.996,
+          "support_distance": 10.1,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594673,
+          "value": 0.995,
+          "support_distance": 11.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594766,
+          "value": 0.994,
+          "support_distance": 7.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594858,
+          "value": 0.988,
+          "support_distance": 9.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594951,
+          "value": 0.974,
+          "support_distance": 9.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.595043,
+          "value": 0.949,
+          "support_distance": 6.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.595136,
+          "value": 0.9,
+          "support_distance": 8.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594581,
+          "value": 0.999,
+          "support_distance": 2.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594673,
+          "value": 0.995,
+          "support_distance": 7.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594766,
+          "value": 0.997,
+          "support_distance": 3.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594858,
+          "value": 0.988,
+          "support_distance": 6.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594951,
+          "value": 0.984,
+          "support_distance": 3.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.595043,
+          "value": 0.875,
+          "support_distance": 3.4,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.595136,
+          "value": 0.834,
+          "support_distance": 7.3,
+          "status": "HEALTHY"
+        }
+      ],
+      "moisture": [
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594581,
+          "value": 0.997,
+          "support_distance": 2.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594673,
+          "value": 0.989,
+          "support_distance": 6.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594766,
+          "value": 0.992,
+          "support_distance": 4.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594858,
+          "value": 0.994,
+          "support_distance": 3.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594951,
+          "value": 0.979,
+          "support_distance": 7.1,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.595043,
+          "value": 0.987,
+          "support_distance": 4.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.595136,
+          "value": 0.968,
+          "support_distance": 5.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594581,
+          "value": 0.988,
+          "support_distance": 7.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594673,
+          "value": 0.985,
+          "support_distance": 9.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594766,
+          "value": 0.984,
+          "support_distance": 8.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594858,
+          "value": 0.979,
+          "support_distance": 9.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594951,
+          "value": 0.972,
+          "support_distance": 10.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.595043,
+          "value": 0.975,
+          "support_distance": 6.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.595136,
+          "value": 0.935,
+          "support_distance": 11.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594581,
+          "value": 0.999,
+          "support_distance": 1.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594673,
+          "value": 0.985,
+          "support_distance": 6.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594766,
+          "value": 0.986,
+          "support_distance": 4.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594858,
+          "value": 0.986,
+          "support_distance": 3.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594951,
+          "value": 0.969,
+          "support_distance": 6.7,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.595043,
+          "value": 0.976,
+          "support_distance": 3.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.595136,
+          "value": 0.886,
+          "support_distance": 4.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594581,
+          "value": 0.984,
+          "support_distance": 6.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594673,
+          "value": 0.976,
+          "support_distance": 10.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594766,
+          "value": 0.979,
+          "support_distance": 5.4,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594858,
+          "value": 0.96,
+          "support_distance": 9.4,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594951,
+          "value": 0.945,
+          "support_distance": 7.7,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.595043,
+          "value": 0.883,
+          "support_distance": 13.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.595136,
+          "value": 0.759,
+          "support_distance": 6.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594581,
+          "value": 0.992,
+          "support_distance": 3.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594673,
+          "value": 0.973,
+          "support_distance": 9.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594766,
+          "value": 0.977,
+          "support_distance": 4.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594858,
+          "value": 0.947,
+          "support_distance": 7.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594951,
+          "value": 0.946,
+          "support_distance": 4.7,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.595043,
+          "value": 0.827,
+          "support_distance": 13.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.595136,
+          "value": 0.726,
+          "support_distance": 8.7,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594581,
+          "value": 0.999,
+          "support_distance": 1.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594673,
+          "value": 0.968,
+          "support_distance": 8.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594766,
+          "value": 0.99,
+          "support_distance": 2.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594858,
+          "value": 0.905,
+          "support_distance": 3.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594951,
+          "value": 0.858,
+          "support_distance": 6.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.595043,
+          "value": 0.738,
+          "support_distance": 4.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.595136,
+          "value": 0.66,
+          "support_distance": 7.2,
+          "status": "MODERATE"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594581,
+          "value": 0.963,
+          "support_distance": 10.1,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594673,
+          "value": 0.939,
+          "support_distance": 11.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594766,
+          "value": 0.908,
+          "support_distance": 7.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594858,
+          "value": 0.835,
+          "support_distance": 9.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594951,
+          "value": 0.759,
+          "support_distance": 9.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.595043,
+          "value": 0.696,
+          "support_distance": 6.3,
+          "status": "MODERATE"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.595136,
+          "value": 0.621,
+          "support_distance": 8.5,
+          "status": "MODERATE"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594581,
+          "value": 0.993,
+          "support_distance": 2.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594673,
+          "value": 0.938,
+          "support_distance": 7.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594766,
+          "value": 0.897,
+          "support_distance": 3.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594858,
+          "value": 0.736,
+          "support_distance": 6.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594951,
+          "value": 0.646,
+          "support_distance": 3.9,
+          "status": "MODERATE"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.595043,
+          "value": 0.606,
+          "support_distance": 3.4,
+          "status": "MODERATE"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.595136,
+          "value": 0.543,
+          "support_distance": 7.3,
+          "status": "MODERATE"
+        }
+      ],
+      "carbon_readiness": [
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594581,
+          "value": 0.999,
+          "support_distance": 2.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594673,
+          "value": 0.996,
+          "support_distance": 6.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594766,
+          "value": 0.997,
+          "support_distance": 4.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594858,
+          "value": 0.998,
+          "support_distance": 3.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.594951,
+          "value": 0.993,
+          "support_distance": 7.1,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.595043,
+          "value": 0.995,
+          "support_distance": 4.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971583,
+          "longitude": 77.595136,
+          "value": 0.99,
+          "support_distance": 5.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594581,
+          "value": 0.996,
+          "support_distance": 7.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594673,
+          "value": 0.995,
+          "support_distance": 9.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594766,
+          "value": 0.994,
+          "support_distance": 8.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594858,
+          "value": 0.992,
+          "support_distance": 9.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.594951,
+          "value": 0.99,
+          "support_distance": 10.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.595043,
+          "value": 0.991,
+          "support_distance": 6.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971673,
+          "longitude": 77.595136,
+          "value": 0.979,
+          "support_distance": 11.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594581,
+          "value": 1.0,
+          "support_distance": 1.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594673,
+          "value": 0.995,
+          "support_distance": 6.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594766,
+          "value": 0.995,
+          "support_distance": 4.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594858,
+          "value": 0.995,
+          "support_distance": 3.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.594951,
+          "value": 0.989,
+          "support_distance": 6.7,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.595043,
+          "value": 0.99,
+          "support_distance": 3.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971763,
+          "longitude": 77.595136,
+          "value": 0.966,
+          "support_distance": 4.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594581,
+          "value": 0.994,
+          "support_distance": 6.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594673,
+          "value": 0.991,
+          "support_distance": 10.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594766,
+          "value": 0.993,
+          "support_distance": 5.4,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594858,
+          "value": 0.986,
+          "support_distance": 9.4,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.594951,
+          "value": 0.981,
+          "support_distance": 7.7,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.595043,
+          "value": 0.96,
+          "support_distance": 13.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971853,
+          "longitude": 77.595136,
+          "value": 0.923,
+          "support_distance": 6.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594581,
+          "value": 0.997,
+          "support_distance": 3.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594673,
+          "value": 0.99,
+          "support_distance": 9.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594766,
+          "value": 0.992,
+          "support_distance": 4.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594858,
+          "value": 0.982,
+          "support_distance": 7.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.594951,
+          "value": 0.981,
+          "support_distance": 4.7,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.595043,
+          "value": 0.939,
+          "support_distance": 13.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.971943,
+          "longitude": 77.595136,
+          "value": 0.906,
+          "support_distance": 8.7,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594581,
+          "value": 1.0,
+          "support_distance": 1.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594673,
+          "value": 0.989,
+          "support_distance": 8.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594766,
+          "value": 0.997,
+          "support_distance": 2.0,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594858,
+          "value": 0.974,
+          "support_distance": 3.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.594951,
+          "value": 0.953,
+          "support_distance": 6.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.595043,
+          "value": 0.915,
+          "support_distance": 4.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972033,
+          "longitude": 77.595136,
+          "value": 0.872,
+          "support_distance": 7.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594581,
+          "value": 0.987,
+          "support_distance": 10.1,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594673,
+          "value": 0.979,
+          "support_distance": 11.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594766,
+          "value": 0.97,
+          "support_distance": 7.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594858,
+          "value": 0.947,
+          "support_distance": 9.8,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.594951,
+          "value": 0.918,
+          "support_distance": 9.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.595043,
+          "value": 0.888,
+          "support_distance": 6.3,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972124,
+          "longitude": 77.595136,
+          "value": 0.843,
+          "support_distance": 8.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594581,
+          "value": 0.998,
+          "support_distance": 2.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594673,
+          "value": 0.979,
+          "support_distance": 7.6,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594766,
+          "value": 0.966,
+          "support_distance": 3.2,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594858,
+          "value": 0.917,
+          "support_distance": 6.5,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.594951,
+          "value": 0.89,
+          "support_distance": 3.9,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.595043,
+          "value": 0.831,
+          "support_distance": 3.4,
+          "status": "HEALTHY"
+        },
+        {
+          "latitude": 12.972214,
+          "longitude": 77.595136,
+          "value": 0.781,
+          "support_distance": 7.3,
+          "status": "HEALTHY"
+        }
+      ]
+    },
+    "active_layer": "soil_health",
+    "available_layers": [
+      "soil_health",
+      "nitrogen",
+      "moisture",
+      "carbon_readiness"
+    ]
+  },
+  "zones": [
+    {
+      "zone_id": "ZONE-01",
+      "status": "HEALTHY",
+      "severity": "LOW",
+      "primary_issue": null,
+      "affected_parameters": [],
+      "confidence": "HIGH",
+      "centroid": [
+        12.971898,
+        77.594858
+      ],
+      "area_estimate": 5600.0,
+      "recommendation_count": 1
+    }
+  ],
+  "recommendations": [
+    {
+      "recommendation_id": "REC-ZONE-01-MONITORING",
+      "zone_id": "ZONE-01",
+      "category": "MONITORING",
+      "priority": "LOW",
+      "action": "Maintain routine soil monitoring and periodic health assessment for this zone.",
+      "reason": "Zone 'ZONE-01' condition is healthy; routine monitoring recommended.",
+      "confidence": "HIGH"
+    }
+  ],
+  "system_status": {
+    "application_status": "READY",
+    "data_source": "VIRTUAL",
+    "processing_status": "COMPLETE",
+    "offline_mode": true
+  }
+};
+
+    function initUI() {
+      // System & Field Summaries
+      document.getElementById('dataSource').innerText = FIELD_DATA.system_status.data_source;
+      document.getElementById('gpsStatus').innerText = FIELD_DATA.gps_status.status;
+      
+      const samp = FIELD_DATA.sampling_status;
+      document.getElementById('sampleProgress').innerText = `${samp.valid_samples} / ${samp.expected_samples}`;
+      document.getElementById('progressFill').style.width = `${Math.min(100, (samp.valid_samples / samp.expected_samples) * 100)}%`;
+
+      const health = FIELD_DATA.health_summary;
+      document.getElementById('healthScore').innerText = `${Math.round(health.score * 100)}%`;
+      
+      const statusTag = document.getElementById('healthStatusTag');
+      statusTag.innerText = health.status;
+      statusTag.className = `status-tag status-${health.status}`;
+
+      document.getElementById('diagTotal').innerText = samp.total_samples;
+      document.getElementById('diagValid').innerText = samp.valid_samples;
+      document.getElementById('diagRejected').innerText = samp.rejected_samples;
+
+      // Render Layer Map
+      renderMap(FIELD_DATA.map.active_layer);
+
+      // Layer dropdown listener
+      document.getElementById('layerSelect').addEventListener('change', (e) => {
+        renderMap(e.target.value);
+      });
+
+      // Render Zones
+      renderZones();
+
+      // Render Recommendations
+      renderRecommendations();
+    }
+
+    function renderMap(layerId) {
+      const svg = document.getElementById('fieldMapSvg');
+      svg.innerHTML = '';
+
+      const gridPoints = FIELD_DATA.map.grid_by_layer[layerId] || [];
+      if (gridPoints.length === 0) return;
+
+      const bounds = FIELD_DATA.map.bounds;
+      const minLat = bounds.min_latitude, maxLat = bounds.max_latitude;
+      const minLon = bounds.min_longitude, maxLon = bounds.max_longitude;
+
+      const width = 360, height = 260;
+      const margin = 20;
+
+      gridPoints.forEach(pt => {
+        if (pt.value === null) return;
+
+        // Map lat/lon to SVG canvas x, y
+        const x = margin + ((pt.longitude - minLon) / (maxLon - minLon || 1)) * (width - 2 * margin);
+        const y = height - margin - ((pt.latitude - minLat) / (maxLat - minLat || 1)) * (height - 2 * margin);
+
+        // Color mapping based on score
+        let color = '#ef4444'; // POOR (red)
+        if (pt.value >= 0.70) color = '#10b981'; // HEALTHY (green)
+        else if (pt.value >= 0.40) color = '#f59e0b'; // MODERATE (yellow)
+
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', x - 12);
+        rect.setAttribute('y', y - 12);
+        rect.setAttribute('width', 24);
+        rect.setAttribute('height', 24);
+        rect.setAttribute('fill', color);
+        rect.setAttribute('opacity', '0.85');
+        rect.setAttribute('rx', '4');
+        rect.style.cursor = 'pointer';
+
+        rect.addEventListener('click', () => {
+          document.getElementById('pointDetails').innerHTML = 
+            `<strong>Selected Point:</strong> Lat: ${pt.latitude.toFixed(5)}, Lon: ${pt.longitude.toFixed(5)} | 
+             <strong>Value:</strong> ${pt.value.toFixed(2)} | <strong>Status:</strong> ${pt.status} | 
+             <strong>Nearest Sample:</strong> ${pt.support_distance}m`;
+        });
+
+        svg.appendChild(rect);
+      });
+    }
+
+    function renderZones() {
+      const container = document.getElementById('zonesList');
+      container.innerHTML = '';
+
+      FIELD_DATA.zones.forEach(z => {
+        const div = document.createElement('div');
+        div.className = 'list-item';
+        div.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong>${z.zone_id}</strong>
+            <span class="status-tag status-${z.status}">${z.status}</span>
+          </div>
+          <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">
+            Primary Issue: <strong>${z.primary_issue || 'None'}</strong> | Area: ${z.area_estimate}m²
+          </div>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    function renderRecommendations() {
+      const container = document.getElementById('recsList');
+      container.innerHTML = '';
+
+      if (FIELD_DATA.recommendations.length === 0) {
+        container.innerHTML = '<div style="font-size: 0.85rem; color: var(--text-muted);">No urgent actions required.</div>';
+        return;
+      }
+
+      FIELD_DATA.recommendations.forEach(r => {
+        const div = document.createElement('div');
+        div.className = 'list-item';
+        div.innerHTML = `
+          <div>
+            <span class="rec-priority prio-${r.priority}">${r.priority}</span>
+            <strong style="font-size: 0.9rem;">${r.category} — ${r.zone_id}</strong>
+          </div>
+          <div style="font-size: 0.85rem; margin-top: 4px;">${r.action}</div>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    window.onload = initUI;
+  </script>
+</body>
+</html>
