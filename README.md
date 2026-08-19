@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # FieldSense AI
 
 Offline portable edge-intelligence platform for multi-point soil assessment and Carbon Readiness.
@@ -6,6 +5,7 @@ Offline portable edge-intelligence platform for multi-point soil assessment and 
 ## Sprint 1 Foundation
 
 This sprint implements the frozen core domain models:
+
 - `FieldSample`
 - `FieldSession`
 - Standard enums: `SampleSource`, `ValidationState`, `SessionStatus`
@@ -23,6 +23,3 @@ This sprint implements the frozen core domain models:
 - `fieldsense/presentation`: UI / CLI interfaces (future)
 - `fieldsense/ai`: LLM / AI explanation modules (future)
 - `tests`: Unit tests for domain models
-=======
-# FieldSense
->>>>>>> 90e893004aa9d1e3f7cf2c6a9e6f062625314a93
