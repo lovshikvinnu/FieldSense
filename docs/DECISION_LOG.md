@@ -1,8 +1,8 @@
 # FieldSense AI — Official Decision Log
 
 **STATUS:** DRAFT  
-**VERSION:** 0.1  
-**LAST UPDATED:** 2026-08-21  
+**VERSION:** 0.1.1  
+**LAST UPDATED:** 2026-08-23  
 
 This document logs all major engineering, architectural, scientific boundary, and protocol decisions for FieldSense AI. Trivial implementation details are excluded.
 

@@ -275,8 +275,51 @@ tests/test_zones.py ...                                                   [100%]
 - **Status**: PASS — VERIFIED FOR FIELDSENSE V1
 - **Notes**:
   - Ground-level hardware validation of core Arduino UNO Q platform capabilities complete.
-  - Component Verification Phase officially closed (`COMPLETE`).
-  - UNO Q platform itself is verified; complete FieldSense hardware system peripheral integration (JXBS, GPS, TFT) remains Phase 2 V1 Hardware Integration (`PENDING HARDWARE`).
+  - Component Verification Phase officially closed (`🟢 COMPLETE`).
+  - Real hardware communication paths verified (`🟢 VERIFIED`): GPS (Serial1 → Bridge → Linux), JXBS (USB-RS485 → USB-C Hub → Linux), Display (Native Hardware SPI → ST7789), Touch (XPT2046 mapped $320 \times 240$).
+
+---
+
+### Milestone Test ID: `V1-INTEGRATION-001` — Initial Multi-Peripheral UNO Q Integration
+
+- **Objective**: Verify physical hardware communication paths across all individual peripherals connected to the Arduino UNO Q target host.
+- **Hardware Integration Setup**:
+  - Arduino UNO Q (Qualcomm QRB2210 Linux MPU + STM32U585 MCU)
+  - NEO-M8N GPS Module connected to STM32 `Serial1` (9600 baud)
+  - JXBS 7-in-1 Soil Sensor connected via MAX485 / USB-RS485 through USB-C Hub to UNO Q Linux
+  - 2.8" ST7789 TFT Display + XPT2046 Touch Panel connected via Native Hardware SPI (`&SPI`)
+- **Verified Hardware Communication Paths**:
+  - **GPS Path**: `🟢 VERIFIED` — NEO-M8N $\rightarrow$ STM32 `Serial1` $\rightarrow$ Arduino Bridge/RPC (`get_gps_data`) $\rightarrow$ Linux Python ($9600$ baud, `$GN`, `$GP`, `$GL` NMEA sentences at native $\sim 1\text{ Hz}$ update rate).
+  - **JXBS Soil Path**: `🟢 VERIFIED` — JXBS 7-in-1 $\rightarrow$ RS485 $\rightarrow$ USB-RS485 $\rightarrow$ USB-C Hub $\rightarrow$ UNO Q Linux $\rightarrow$ FieldSense Python (Modbus RTU $9600\text{ 8N1}$).
+  - **TFT Display Path**: `🟢 VERIFIED` — UNO Q $\rightarrow$ Native Hardware SPI (`&SPI`) $\rightarrow$ ST7789 TFT ($320 \times 240$ landscape, `tft.invertDisplay(false)` dark-mode UI).
+  - **Touch Interface Path**: `🟢 VERIFIED` — XPT2046 Touch $\rightarrow$ Hardware SPI $\rightarrow$ Mapped $320 \times 240$ display coordinates ($p.z$ pressure filtering $400 \le p.z \le 4000$).
+- **Resolved Hardware Test Failures & Root Causes**:
+  - **Failure 1 — TFT White Screen**:
+    - *Root Cause*: Faulty physical jumper cable / connection.
+    - *Fix*: Faulty jumper wire identified during wire-by-wire audit and replaced.
+    - *Status*: `RESOLVED`
+  - **Failure 2 — Software SPI Instability**:
+    - *Root Cause*: Software SPI bit-banging caused signal integrity issues and breadboard crosstalk.
+    - *Fix*: Migrated display driver implementation to native hardware SPI (`&SPI`).
+    - *Status*: `RESOLVED`
+  - **Failure 3 — Touch Phantom Input Near Screen Center**:
+    - *Root Cause*: Mechanical lamination pinch in outer display bezel causing phantom $Z$-axis touch triggers near center.
+    - *Classification*: `KNOWN PROTOTYPE HARDWARE DEFECT` (Physical hardware limitation, not a software bug).
+    - *Status*: `ACCEPTED FOR V1 PROTOTYPE` (Hardware revision required for production; evaluate capacitive touch).
+- **Pending End-to-End Validation Items (`🟡 PENDING`)**:
+  1. Combined GPS + JXBS acquisition in one unified process.
+  2. Conversion of simultaneous real GPS + soil data into the existing `FieldSample` contract.
+  3. Real hardware samples through the complete Phase 1 pipeline.
+  4. Multi-point field collection using 8–10 real GPS-tagged samples.
+  5. Spatial interpolation using real field coordinates.
+  6. Real zones generated from hardware data.
+  7. Real recommendations generated from hardware data.
+  8. Final TFT Field Intelligence UI driven by actual Phase 1 output.
+  9. Complete end-to-end V1 demonstration timing.
+  10. Final portable battery configuration (pending, but does not block V1 integration).
+- **Milestone Status**:
+  - Component Verification: `🟢 COMPLETE`
+  - V1 System Integration: `🟡 ACTIVE` (Successful partial integration milestone; unified end-to-end validation `PENDING`).
 
 ---
 

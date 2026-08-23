@@ -1,9 +1,9 @@
 # FieldSense AI — Hardware Specification
 
 **STATUS:** DRAFT  
-**VERSION:** 0.1  
-**LAST UPDATED:** 2026-08-22  
-**INTEGRATION STATUS:** `COMPONENT_VERIFICATION_COMPLETE` / `ENTERING_V1_INTEGRATION`  
+**VERSION:** 0.1.1  
+**LAST UPDATED:** 2026-08-23  
+**INTEGRATION STATUS:** `COMPONENT_VERIFICATION_COMPLETE` / `V1_SYSTEM_INTEGRATION_ACTIVE`  
 
 ---
 
@@ -25,14 +25,14 @@ This document serves as the authoritative hardware specification for FieldSense 
 
 | Component Name | Model / Part Number | Manufacturer | System Role | Procurement Status | Verification Status | BOM Reference |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Main Compute Platform** | Arduino UNO Q (4GB / 32GB Variant) | Arduino | Dual MCU/MPU host processing unit | `RECEIVED / IN HAND` | `VERIFIED FOR FIELDSENSE V1` | `TBD` |
-| **Main Processing Unit (MPU)**| Qualcomm QRB2210 | Qualcomm | Runs Debian Linux, Python 3, spatial engine, UI | `RECEIVED / IN HAND` | `DATASHEET CONFIRMED` | `TBD` |
-| **Microcontroller Unit (MCU)**| STM32U585 | STMicroelectronics | Real-time I/O, RS485 timing, Modbus, GPS buffer | `RECEIVED / IN HAND` | `DATASHEET CONFIRMED` | `TBD` |
-| **Multi-Parameter Soil Sensor**| JXBS-3001-NPKPH-RS / JXBS 7-in-1 | JXBS / Novus | In-situ measurement of N, P, K, pH, EC, Moisture, Temp | `RECEIVED / IN HAND` | `CONFIRMED` / `READY FOR V1 INTEGRATION` | `TBD` |
-| **RS485 Transceiver Module**| MAX485 RS485 Interface Module (`HW-097`) | Maxim / Generic | TTL to RS485 differential signal converter | `RECEIVED / IN HAND` | `VERIFIED` / `READY FOR V1 INTEGRATION` | `TBD` |
-| **GPS Positioning Module** | u-blox NEO-M8N (`GY-GPSV3-NEO`) | u-blox | Global positioning fix (Lat, Lon, Altitude, UTC Time) | `RECEIVED / IN HAND` | `CONFIRMED` / `READY FOR V1 INTEGRATION` (UNO Q UART: `PENDING HARDWARE`) | `TBD` |
-| **TFT Display & Touch Panel** | 2.8" TFT 240xRGBx320 V1.1 (ST7789V + XPT2046) | Generic / ILI | Local graphical user interface & resistive touch input | `RECEIVED / IN HAND` | `VERIFIED` / `READY FOR V1 INTEGRATION` | `TBD` |
-| **Power Supply System** | 12V LiFePO4 / Li-ion Battery Enclosure | Generic / TBD | Portable field power delivery | `RECEIVED / IN HAND` | `MEASURED` (12.24V DC) | `TBD` |
+| **Main Compute Platform** | Arduino UNO Q (4GB / 32GB Variant) | Arduino | Dual MCU/MPU host processing unit | `RECEIVED / IN HAND` | `🟢 VERIFIED FOR FIELDSENSE V1` | `TBD` |
+| **Main Processing Unit (MPU)**| Qualcomm QRB2210 | Qualcomm | Runs Debian Linux, Python 3, spatial engine, UI | `RECEIVED / IN HAND` | `🟢 VERIFIED` | `TBD` |
+| **Microcontroller Unit (MCU)**| STM32U585 | STMicroelectronics | Real-time I/O, RS485 timing, Modbus, GPS buffer | `RECEIVED / IN HAND` | `🟢 VERIFIED` | `TBD` |
+| **Multi-Parameter Soil Sensor**| JXBS-3001-NPKPH-RS / JXBS 7-in-1 | JXBS / Novus | In-situ measurement of N, P, K, pH, EC, Moisture, Temp | `RECEIVED / IN HAND` | `🟢 VERIFIED` (USB-RS485 Path to Linux) | `TBD` |
+| **RS485 Transceiver Module**| MAX485 / USB-RS485 Interface | Maxim / Generic | TTL/USB to RS485 differential signal converter | `RECEIVED / IN HAND` | `🟢 VERIFIED` (USB-RS485 through USB-C Hub) | `TBD` |
+| **GPS Positioning Module** | u-blox NEO-M8N (`GY-GPSV3-NEO`) | u-blox | Global positioning fix (Lat, Lon, Altitude, UTC Time) | `RECEIVED / IN HAND` | `🟢 VERIFIED` (UNO Q Serial1 → Bridge → Linux) | `TBD` |
+| **TFT Display & Touch Panel** | 2.8" TFT 240xRGBx320 V1.1 (ST7789V + XPT2046) | Generic / ILI | Local graphical user interface & resistive touch input | `RECEIVED / IN HAND` | `🟢 VERIFIED` (Native Hardware SPI, 320x240 landscape) | `TBD` |
+| **Power Supply System** | 12V LiFePO4 / Li-ion Battery Enclosure | Generic / TBD | Portable field power delivery | `RECEIVED / IN HAND` | `MEASURED` (12.24V DC; Battery integration PENDING, not blocking V1) | `TBD` |
 
 ---
 
@@ -112,15 +112,15 @@ This document serves as the authoritative hardware specification for FieldSense 
 - **Datasheet Position Accuracy (Reference)**: $< 2.5\text{m}$ CEP (Autonomous mode under open-sky conditions) [`DATASHEET CONFIRMED`].
 
 ### 5.4 Integration Readiness & Verification Boundaries
-- **Physical GPS Breakout Status**: `READY FOR V1 INTEGRATION`
-  - *Reason*: Tested breakout successfully provides real coordinates and NMEA UTC timestamps, passing bench serial communication and navigation-function tests.
-- **Final UNO Q UART Integration**: `PENDING HARDWARE` (Does not imply physical UART connection to Arduino UNO Q is complete).
+- **Physical GPS Breakout Status**: `🟢 VERIFIED FOR FIELDSENSE V1`
+  - *Path*: NEO-M8N → STM32 Serial1 (9600 baud) → Arduino Bridge/RPC (`get_gps_data`) → Linux Python.
+  - *NMEA Sentences*: `$GN`, `$GP`, and `$GL` parsed cleanly at native ~1 Hz output rate.
 - **Pending / Unverified Verification Items**:
-  - Differential GNSS accuracy (`PENDING HARDWARE`).
-  - Outdoor accuracy under final field conditions (`PENDING HARDWARE` / Open-sky testing recommended).
-  - UBX-configured update rates above 1 Hz (`PENDING HARDWARE`).
-  - Long-duration outdoor stability (`PENDING HARDWARE`).
-  - Final UNO Q UART hardware node integration (`PENDING HARDWARE`).
+  - Combined GPS + JXBS acquisition in one unified process (`PENDING`).
+  - Conversion of simultaneous real GPS + soil data into canonical `FieldSample` (`PENDING`).
+  - Outdoor accuracy under final field conditions (`PENDING` / Open-sky testing recommended).
+  - UBX-configured update rates above 1 Hz (`PENDING`).
+  - Long-duration outdoor stability (`PENDING`).
 
 ---
 
@@ -229,17 +229,21 @@ FieldSample
 
 ### 7.3 Verified Touch Subsystem Configuration
 * **Touch Controller:** XPT2046 / HR2046 12-bit SAR ADC controller [`CONFIRMED`].
-* **Pen Interrupt Line (`T_IRQ`):** Active-LOW hardware interrupt pin [`CONFIRMED` / `MEASURED`].
+* **Pen Interrupt Line (`T_IRQ`):** Active-LOW hardware interrupt pin (`TOUCH_IRQ = Pin 2`) [`CONFIRMED` / `MEASURED`].
   * `T_IRQ = 0` (LOW) $\rightarrow$ Active screen press / contact detected [`MEASURED`].
   * `T_IRQ = 1` (HIGH) $\rightarrow$ Idle / no active screen touch [`MEASURED`].
-* **Measured Raw Coordinate Range:** `~500` to `~3500` raw 12-bit ADC values across active X and Y axes [`MEASURED`].
-* **Coordinate Calibration Matrix:** `PENDING HARDWARE` (Mapping raw ADC values to screen pixel coordinates requires post-calibration processing).
+* **Raw Coordinate Remapping:** Analog 12-bit raw coordinates mapped to `320 × 240` landscape UI coordinates (`map(p.x, 200, 3700, 320, 0)`, `map(p.y, 200, 3700, 240, 0)` constrained to $[0, 320]$ and $[0, 240]$) [`CONFIRMED`].
+* **Z-Axis Pressure Filtering:** Noise threshold filter ($p.z < 400 \lor p.z > 4000$) applied to suppress floating noise [`CONFIRMED`].
 
-### 7.4 Recommended Touch SPI Integration & Boundaries
-* **Recommended Bus Architecture:** **Dedicated / Isolated SPI Channel** (`T_CLK`, `T_CS`, `T_DIN`, `T_DO`, `T_IRQ`) [`RECOMMENDED INTEGRATION CONFIGURATION`].
-  > [!IMPORTANT]
-  > Bench testing revealed that sharing SPI communication lines between the ST7789V display and XPT2046 touch controller resulted in SPI MISO line loading/contention (`Z=4095, X=0, Y=0`). Isolating the touch interface onto dedicated signals restored valid dynamic readings.
-* **Exact Arduino UNO Q Pin Mapping:** `PENDING HARDWARE` (Exact UNO Q SPI pin assignments for display and touch are not yet assigned).
+### 7.4 Verified SPI Integration & Hardware Defect Analysis
+* **Verified Bus Architecture:** Native Hardware SPI (`&SPI`) on Arduino UNO Q with separate Chip Select lines (`TFT_CS = Pin 10`, `TOUCH_CS = Pin 4`, `TFT_DC = Pin 9`, `TFT_RST = Pin 8`, `TFT_LED = Pin 7`) [`CONFIRMED`].
+* **Observed Color Matrix Correction:** Corrected via `tft.invertDisplay(false)` for FieldSense dark-mode UI [`CONFIRMED`].
+* **Known Hardware Defect — Mechanical Bezel Pinch:**
+  > [!WARNING]
+  > A mechanical lamination pinch in the display's outer bezel causes occasional phantom Z-axis touch inputs near the center of the screen. This is classified as a physical hardware defect (not a software bug).
+  > 
+  > **Status**: Accepted for V1 prototype testing.
+  > **Recommended Action**: Evaluate capacitive-touch displays for final field production units.
 
 ---
 
@@ -297,19 +301,20 @@ The Arduino UNO Q has successfully passed ground-level hardware validation for t
 
 ### 8.3 Pin Mappings & Node Paths
 
-*(Status: `PENDING HARDWARE` / `HARDWARE_SPEC_REQUIRED` — To be finalized during Phase 2 V1 Hardware Integration)*
+*(Status: `VERIFIED FOR V1 INTEGRATION`)*
 
 | Signal Name | Connected Hardware Device | Target Controller | Pin / Node Path | Confidence / Status |
 | :--- | :--- | :--- | :--- | :--- |
-| `RS485_TX` | MAX485 DI (Data In) | STM32U585 MCU | `PENDING HARDWARE` | `HARDWARE_SPEC_REQUIRED` |
-| `RS485_RX` | MAX485 RO (Receive Out) | STM32U585 MCU | `PENDING HARDWARE` | `HARDWARE_SPEC_REQUIRED` |
-| `RS485_DE_RE` | MAX485 DE/RE Direction Pin | STM32U585 MCU | `PENDING HARDWARE` | `HARDWARE_SPEC_REQUIRED` |
-| `GPS_TX` | NEO-M8N TXD Pin | STM32U585 MCU / MPU | `PENDING HARDWARE` | `HARDWARE_SPEC_REQUIRED` |
-| `GPS_RX` | NEO-M8N RXD Pin | STM32U585 MCU / MPU | `PENDING HARDWARE` | `HARDWARE_SPEC_REQUIRED` |
-| `TFT_SPI_CS` | ST7789V Display Chip Select | STM32U585 MCU / MPU | `PENDING HARDWARE` | `HARDWARE_SPEC_REQUIRED` |
-| `TOUCH_SPI_CS`| XPT2046 Touch Chip Select | STM32U585 MCU / MPU | `PENDING HARDWARE` | `HARDWARE_SPEC_REQUIRED` |
-| `TOUCH_IRQ` | XPT2046 Pen Interrupt | STM32U585 MCU | `PENDING HARDWARE` | `HARDWARE_SPEC_REQUIRED` |
-| `MCU_MPU_IPC` | Internal High-Speed Bridge | Shared Bridge | `/dev/ttyIPC0` (TBD) | `VERIFIED` (Bridge/RPC operational) |
+| `GPS_TX` / `GPS_RX` | NEO-M8N GPS Module | STM32U585 MCU | `Serial1` (9600 8N1) | `🟢 VERIFIED` (Bridge → Linux) |
+| `USB_RS485` | JXBS 7-in-1 via USB-RS485 | Qualcomm QRB2210 Linux | USB-C Hub (`/dev/ttyUSB0`) | `🟢 VERIFIED` (Linux Modbus) |
+| `TFT_SPI_CS` | ST7789 Display Chip Select | STM32U585 MCU | Pin 10 | `🟢 VERIFIED` (Hardware SPI) |
+| `TFT_DC` | ST7789 Data/Command | STM32U585 MCU | Pin 9 | `🟢 VERIFIED` |
+| `TFT_RST` | ST7789 Reset | STM32U585 MCU | Pin 8 | `🟢 VERIFIED` |
+| `TFT_LED` | ST7789 Backlight | STM32U585 MCU | Pin 7 | `🟢 VERIFIED` |
+| `TOUCH_SPI_CS`| XPT2046 Touch Chip Select | STM32U585 MCU | Pin 4 | `🟢 VERIFIED` (Hardware SPI) |
+| `TOUCH_IRQ` | XPT2046 Pen Interrupt | STM32U585 MCU | Pin 2 | `🟢 VERIFIED` |
+| `SPI_BUS` | Shared Display/Touch SPI | STM32U585 MCU | Hardware `&SPI` (SCK, MOSI, MISO) | `🟢 VERIFIED` |
+| `MCU_MPU_IPC` | Internal High-Speed Bridge | Shared Bridge | Arduino Bridge / RPC | `🟢 VERIFIED` |
 
 ---
 

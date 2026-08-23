@@ -194,7 +194,20 @@ $$\text{SoilHealth} = 0.20 S_N + 0.15 S_P + 0.15 S_K + 0.20 S_{\text{pH}} + 0.10
 
 ## 12. Hardware Integration Adapter Boundary
 
-Hardware communication interfaces (`fieldsense/hardware/`) isolate serial communication details:
+Hardware communication interfaces (`fieldsense/hardware/`) isolate physical communication details from the deterministic core software pipeline:
+
+### Verified Physical Hardware Adapter Paths
+- **GPS Adapter Path**: `NEO-M8N` $\rightarrow$ `Serial1` $\rightarrow$ `STM32 MCU` $\rightarrow$ `Arduino Bridge/RPC` (`get_gps_data`) $\rightarrow$ `Linux/Python`.
+- **JXBS Soil Sensor Acquisition Path**: `JXBS 7-in-1` $\rightarrow$ `USB-RS485` $\rightarrow$ `USB-C Hub` $\rightarrow$ `Linux/Python` (`HardwareSensorAdapter` / Modbus RTU 9600 8N1).
+- **TFT Display Boundary**: Application/UI $\rightarrow$ `Native Hardware SPI` $\rightarrow$ `ST7789` ($320 \times 240$ landscape).
+- **Touch Boundary**: Application/UI $\rightarrow$ `XPT2046 touch interface` $\rightarrow$ mapped $320 \times 240$ display coordinates.
+
+### Software Pipeline Preservation Guarantee
+> [!IMPORTANT]
+> The existing Phase 1 software architecture remains unchanged and strictly protected:
+> $$\text{Validation} \longrightarrow \text{Normalization} \longrightarrow \text{Scoring} \longrightarrow \text{Spatial IDW} \longrightarrow \text{Zone Clustering} \longrightarrow \text{Recommendations} \longrightarrow \text{Presentation}$$
+> The hardware integration work establishes physical hardware acquisition and UI presentation paths strictly around the unchanged deterministic core.
+
 - `HardwareSensorAdapter`: Adapts physical transports to `SensorAdapter` contract.
 - `SensorTransport`: Abstract base class for serial communication (implemented by `MockHardwareTransport`).
 - `GPSAdapter`: Abstract base class for NMEA position fixes (implemented by `MockGPSAdapter`).

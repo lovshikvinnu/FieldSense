@@ -1,16 +1,58 @@
 # FieldSense AI — Project Handbook
 
 **STATUS:** DRAFT  
-**VERSION:** 0.1  
-**LAST UPDATED:** 2026-08-22  
-**PROJECT PHASE:** Component Verification Complete — Phase 2 V1 Hardware Integration Starting  
-**RELEASE STATUS:** `PHASE_1_RELEASE_READY`  
+**VERSION:** 0.1.1  
+**LAST UPDATED:** 2026-08-23  
+**CURRENT STAGE:** V1 Integration  
+**COMPONENT VERIFICATION:** 🟢 COMPLETE  
+**V1 SYSTEM INTEGRATION:** 🟡 ACTIVE  
+**CURRENT OBJECTIVE:** Establish unified real-data acquisition from physical hardware and feed it into the existing Phase 1 software pipeline.  
 
 ---
 
 ## 1. Executive Summary & Project Purpose
 
 **FieldSense AI** is an offline, portable edge-intelligence platform engineered for multi-point spatial soil assessment, management zone detection, decision support, and Carbon Readiness proxy evaluation. Built to run on resource-constrained embedded edge hardware—specifically the **Arduino UNO Q** platform (Qualcomm QRB2210 MPU running Debian Linux alongside an STM32U585 MCU)—FieldSense AI resolves spatial soil variability without relying on cloud infrastructure, remote web APIs, or active internet connectivity.
+
+> [!IMPORTANT]
+> **Current Status Summary**: All major V1 hardware components (Arduino UNO Q, JXBS 7-in-1 Soil Sensor, NEO-M8N GPS Module, MAX485/USB-RS485 interface, ST7789 TFT Display, XPT2046 Touch) have passed isolated component verification (`🟢 COMPLETE`). Initial UNO Q integration has successfully demonstrated physical GPS (Serial1 $\rightarrow$ Bridge $\rightarrow$ Linux), soil-sensor (USB-RS485 $\rightarrow$ USB-C Hub $\rightarrow$ Linux), display (Native Hardware SPI), touch ($320 \times 240$ coordinate mapping), and Bridge/RPC paths. The project is now actively performing unified real-data acquisition and end-to-end `FieldSample` validation (`🟡 V1 INTEGRATION ACTIVE`).
+
+### Current Integration Roadmap
+```text
+COMPONENT VERIFICATION
+🟢 COMPLETE
+      │
+      ▼
+UNIFIED REAL-DATA ACQUISITION
+🟡 NEXT
+      │
+      ▼
+GPS + JXBS SIMULTANEOUS ACQUISITION
+      │
+      ▼
+FieldSample GENERATION
+      │
+      ▼
+REAL HARDWARE SAMPLES
+      │
+      ▼
+PHASE 1 DETERMINISTIC PIPELINE
+      │
+      ▼
+SPATIAL PROCESSING
+      │
+      ▼
+ZONES
+      │
+      ▼
+RECOMMENDATIONS
+      │
+      ▼
+TFT FIELD INTELLIGENCE UI
+      │
+      ▼
+END-TO-END V1 DEMONSTRATION
+```
 
 The project bridges the gap between low-cost physical sensor hardware, spatial geostatistics, deterministic agronomic rules, and human-understandable visual interfaces.
 

@@ -117,97 +117,106 @@ Virtual Simulator ───────> VirtualSensorAdapter ──┘
 
 ---
 
-## 4. Arduino UNO Q Dual-Core Architecture
+## 4. Current Verified Hardware Communication Architecture
 
-The target hardware platform is the **Arduino UNO Q**, featuring a dual-processor architecture with an internal high-speed IPC bridge:
+The verified hardware communication architecture for FieldSense V1 is structured as follows:
 
 ```text
-                     Arduino UNO Q
-              ┌──────────────────────┐
-              │                      │
-              │ STM32U585 MCU        │
-              │ Hardware peripherals │
-              │ UART / GPIO          │
-              │        │             │
-              │        ▼             │
-              │ Arduino Bridge/RPC   │
-              │        │             │
-              │        ▼             │
-              │ QRB2210 Linux        │
-              │ Python / FieldSense  │
-              │                      │
-              └──────────────────────┘
+                    ┌───────────────────────────┐
+                    │       Arduino UNO Q       │
+                    │                           │
+                    │ STM32U585 MCU             │
+                    │                           │
+                    │  Serial1                  │
+                    │     │                     │
+                    │     ▼                     │
+                    │   NEO-M8N GPS             │
+                    │                           │
+                    │ Arduino Bridge / RPC      │
+                    │     │                     │
+                    │     ▼                     │
+                    │ QRB2210 Linux             │
+                    │     │                     │
+                    │     ▼                     │
+                    │ FieldSense Python         │
+                    └───────────────────────────┘
+
+
+JXBS SOIL PATH:
+
+JXBS 7-in-1
+    │
+    │ RS485
+    ▼
+USB-RS485
+    │
+    │ USB
+    ▼
+USB-C Hub
+    │
+    ▼
+UNO Q Linux
+    │
+    ▼
+FieldSense Python
+
+
+DISPLAY PATH:
+
+UNO Q
+ │
+ ▼
+Hardware SPI
+ │
+ ▼
+ST7789 TFT
+ │
+ ▼
+320 × 240 Display
+
+XPT2046 Touch
+ │
+ ▼
+Touch SPI / mapped coordinates
+ │
+ ▼
+FieldSense UI
 ```
 
-```mermaid
-graph TB
-    subgraph Arduino_UNO_Q["Arduino UNO Q Platform (🟢 VERIFIED)"]
-        subgraph MCU["STM32U585 Microcontroller (🟢 VERIFIED)"]
-            M1["Real-Time Code Execution & GPIO Control"]
-            M2["Physical UART Hardware (TX/RX)"]
-            M3["Modbus RTU / GPS Buffer Management"]
-        end
-
-        subgraph IPC["Arduino Bridge / RPC Link (🟢 VERIFIED)"]
-            I1["Bidirectional Structured Data Transfer Protocol"]
-        end
-
-        subgraph MPU["Qualcomm QRB2210 MPU (🟢 VERIFIED)"]
-            P1["Debian Linux OS & Python 3 Runtime"]
-            P2["FieldSense AI Core Software Pipeline"]
-            P3["Spatial Engine & BFS Zone Clustering"]
-            P4["Local HTML/SVG UI File Generation"]
-        end
-    end
-
-    MCU <--> IPC <--> MPU
-```
-
-### Verified Platform Capabilities (`🟢 VERIFIED`)
-- **Power & Boot**: Clean boot, stable Linux OS execution (`🟢 VERIFIED`).
-- **STM32U585 MCU**: Code execution, GPIO pin control, physical UART hardware (`🟢 VERIFIED`).
-- **Qualcomm QRB2210 Linux**: Python runtime execution, continuous data processing loops (`🟢 VERIFIED`).
-- **Arduino Bridge / RPC**: Bidirectional structured data flow between STM32 MCU and Linux/Python (`🟢 VERIFIED`).
-- **Physical UART**: Real physical voltage-level UART TX/RX signal activity verified on board (`🟢 VERIFIED`).
-
-### Peripheral Integration Status (`🟡 PENDING V1 INTEGRATION`)
-- **NEO-M8N GPS → UNO Q Integration**: `🟡 PENDING V1 INTEGRATION`
-- **JXBS Soil Sensor → MAX485 → UNO Q Integration**: `🟡 PENDING V1 INTEGRATION`
-- **ST7789 + XPT2046 TFT → UNO Q Integration**: `🟡 PENDING V1 INTEGRATION`
-- **End-to-End FieldSample Hardware Pipeline**: `🟡 PENDING V1 INTEGRATION`
+### Verified Hardware Paths (`🟢 VERIFIED`)
+- **GPS Path**: `NEO-M8N` → `STM32 Serial1` (9600 baud) → `Arduino Bridge / RPC` → `Qualcomm Linux MPU / Python`. (NMEA output `$GN`, `$GP`, `$GL` at ~1 Hz native rate).
+- **JXBS Soil Path**: `JXBS 7-in-1` → `RS485` → `USB-RS485` → `USB-C Hub` → `UNO Q Linux` → `FieldSense Python`.
+  > [!IMPORTANT]
+  > The GPS and JXBS paths are currently separate: GPS uses STM32 `Serial1` → Bridge → Linux, while JXBS uses `USB-RS485` → `USB-C Hub` → Linux. The JXBS sensor is **NOT** connected to the UNO Q's primary hardware UART.
+- **Display Path**: `UNO Q` → `Native Hardware SPI` (`&SPI`) → `ST7789 TFT` ($320 \times 240$ landscape display).
+- **Touch Path**: `XPT2046 Touch` → `Touch SPI` / mapped coordinates ($320 \times 240$) → `FieldSense UI`.
 
 ### STM32U585 MCU Responsibilities
-- Real-time peripheral timing management.
-- RS485 DE/RE transceiver direction switching.
-- Modbus RTU polling frame transmission and CRC verification.
-- UART serial ring buffer management for NEO-M8N NMEA sentences.
+- Manages physical `Serial1` UART for continuous NEO-M8N NMEA sentence acquisition.
+- Parses NMEA sentences and stages structured GPS data.
+- Exposes `get_gps_data` via Arduino Bridge / RPC to Linux.
+- Drives native Hardware SPI bus for TFT rendering and touch reading.
 
 ### Qualcomm QRB2210 MPU Responsibilities
-- Executes Python standard library runtime.
-- Runs the 8-stage deterministic FieldSense pipeline.
-- Performs Cartesian spatial projection and IDW raster interpolation.
-- Executes 4-neighbor BFS graph component clustering.
-- Generates single-file self-contained HTML/CSS/SVG dashboard artifacts.
+- Polls structured GPS telemetry from Arduino Bridge.
+- Acquires JXBS 7-in-1 Modbus RTU telemetry over USB-RS485 through the USB-C Hub.
+- Executes Python standard library runtime and deterministic 8-stage FieldSense core.
+- Performs Cartesian spatial projection, IDW raster interpolation, and 4-neighbor BFS zone clustering.
 
 ---
 
 ## 5. Arduino Bridge / RPC & Sensor -> FieldSample Flow
 
-*(Hardware Status: Arduino UNO Q Platform, JXBS 7-in-1 Soil Sensor, NEO-M8N GPS Breakout, MAX485 RS485 Interface, & 2.8" ST7789 + XPT2046 Display = `VERIFIED AS INDIVIDUAL COMPONENTS`; System Peripheral Wiring & End-to-End Pipeline = `🟡 PENDING V1 INTEGRATION`)*
-
-The communication link between the physical sensors, STM32 real-time MCU, and QRB2210 Linux MPU uses the verified MAX485 physical layer transceiver and the verified Arduino Bridge / RPC Inter-Process Communication (IPC) link:
+*(Hardware Status: Component Verification = `🟢 COMPLETE`; Real-Hardware Integration Paths = `🟢 VERIFIED`; Unified GPS + Soil Pipeline = `🟡 PENDING`)*
 
 ```text
-[ JXBS Sensor ] ──(RS485 A/B)──> [ MAX485 Transceiver ] ──(TTL UART)──> [ STM32 MCU ] ──(Bridge/RPC 🟢)──> [ QRB2210 Linux ]
-                                                                                                                   │
-                                                                                                                   ▼
-                                                                                                         HardwareSensorAdapter
-                                                                                                                   │
-                                                                                                                   ▼
-                                                                                                         FieldSample Instance
+GPS:   [ NEO-M8N ] ──(Serial1)──> [ STM32 MCU ] ──(Bridge/RPC)──> [ QRB2210 Linux ] ──┐
+                                                                                       ├──> HardwareSensorAdapter ──> FieldSample
+Soil:  [ JXBS Sensor ] ──(RS485)──> [ USB-RS485 ] ──(USB Hub)───> [ QRB2210 Linux ] ──┘
 ```
 
 > [!NOTE]
+> All major hardware components (Arduino UNO Q, JXBS 7-in-1, NEO-M8N GPS, ST7789 TFT, XPT2046 Touch) have passed component-level verification. Verified integration paths exist for GPS (Serial1 → Bridge → Linux), JXBS (USB-RS485 → USB-C Hub → Linux), and Display (Native Hardware SPI). The next stage is unified real-data acquisition combining GPS and soil streams into the canonical `FieldSample` pipeline.
 > All core hardware components—the Arduino UNO Q platform, MAX485 RS485 transceiver module, NEO-M8N GPS module, JXBS 7-in-1 soil probe, and 2.8" ST7789 + XPT2046 Display—are now **VERIFIED** at the component level. The project is now entering V1 system integration, where the verified components will be connected and validated as a complete end-to-end system.
 
 1. **Physical Acquisition**: MAX485 converts RS485 differential signals from JXBS probe to TTL UART for STM32 MCU. STM32 issues Modbus RTU read holding registers request (`0x0000–0x0020`).
