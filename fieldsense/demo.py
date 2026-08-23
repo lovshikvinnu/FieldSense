@@ -5,6 +5,7 @@ Executable via:
 """
 
 import os
+from dataclasses import replace
 from typing import Dict, Any
 
 from fieldsense.testing.golden import GoldenDatasetRegistry
@@ -13,17 +14,20 @@ from fieldsense.spatial import SpatialEngine, SpatialConfig
 from fieldsense.zones import ZoneDetectionEngine
 from fieldsense.recommendations import RecommendationEngine
 from fieldsense.presentation import UIViewAdapter, LocalUIRenderer
+from fieldsense.ai import AIAdapterFactory, build_explanation_context
 
 
 def run_demo(
     output_path: str = "artifacts/fieldsense_competition_demo.html",
     scenario_name: str = "competition_demo_v1",
+    enable_narrative: bool = True,
 ) -> Dict[str, Any]:
     """Execute complete 8-stage FieldSense pipeline demonstration and generate offline HTML dashboard.
 
     Args:
         output_path: Target path for HTML dashboard artifact output.
         scenario_name: Name of golden dataset scenario to load.
+        enable_narrative: Attach an optional AI explanation narrative to the view.
 
     Returns:
         Dictionary containing demonstration summary metrics.
@@ -59,6 +63,25 @@ def run_demo(
     ui_adapter = UIViewAdapter()
     ui_view = ui_adapter.adapt(session, spatial_result, zone_result, rec_result)
 
+    # 7b. Optional AI Explanation Layer.
+    # Deliberately OUT OF BAND: it runs after the deterministic pipeline has
+    # completed, never inside it. A real model backend costs tens of seconds on
+    # edge hardware, far beyond the < 500 ms deterministic budget, so the
+    # narrative must always be optional and always discardable.
+    # The factory resolves to MockAIAdapter unless GGUF weights and a
+    # llama.cpp binary are both present, so this upgrades automatically when a
+    # model is installed and needs no code change.
+    narrative = None
+    if enable_narrative:
+        ai_adapter = AIAdapterFactory.create_adapter()
+        try:
+            narrative = ai_adapter.explain(
+                build_explanation_context(session, spatial_result, zone_result, rec_result)
+            )
+        finally:
+            ai_adapter.shutdown()
+        ui_view = replace(ui_view, narrative=narrative)
+
     # 8. Local HTML Renderer
     renderer = LocalUIRenderer()
     html_content = renderer.render_html(ui_view)
@@ -82,6 +105,9 @@ def run_demo(
         "output_path": output_path,
         "offline_mode": ui_view.system_status.offline_mode,
         "data_source": ui_view.system_status.data_source,
+        "narrative_source": narrative.generated_by if narrative else "DISABLED",
+        "narrative_status": narrative.generation_status.value if narrative else "DISABLED",
+        "narrative_violations_blocked": len(narrative.guard_violations) if narrative else 0,
     }
 
     # Print clean terminal report
@@ -95,6 +121,7 @@ def run_demo(
     print(f"Coverage Ratio:     {summary['coverage_ratio']}%")
     print(f"Zones Detected:     {summary['zone_count']} Spatially Connected Management Zones")
     print(f"Recommendations:    {summary['recommendation_count']} Rule-Based Actions")
+    print(f"Explanation Layer:  {summary['narrative_source']} [{summary['narrative_status']}] | Guard Blocks: {summary['narrative_violations_blocked']}")
     print(f"Dashboard Artifact: {summary['output_path']}")
     print("==================================================\n")
 

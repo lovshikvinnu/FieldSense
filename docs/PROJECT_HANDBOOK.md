@@ -152,10 +152,10 @@ FieldSense AI processes raw soil measurements through an 8-stage canonical pipel
 
 ### Development Phases & Phase Transition
 - **Phase 0 — Architecture Freeze (COMPLETE)**: Defined frozen domain contracts, canonical pipeline, module boundaries, and dependency directions.
-- **Phase 1 — Software Architecture & Intelligence (COMPLETE)**: Implemented 100% offline Python software pipeline, virtual field simulation, validation, MCDA scoring, spatial IDW engine, BFS zone detection, recommendation rules, passive UI renderer, mock hardware interfaces, and 105-test regression baseline.
+- **Phase 1 — Software Architecture & Intelligence (COMPLETE)**: Implemented 100% offline Python software pipeline, virtual field simulation, validation, MCDA scoring, spatial IDW engine, BFS zone detection, recommendation rules, passive UI renderer, mock hardware interfaces, and 178-test regression baseline.
 - **Component Verification Phase (COMPLETE 🟢)**: All individual V1 hardware components and the UNO Q main compute platform have successfully passed component-level physical validation.
 - **Phase 2 — V1 Hardware Integration (STARTING 🚀)**: Connecting and validating verified components as a complete physical end-to-end FieldSense system.
-- **Phase 3 — Future Extensions (PLANNED)**: Local edge LLM explanation layer (via `llama.cpp` / ONNX), SQLite historical session storage, and framebuffer driver for physical handheld LCD displays.
+- **Phase 3 — Extensions (PARTIALLY COMPLETE)**: The local edge SLM explanation layer (`fieldsense/ai/`) and the display bridge to the 2.8" panel (`fieldsense/hardware/display_bridge.py`) are **implemented**; both await physical integration. SQLite historical session storage remains `PLANNED`.
 
 ```text
 Component Verification
@@ -192,7 +192,7 @@ End-to-end validation
 
 ### Current Project Status
 - **Software Baseline**: `PHASE_1_RELEASE_READY`
-- **Regression Test Baseline**: $105\text{ passed}$ in $< 1.0\text{s}$
+- **Regression Test Baseline**: $178\text{ passed}$
 - **Current Component Verification Status**:
   - 🌱 JXBS 7-in-1 Soil Sensor — 🟢 **VERIFIED**
   - 📍 NEO-M8N GPS Module — 🟢 **VERIFIED**
@@ -213,6 +213,21 @@ End-to-end validation
   - **Embedded / Hardware Engineer**: Manages physical sensor selection, MAX485 wiring, serial protocols, UART device paths, and STM32 pin ownership.
   - **Agronomic Lead**: Establishes parameter sanity bounds, normalization optimum bands, MCDA weighting vectors, and recommendation rule definitions.
   - **Software / Documentation Engineer**: Implements core Python engines, maintains frozen contracts, enforces test coverage, and manages official documentation repository.
+
+---
+
+## 7b. AI Explanation Layer
+
+- **Status**: `IMPLEMENTED` (`fieldsense/ai/`) — downstream consumer, optional and out of band.
+- **Boundary**: Optional local SLM / LLM module. Consumes deterministic results reduced to an `ExplanationContext` and generates natural language summaries. Cannot alter deterministic scores or invent new metrics.
+- **Contract**: `LocalLLMAdapter` ABC, mirroring `SensorAdapter` (`initialize` / `explain` / `shutdown`, plus `is_available`).
+- **Backends**: `MockAIAdapter` (deterministic templates, always available, no weights required) and `LlamaCppAdapter` (quantized GGUF via a `llama.cpp` binary). `AIAdapterFactory` resolves between them; absent weights is a normal condition, not an error.
+- **Safety Gate**: `NarrativeGuard` deterministically rejects generated text containing dose units, agrochemical names, carbon credit or sequestration claims, or any number absent from the `ExplanationContext`. Rejected sections degrade to deterministic templates. This is the language-side counterpart to the data-side `ValidationEngine`.
+- **Timing Boundary**: Real model inference costs tens of seconds, far exceeding the `< 500 ms` deterministic pipeline budget. The layer therefore runs **after** the pipeline completes and is always discardable — the dashboard renders fully when `narrative` is `None`.
+- **Determinism**: `AINarrative` is **non-normative presentation text**, excluded from the bit-exact guarantee when produced by a model. `MockAIAdapter` is bit-exact and is used by all golden scenario and benchmark tests. See [CCR-001_UIFieldView_Narrative.md](CCR-001_UIFieldView_Narrative.md).
+- **Dependencies**: None added. `llama.cpp` is invoked as an external binary via stdlib `subprocess`, so `dependencies` remains `[]`.
+
+Deployment: [AI_DEPLOYMENT.md](AI_DEPLOYMENT.md).
 
 ---
 
@@ -242,14 +257,19 @@ Designed for technical showcases, hackathon judging, and peer review during the 
 
 ## 10. How to Navigate the Project Repository
 
-### Official Documentation Structure (`docs/`)
-- [README.md](file:///C:/Users/lovsh/Desktop/FieldSense/README.md) — Root entry point and project overview.
-- [docs/PROJECT_HANDBOOK.md](file:///C:/Users/lovsh/Desktop/FieldSense/docs/PROJECT_HANDBOOK.md) — (This document) Master overview, objectives, and constraints.
-- [docs/SYSTEM_ARCHITECTURE.md](file:///C:/Users/lovsh/Desktop/FieldSense/docs/SYSTEM_ARCHITECTURE.md) — Deep technical architecture, data flows, and Mermaid diagrams.
-- [docs/HARDWARE_SPEC.md](file:///C:/Users/lovsh/Desktop/FieldSense/docs/HARDWARE_SPEC.md) — Authoritative hardware component specs, register maps, and pin assignments.
-- [docs/SOFTWARE_SPEC.md](file:///C:/Users/lovsh/Desktop/FieldSense/docs/SOFTWARE_SPEC.md) — Authoritative software specification, module contracts, and behavioral schemas.
-- [docs/TEST_AND_VALIDATION.md](file:///C:/Users/lovsh/Desktop/FieldSense/docs/TEST_AND_VALIDATION.md) — Test suite results, golden scenario evidence, fault matrices, and benchmarks.
-- [docs/DECISION_LOG.md](file:///C:/Users/lovsh/Desktop/FieldSense/docs/DECISION_LOG.md) — Log of major engineering, architectural, and protocol decisions (`D-001` to `D-009`).
+### Official Documentation Structure
+
+| Document | Contents |
+| :--- | :--- |
+| [../README.md](../README.md) | Entry point, directory map, quick start |
+| [../TESTING_GUIDE.md](../TESTING_GUIDE.md) | How to test every component + the test evidence register |
+| [PROJECT_HANDBOOK.md](PROJECT_HANDBOOK.md) | *(this document)* Purpose, objectives, constraints |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture, software specification, decision log |
+| [HARDWARE.md](HARDWARE.md) | Component specs, register maps, wiring, verification |
+| [AI_DEPLOYMENT.md](AI_DEPLOYMENT.md) | Local SLM layer and the 2.8" display bridge |
+| [STATUS.md](STATUS.md) | Requirements matrix and every open specification item |
+| [DEMO_GUIDE.md](DEMO_GUIDE.md) | Presentation walkthrough |
+| `archive/` | Superseded Phase 1 documentation |
 
 ### Quick Start Commands
 - **Run Competition Demonstration Runner**:
@@ -261,4 +281,4 @@ Designed for technical showcases, hackathon judging, and peer review during the 
   ```bash
   pytest
   ```
-  Executes all 105 automated unit and integration tests.
+  Executes all 178 automated unit and integration tests.

@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Any, Optional, Tuple
 
+from fieldsense.ai.models import AINarrative
+
 
 @dataclass(frozen=True)
 class FieldSummary:
@@ -213,6 +215,10 @@ class UIFieldView:
     zones: List[UIZone]
     recommendations: List[UIRecommendation]
     system_status: SystemStatus
+    # Optional passive explanation text from the AI layer. Defaults to None so
+    # every existing caller, test, and serialized payload stays valid, and the
+    # dashboard renders completely when no explanation backend is present.
+    narrative: Optional[AINarrative] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -224,6 +230,7 @@ class UIFieldView:
             "zones": [z.to_dict() for z in self.zones],
             "recommendations": [r.to_dict() for r in self.recommendations],
             "system_status": self.system_status.to_dict(),
+            "narrative": self.narrative.to_dict() if self.narrative else None,
         }
 
     @classmethod
@@ -237,4 +244,5 @@ class UIFieldView:
             zones=[UIZone.from_dict(z) for z in data.get("zones", [])],
             recommendations=[UIRecommendation.from_dict(r) for r in data.get("recommendations", [])],
             system_status=SystemStatus.from_dict(data["system_status"]),
+            narrative=AINarrative.from_dict(data["narrative"]) if data.get("narrative") else None,
         )
