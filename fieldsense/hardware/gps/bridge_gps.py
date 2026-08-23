@@ -1,7 +1,6 @@
 import socket
 from typing import Dict, Any, Optional
-from fieldsense.domain.models import GPSPosition
-from fieldsense.hardware.errors import HardwareError, HardwareErrorCode
+from ..models import GPSPosition, HardwareError, HardwareErrorCode
 
 class BridgeGPSAdapter:
     """Reads NEO-M8N GPS telemetry via local TCP gateway."""

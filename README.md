@@ -8,8 +8,8 @@
 
 ### A handheld, fully offline AI soil mapping system that helps farmers understand exactly where their field needs attention — before they leave the field.
 
-**Built by Venkata Neha Priya Juturu & Lovshik Vinnu Dangati**
-*Electronics & Communication Engineering · Mahindra University*
+**Built by Neha Priya & Lovshik Vinnu**
+*Electronics & Communication Engineering*
 
 ![Tests](https://img.shields.io/badge/tests-231%20passing-10b981?style=flat-square)
 ![Dependencies](https://img.shields.io/badge/runtime%20dependencies-0-3b82f6?style=flat-square)
@@ -117,7 +117,7 @@ Compact-first. One HTML document serves the 240 × 320 panel and a laptop.
 
 ![FieldSense desktop dashboard](docs/images/ui_dashboard_desktop.png)
 
-Run `python3 -m fieldsense.demo` and open `artifacts/fieldsense_competition_demo.html` — a single self-contained file with zero external requests. The panel images above are captured from that same renderer, so this is exactly what the hardware shows.
+**Open the live dashboard:** [`artifacts/fieldsense_competition_demo.html`](artifacts/fieldsense_competition_demo.html) — committed to the repo, a single self-contained file with zero external requests. Rebuild it any time with `python3 -m fieldsense.demo`. The panel images above are captured from that same renderer, so this is exactly what the hardware shows.
 
 ---
 
