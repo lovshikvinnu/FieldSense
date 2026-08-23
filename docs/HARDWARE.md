@@ -1,4 +1,23 @@
-# FieldSense AI — Hardware Specification
+# FieldSense AI — Hardware
+
+Component specifications, electrical requirements, wiring, and physical
+verification status.
+
+Empirical bench-test records for each component live alongside their scripts in
+`hardware_test/`:
+
+| Record | Component |
+| :--- | :--- |
+| `hardware_test/soil sensor/JXBS_HARDWARE_TEST.md` | JXBS-3001-TR 7-in-1 soil probe |
+| `hardware_test/RS485/RS485_HARDWARE_TEST.md` | MAX485 transceiver |
+| `hardware_test/GPS/GPS_HARDWARE_TEST.md` | u-blox NEO-M8N |
+| `hardware_test/TFT/TFT_HARDWARE_TEST.md` | 2.8" ST7789V display + XPT2046 touch |
+| `hardware_test/arduino uno q/UNO_Q_HARDWARE_TEST.md` | Arduino UNO Q platform |
+| `hardware_test/soil sensor with Max485-RS485/JXBS_MAX485_UNOQ_INTEGRATION.md` | Full acquisition chain |
+
+Step-by-step test procedures: [../TESTING_GUIDE.md](../TESTING_GUIDE.md).
+
+---
 
 **STATUS:** DRAFT  
 **VERSION:** 0.1  
@@ -386,4 +405,3 @@ The Arduino UNO Q has successfully passed ground-level hardware validation for t
   - Physical UART: TX/RX signals physically transmitted and received on board pins (`PASS`).
   - Integration Status: UNO Q platform component verified; peripheral wiring to external sensors/display remains `PENDING HARDWARE`.
 - **Physical MPU Benchmarks**: `UNO_Q_PHYSICAL_BENCHMARK = PENDING_HARDWARE` (Awaiting complete V1 hardware system pipeline benchmarks).
-

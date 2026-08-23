@@ -139,7 +139,7 @@ output cannot inject markup into the offline dashboard.
 ## 6. Determinism
 
 `AINarrative` is **non-normative presentation text** and is excluded from the
-bit-exact guarantee of `docs/03_ARCHITECTURE.md` section 25 when produced by a
+bit-exact guarantee of `docs/archive/03_ARCHITECTURE.md` section 25 when produced by a
 model backend. `MockAIAdapter` is bit-exact and reports
 `generation_time_ms = 0.0` rather than a measured value, so all golden scenario,
 determinism, and benchmark tests remain valid. See

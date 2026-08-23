@@ -4,7 +4,7 @@ Optional, downstream, and powerless by design. This layer consumes already
 computed deterministic results and renders them as natural language. It can
 never alter a score, a spatial raster, a zone boundary, or a recommendation.
 
-See docs/03_ARCHITECTURE.md section 22 (AI Boundary).
+See docs/ARCHITECTURE.md, Part I - Decoupled AI Explanation Boundary.
 
 Backends implement LocalLLMAdapter. MockAIAdapter is the default and requires
 no model weights; LlamaCppAdapter drives a local llama.cpp binary and is

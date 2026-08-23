@@ -2,7 +2,7 @@
 
 **Status:** `PENDING_ARCHITECT_SIGNOFF`
 **Raised:** 2026-08-23
-**Protocol:** `docs/03_ARCHITECTURE.md` section 30
+**Protocol:** `docs/archive/03_ARCHITECTURE.md` section 30
 
 ---
 
@@ -42,7 +42,7 @@ missing or null key. No existing field is renamed, reordered, retyped, or remove
 
 ## 5. Rationale & Architectural Necessity
 
-`docs/03_ARCHITECTURE.md` section 22 and `docs/02_PROJECT_HANDBOOK.md` section 24
+`docs/03_ARCHITECTURE.md` section 22 and `docs/PROJECT_HANDBOOK.md` section 7b
 specify a downstream AI explanation layer whose output is displayed on the
 dashboard. The presentation layer is strictly passive (principle 4), so it cannot
 generate the text itself, and `LocalUIRenderer` consumes `UIFieldView` exclusively
@@ -75,7 +75,7 @@ UI data contract, and would exclude the narrative from `UIFieldView` serializati
 
 ## 8. Determinism Impact
 
-`docs/03_ARCHITECTURE.md` section 25 requires bit-exact reproducible output.
+`docs/archive/03_ARCHITECTURE.md` section 25 requires bit-exact reproducible output.
 `AINarrative` is declared **non-normative presentation text** and is excluded
 from that guarantee when produced by a model backend.
 

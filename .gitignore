@@ -1,5 +1,33 @@
+# Python
 __pycache__/
 *.py[cod]
-.pytest_cache/
-.DS_Store
 *.egg-info/
+.eggs/
+build/
+dist/
+
+# Test / tooling
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+
+# Generated dashboard output (rebuild: python3 -m fieldsense.demo)
+artifacts/*.html
+artifacts/*.png
+
+# Local model weights (see docs/AI_DEPLOYMENT.md)
+models/
+*.gguf

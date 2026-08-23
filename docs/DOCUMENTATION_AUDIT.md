@@ -203,6 +203,27 @@ Items 2 and 7–10 are mechanical and safe. Items 3–6 change meaning and deser
 
 ---
 
+## E2. Resolution status (structural cleanup, 2026-08-23)
+
+| # | Action | Outcome |
+| :--- | :--- | :--- |
+| 1 | TFT Route A vs B (**C-1**) | ✅ Route A implemented — `display_bridge.py` + `launch_display.sh` |
+| 2 | Test baseline 105 → 178 (**A-2**) | ✅ Corrected everywhere |
+| 3 | Port AI edits, de-duplicate `docs/` (**B-1**) | ✅ Ported into `PROJECT_HANDBOOK.md` §7b and `STATUS.md`; all duplicates removed |
+| 4 | Add `ai/` to the module list (**C-2**, **C-3**) | ✅ In `README.md`, `STATUS.md`, `PROJECT_HANDBOOK.md` §7b |
+| 5 | `NarrativeGuard` as a logged decision (**C-3**) | ⬜ Still open — add as `D-011` in `ARCHITECTURE.md` Part III |
+| 6 | Refresh open-items register (**C-4**) | ✅ `docs/STATUS.md`: `HW-01`/`HW-02` resolved, `AI-0x` and `DSP-0x` added |
+| 7 | `test_q.*` → `main.py`/`sketch.ino` (**C-5**) | ⬜ Still open — in `hardware_test/arduino uno q/` |
+| 8 | Strip Windows absolute paths (**C-7**) | 🔶 Partial — fixed in `PROJECT_HANDBOOK.md`; `hardware_test/*.md` still affected |
+| 9 | Delete `fieldsense/transport/` (**C-10**) | ✅ Removed; all 78 modules now import cleanly |
+| 10 | Canonical sensor name, TFT vendor (**C-8**, **C-9**) | ⬜ Still open — in `docs/HARDWARE.md` |
+| 11 | `.gitignore`, untrack `__pycache__` (**C-11**) | ✅ Added; 181 bytecode files untracked |
+
+**Documentation consolidated:** 21 files in `docs/` → 8 + `archive/`. Repo root: 6 markdown files → 2.
+Content preservation was verified line-by-line before every deletion (843 content lines, zero loss).
+
+---
+
 ## F. Delivered by this audit
 
 | Artifact | Change |

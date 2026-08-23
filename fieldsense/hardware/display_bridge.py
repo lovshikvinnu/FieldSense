@@ -31,7 +31,7 @@ discovered at runtime, absent by default, never imported.
 
 HARDWARE_SPEC_REQUIRED - the panel must be wired to the QRB2210 SPI bus for
 the `fb` target to have anything to write to. Bench verification to date used
-the STM32 MCU. See docs/AI_LAYER_DEPLOYMENT.md.
+the STM32 MCU. See docs/AI_DEPLOYMENT.md.
 """
 
 import argparse

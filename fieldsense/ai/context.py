@@ -1,6 +1,7 @@
 """Deterministic results to ExplanationContext reduction.
 
-Implements the AI boundary described in docs/03_ARCHITECTURE.md section 22:
+Implements the AI boundary described in docs/ARCHITECTURE.md, Part I
+(Decoupled AI Explanation Boundary):
 
     Deterministic Results -> Structured Context -> Edge LLM Explainer
 
