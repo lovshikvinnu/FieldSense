@@ -12,6 +12,10 @@ except ImportError:
 from fieldsense.hardware.models import HardwareError, HardwareErrorCode
 from .base import SensorTransport
 
+# 1 dS/m == 1000 uS/cm. Single source of truth lives in soil_adapter; repeated
+# here as a literal because that module imports this package's base.
+US_CM_PER_DS_M = 1000.0
+
 
 def modbus_crc(data: bytes) -> int:
     """Calculate 16-bit Modbus RTU CRC."""
@@ -128,6 +132,7 @@ class DirectUSBModbusTransport(SensorTransport):
 
         sensor_data: Dict[str, float] = {}
 
+
         for param_name, reg_addr, scale in self.REGISTER_MAP:
             request_frame = make_modbus_request(reg_addr, slave_id=self.slave_id)
 
@@ -166,11 +171,21 @@ class DirectUSBModbusTransport(SensorTransport):
                 raw_val -= 0x10000
 
             decoded_val = raw_val / scale
-            # If EC is reported in raw µS/cm (e.g. >= 20.0), convert to dS/m for FieldSample / Validation bounds
-            if param_name == "ec" and decoded_val >= 20.0:
-                decoded_val = decoded_val / 1000.0
 
-            sensor_data[param_name] = round(decoded_val, 2)
+            # EC unit boundary. The probe always reports microsiemens per
+            # centimetre; the validation contract always expects decisiemens
+            # per metre. The conversion is therefore UNCONDITIONAL.
+            #
+            # This used to be gated on `decoded_val >= 20.0`, which was wrong
+            # in both directions: a genuinely low reading of 15 uS/cm passed
+            # through as 15 dS/m and was rejected by the 0.0-10.0 bound, while
+            # a saline 25000 uS/cm became 25 dS/m and was also rejected. Both
+            # failures looked like sensor faults rather than a unit bug.
+            if param_name == "ec":
+                sensor_data["ec_raw_us_cm"] = round(decoded_val, 2)
+                decoded_val = decoded_val / US_CM_PER_DS_M
+
+            sensor_data[param_name] = round(decoded_val, 3)
 
             if self.inter_query_delay > 0:
                 time.sleep(self.inter_query_delay)

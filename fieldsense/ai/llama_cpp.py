@@ -64,11 +64,20 @@ class LlamaCppAdapter(LocalLLMAdapter):
         Never raises. A machine with neither installed is the expected default.
         """
         try:
-            if not os.path.isfile(self.config.model_path):
+            if not os.path.isfile(self.model_path()):
                 return False
             return self._resolve_binary() is not None
         except OSError:
             return False
+
+    def model_path(self) -> str:
+        """Return the absolute weights path.
+
+        A relative `model_path` is fine from a shell in the repository and
+        useless under systemd, whose working directory is not the repository
+        unless the unit says so. Resolving here means both work.
+        """
+        return self.config.resolved_model_path()
 
     def initialize(self) -> None:
         """Probe for required on-disk assets."""
@@ -151,7 +160,7 @@ class LlamaCppAdapter(LocalLLMAdapter):
         return AINarrative(
             field_summary=summary,
             zone_narratives=zone_narratives,
-            generated_by=os.path.basename(self.config.model_path),
+            generated_by=os.path.basename(self.model_path()),
             generation_status=status,
             guard_violations=violations,
             is_ai_generated=model_sections > 0,
@@ -223,7 +232,7 @@ class LlamaCppAdapter(LocalLLMAdapter):
         binary = self._resolve_binary() or self.config.binary_path
         command = [
             binary,
-            "-m", self.config.model_path,
+            "-m", self.model_path(),
             "-p", prompt,
             "-n", str(self.config.max_output_tokens),
             "-c", str(self.config.context_tokens),
@@ -265,6 +274,6 @@ class LlamaCppAdapter(LocalLLMAdapter):
 
     def _missing_asset_label(self) -> str:
         """Describe which asset is missing, for the audit trail."""
-        if not os.path.isfile(self.config.model_path):
-            return f"MODEL_NOT_FOUND:{self.config.model_path}"
+        if not os.path.isfile(self.model_path()):
+            return f"MODEL_NOT_FOUND:{self.model_path()}"
         return f"BINARY_NOT_FOUND:{self.config.binary_path}"

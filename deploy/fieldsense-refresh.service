@@ -1,0 +1,41 @@
+# FieldSense AI — continuously refreshing variant of fieldsense.service.
+#
+# Use this INSTEAD OF fieldsense.service when the panel should keep updating
+# (repeated acquisition cycles) rather than showing one frame from boot.
+#
+#   sudo cp deploy/fieldsense-refresh.service /etc/systemd/system/
+#   sudo systemctl enable --now fieldsense-refresh.service
+
+[Unit]
+Description=FieldSense AI continuous field loop (acquire, render, display)
+After=local-fs.target
+Wants=local-fs.target
+
+[Service]
+Type=simple
+User=fieldsense
+SupplementaryGroups=video dialout
+WorkingDirectory=/opt/fieldsense
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/fieldsense
+Environment=FIELDSENSE_SOURCE=VIRTUAL
+Environment=FIELDSENSE_SENSOR_PORT=/dev/ttyUSB0
+Environment=FIELDSENSE_REQUIRE_GPS_FIX=0
+Environment=FB_DEVICE=auto
+Environment=ROTATE=0
+Environment=REFRESH_SEC=300
+Environment=FIELDSENSE_AI_BACKEND=AUTO
+Environment=FIELDSENSE_MODEL_PATH=/opt/fieldsense/models/fieldsense-slm.gguf
+
+ExecStart=/opt/fieldsense/scripts/boot_fieldsense.sh --loop
+
+Restart=always
+RestartSec=30
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

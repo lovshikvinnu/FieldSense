@@ -9,10 +9,21 @@
 #include <XPT2046_Touchscreen.h>
 
 // 1. Display Pins
+//
+// PIN CONFLICT, RESOLVED HERE. The MAX485 RS485 transceiver drives its shared
+// DE/RE direction line from digital pin 7 (see the soil sensor sketch and
+// docs/HARDWARE.md section 6). This sketch previously also claimed pin 7 for
+// the display backlight. Both peripherals are present in the assembled
+// FieldSense unit, so on the same MCU that single line would have driven the
+// transceiver into transmit whenever the backlight was on, jamming the Modbus
+// bus, while every soil read would have flickered the screen.
+//
+// The backlight moves to pin 6, which no other FieldSense peripheral claims.
+// Pin 7 belongs to MAX485_RE_DE and nothing else.
 #define TFT_CS    10
 #define TFT_DC    9
 #define TFT_RST   8
-#define TFT_LED   7  
+#define TFT_LED   6   // was 7 — see the pin conflict note above
 
 // 2. Touch Pins
 #define TOUCH_CS  4

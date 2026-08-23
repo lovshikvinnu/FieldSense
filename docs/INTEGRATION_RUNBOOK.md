@@ -96,6 +96,58 @@ with the CH340 adapter and continue; step 2 tolerates a missing fix.
 
 ---
 
+## STEP 1b — Choose the acquisition path
+
+Three physical soil wirings are supported, and all three produce the same
+`FieldSample`. Pick the one that matches your harness and set it once:
+
+| `FIELDSENSE_SOURCE` | Probe wiring | Dependencies |
+| :--- | :--- | :--- |
+| `HARDWARE` | JXBS → MAX485 → USB-RS485 dongle → **Linux** `/dev/ttyUSB0` | Standard library only |
+| `BRIDGE` | JXBS → MAX485 → **STM32** `Serial1` → RouterBridge `get_soil_data` | Standard library only; needs the MCU sketch flashed |
+| `USB_PYSERIAL` | Same wiring as `HARDWARE` | Requires `pip install pyserial` |
+
+GPS always arrives over the RouterBridge (`get_gps_data`), which the NEO-M8N
+sketch provides.
+
+```bash
+export FIELDSENSE_SOURCE=HARDWARE          # or BRIDGE
+export FIELDSENSE_SENSOR_PORT=/dev/ttyUSB0
+export FIELDSENSE_REQUIRE_GPS_FIX=0        # cold start degrades, does not abort
+
+python3 -c "
+from fieldsense.hardware.factory import DataSourceConfig, SensorAdapterFactory
+cfg = DataSourceConfig.from_env()
+print(SensorAdapterFactory.describe_source(cfg))
+"
+```
+
+> [!IMPORTANT]
+> `HARDWARE` is the default physical path and needs **no third-party package**.
+> `USB_PYSERIAL` exists only for the bench dongle setup that was verified with
+> pyserial; it will fail on a freshly flashed image, where `dependencies = []`
+> means pyserial was never installed.
+
+### Verifying the STM32 soil bridge on its own
+
+```bash
+python3 -c "
+from fieldsense.hardware import BridgeSoilAdapter
+soil = BridgeSoilAdapter().read()
+print('parameters read :', soil.parameters_read, 'of 7')
+print('pH', soil.ph, '| moisture', soil.moisture, '%')
+print('EC', soil.ec, 'dS/m  (raw', soil.ec_raw_us_cm, 'uS/cm)')
+print('errors:', soil.read_errors or 'none')
+"
+```
+
+The sketch reports its own Modbus failure in band as
+`{"error":"MODBUS_READ_FAILED"}`. That becomes a fully degraded reading with
+`parameters_read == 0`, not an exception, so the campaign continues and
+`ValidationEngine` rejects the sample on its zeroed pH.
+
+---
+
 ## STEP 2 — Contract adapter verification
 
 Prove that telemetry becomes a `FieldSample` the frozen validator accepts. This
@@ -136,7 +188,7 @@ PY
 
 | Symptom | Cause | Fix |
 | :--- | :--- | :--- |
-| `REJECTED`, reason `MEASUREMENT_OUT_OF_RANGE`, EC in the hundreds | EC forwarded as µS/cm instead of dS/m | The adapter divides by 1000. If you bypassed `JXBSSoilAdapter`, you skipped the conversion — do not hand-roll it |
+| `REJECTED`, reason `MEASUREMENT_OUT_OF_RANGE`, EC in the hundreds | EC forwarded as µS/cm instead of dS/m | Every soil path divides by 1000, unconditionally. If you bypassed the adapters you skipped the conversion — do not hand-roll it, and never gate it on the magnitude of the reading |
 | `quality` around 0.35 | No GPS fix | Antenna needs sky view |
 | `quality` scaled to a fraction like 5/7 | Some registers failed | Check RS485 wiring and the 12 V rail |
 | `quality` 0.0 | No soil data at all | Step 1a did not really pass |

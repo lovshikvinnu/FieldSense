@@ -24,6 +24,10 @@ from fieldsense.presentation import LocalUIRenderer, UIViewAdapter
 from fieldsense.ai import AIAdapterFactory, build_explanation_context
 
 
+
+# Session label for hardware-sourced runs, shared by the dashboard and the panel.
+FIELD_TEST_NAME = "Hardware Field Test"
+
 def generate_sample_hardware_json(file_path: str) -> None:
     """Generate sample field_test_20260823_171931.json with 5 physical soil samples if missing."""
     print(f"Generating realistic 5-point hardware test dataset at '{file_path}'...")
@@ -263,8 +267,8 @@ def push_to_display(
 
     from fieldsense.hardware import display_bridge as bridge
 
-    candidates = [fb_device] if fb_device else ["/dev/fb1", "/dev/fb0"]
-    device = next((d for d in candidates if d and os.path.exists(d)), None)
+    device = bridge.detect_framebuffer(fb_device)
+    candidates = [fb_device] if fb_device else list(bridge.FRAMEBUFFER_CANDIDATES)
 
     if device is None and mode == "auto":
         outcome["detail"] = (
@@ -273,17 +277,19 @@ def push_to_display(
         )
         return outcome
 
-    if bridge.find_browser() is None:
-        outcome["status"] = "FAILED"
-        outcome["detail"] = "no Chromium-family browser found (sudo apt install chromium)"
-        return outcome
-
+    # No browser is no longer fatal: the bridge falls back to the stdlib status
+    # panel so a stock board still lights its screen.
+    renderer = "dashboard"
     try:
-        width, height, rgb = bridge.capture_rgb(html_path, 240, 320, settle_ms=1200)
+        width, height, rgb, renderer = bridge.capture_or_panel(
+            html_path, 240, 320, settle_ms=1200,
+            summary_path=os.path.join(output_dir, "panel_summary.json"),
+        )
     except Exception as exc:
         outcome["status"] = "FAILED"
         outcome["detail"] = "frame render failed: {}".format(exc)
         return outcome
+    outcome["renderer"] = renderer
 
     # Always keep visual proof of the exact frame, panel present or not.
     try:
@@ -301,9 +307,12 @@ def push_to_display(
 
     try:
         width, height, rgb = bridge.rotate_rgb(rgb, width, height, rotate)
-        written = bridge.write_framebuffer(bridge.rgb_to_rgb565(rgb, "little"), device)
+        written = bridge.write_framebuffer(
+            bridge.rgb_to_rgb565(rgb, "little"), device, geometry=(width, height)
+        )
         outcome.update(status="PUSHED", device=device,
-                       detail="{} bytes written ({}x{} RGB565)".format(written, width, height))
+                       detail="{} bytes written ({}x{} RGB565, renderer={})".format(
+                           written, width, height, renderer))
     except Exception as exc:
         outcome["status"] = "FAILED"
         outcome["device"] = device
@@ -439,6 +448,27 @@ def run_spatial_test(
 
     # 7. Physical 2.8" TFT panel
     print("\n[7/7] Pushing RGB565 frame to the 2.8\" TFT panel...")
+
+    # Panel summary first, so the browser-free renderer has real numbers to draw
+    # if Chromium is absent on this board. Non-fatal on failure.
+    from fieldsense.hardware.panel_renderer import write_panel_summary
+
+    write_panel_summary({
+        "field_name": FIELD_TEST_NAME,
+        "provenance": provenance,
+        "total_samples": len(samples),
+        "valid_samples": len(samples),
+        "rejected_samples": 0,
+        "coverage_ratio": round(spatial_result.coverage.coverage_ratio, 4),
+        "soil_health_score": round(health.score, 4) if health else None,
+        "soil_health_status": health.status if health else None,
+        "zone_count": len(zone_result.zones),
+        "recommendation_count": len(rec_result.recommendations),
+        "data_source": "HARDWARE" if provenance == "LIVE_HARDWARE" else provenance,
+        "evidence_level": health.evidence_level if health else None,
+        "offline_mode": True,
+        "panel_note": "TEXT PANEL",
+    }, os.path.join(output_dir, "panel_summary.json"))
     if html_path is None:
         display_result = {"status": "SKIPPED", "device": None, "frame_png": None,
                           "detail": "no dashboard rendered"}

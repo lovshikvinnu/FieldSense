@@ -396,40 +396,103 @@ open artifacts/panel_frame.png
 
 ## D8. Start on boot
 
-```ini
-# /etc/systemd/system/fieldsense-display.service
-[Unit]
-Description=FieldSense dashboard on the 2.8" SPI panel
-After=multi-user.target
-
-[Service]
-Type=oneshot
-User=fieldsense
-WorkingDirectory=/home/fieldsense/FieldSense
-Environment=FB_DEVICE=/dev/fb1
-Environment=ROTATE=0
-ExecStart=/home/fieldsense/FieldSense/scripts/launch_display.sh fb
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-```
+The service is a **file in this repository**, not a snippet to retype:
+`deploy/fieldsense.service`. Install it with the bundled installer:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now fieldsense-display.service
-journalctl -u fieldsense-display -f
+sudo ./scripts/install_boot_service.sh
 ```
 
-For a continuously refreshing panel, use `ExecStart=... watch` with `Type=simple`
-and `Restart=always`.
+It creates the `fieldsense` system account, adds it to `video` (to write
+`/dev/fbN`) and `dialout` (to open the RS485 tty), copies the tree to
+`/opt/fieldsense`, installs the unit, and enables it. Preview without changing
+anything:
+
+```bash
+./scripts/install_boot_service.sh --dry-run
+```
+
+For a panel that keeps refreshing rather than showing one frame from boot:
+
+```bash
+sudo ./scripts/install_boot_service.sh --refresh
+```
+
+Then:
+
+```bash
+sudo systemctl start fieldsense.service
+journalctl -u fieldsense -f
+```
+
+### What the unit runs
+
+`ExecStart` points at `scripts/boot_fieldsense.sh`, which:
+
+1. Verifies `fieldsense` imports and reports whether any third-party package is
+   present — the runtime is standard library only, and this proves it on the
+   board instead of discovering a missing wheel with no network to install it.
+2. Optionally acquires live samples (when `FIELDSENSE_SOURCE` names a hardware
+   source) with `--no-interactive`, which is mandatory: systemd gives the unit no
+   TTY and `live_collector`'s operator prompt would otherwise block the boot.
+3. Regenerates the dashboard and `artifacts/panel_summary.json`.
+4. Pushes a frame to the panel, auto-detecting `/dev/fb1` then `/dev/fb0`.
+
+Each stage logs and continues. A partly failed boot still lights the screen,
+because a dark panel in a field is indistinguishable from a dead board.
+
+### Configuration without a code change
+
+Every knob is an `Environment=` line in the unit:
+
+| Variable | Default | Meaning |
+| :--- | :--- | :--- |
+| `FIELDSENSE_SOURCE` | `VIRTUAL` | `VIRTUAL`, `HARDWARE` (USB-RS485 on Linux), `BRIDGE` (probe on the STM32), `USB_PYSERIAL` |
+| `FIELDSENSE_SENSOR_PORT` | `/dev/ttyUSB0` | Probe tty for the `HARDWARE` source |
+| `FIELDSENSE_SENSOR_BAUD` | `9600` | JXBS factory default, 8N1 |
+| `FIELDSENSE_REQUIRE_GPS_FIX` | `0` | `1` aborts a sample with no fix; `0` degrades its quality instead |
+| `FIELDSENSE_POINTS` | `5` | Live points per acquisition cycle |
+| `FB_DEVICE` | `auto` | `auto`, `/dev/fb0`, `/dev/fb1` |
+| `ROTATE` | `0` | `0`, `90`, `180`, `270` |
+| `REFRESH_SEC` | `300` | Loop interval for the refresh unit |
+| `FIELDSENSE_AI_BACKEND` | `AUTO` | `AUTO`, `MOCK`, `LLAMA_CPP` |
+| `FIELDSENSE_MODEL_PATH` | `models/fieldsense-slm.gguf` | GGUF weights. **Use an absolute path in a unit** — the default is repo-relative and a service's working directory is not the repository unless the unit says so. |
+| `FIELDSENSE_LLAMA_BIN` | `llama-cli` | Inference binary, on `PATH` or absolute |
+
+After editing:
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl restart fieldsense.service
+```
+
+### The board has no browser
+
+The `fb` and `png` targets rasterise the HTML dashboard with headless Chromium.
+Chromium is a **system asset, not a dependency**, and a stock UNO Q image does
+not carry one. The bridge therefore falls back to a browser-free renderer
+(`fieldsense/hardware/panel_renderer.py`) that draws the health score, sample
+counts, zones, actions, and provenance straight into a 240×320 RGB565 buffer
+using nothing but the standard library. It reads the numbers from
+`artifacts/panel_summary.json` rather than recomputing them, so the panel can
+never disagree with the dashboard.
+
+```bash
+python3 -m fieldsense.hardware.display_bridge --target panel   # force it
+python3 -m fieldsense.hardware.display_bridge --target fb --no-fallback  # require the real UI
+```
+
+Install Chromium (`sudo apt install chromium`) to get the full dashboard on the
+panel. Without it the unit still boots to a legible screen instead of a dark one.
 
 ## D9. Troubleshooting
 
 | Symptom | Cause | Fix |
 | :--- | :--- | :--- |
-| `no Chromium-family browser found` | Not installed | `sudo apt install chromium` |
-| `framebuffer /dev/fb1 does not exist` | Driver not loaded | `dmesg \| grep fbtft`; re-check D4 |
+| `no Chromium-family browser found` | Not installed | `sudo apt install chromium` for the full dashboard; without it the bridge draws the browser-free status panel |
+| `renderer=panel` in the log, plain text on the screen | No browser, fallback active | Expected. Install chromium for the graphical dashboard |
+| `no framebuffer device found` | Driver not loaded | `dmesg \| grep fbtft`; re-check D4. `FB_DEVICE=auto` already tries fb1 then fb0 |
+| `geometry mismatch: ... would display transposed` | `--rotate` disagrees with the panel's `virtual_size` | Byte counts match after a 90° rotation, so only the geometry check catches it. Set `ROTATE` to match the panel |
+
 | `permission denied writing /dev/fb1` | Not in `video` group | `sudo usermod -aG video $USER`, re-login |
 | `size mismatch: expects 240x320 ... got N bytes` | Rotation vs panel geometry | Match `--rotate` / `--width` / `--height` to `virtual_size` |
 | Panel stays black, no errors | Backlight off | Drive the `LED`/`BL` pin; check `led-gpios` |

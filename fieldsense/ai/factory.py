@@ -33,13 +33,16 @@ class AIAdapterFactory:
                        present, otherwise the template backend
 
         Args:
-            config: Optional AIConfig. Defaults are AUTO with no weights, which
-                resolves to MockAIAdapter.
+            config: Optional AIConfig. When omitted the configuration is read
+                from the environment (`AIConfig.from_env`), so a systemd unit
+                can point at absolute model paths without a code change. With
+                no environment set this is identical to the old defaults: AUTO
+                with no weights, resolving to MockAIAdapter.
 
         Returns:
             An initialized LocalLLMAdapter.
         """
-        cfg = config or AIConfig()
+        cfg = config or AIConfig.from_env()
         backend = cfg.backend.upper()
 
         if backend == "MOCK":
@@ -63,7 +66,7 @@ class AIAdapterFactory:
         Returns:
             Human-readable backend description.
         """
-        cfg = config or AIConfig()
+        cfg = config or AIConfig.from_env()
         adapter = AIAdapterFactory.create_adapter(cfg)
         name = type(adapter).__name__
         if isinstance(adapter, LlamaCppAdapter):

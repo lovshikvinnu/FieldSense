@@ -15,6 +15,7 @@ from fieldsense.zones import ZoneDetectionEngine
 from fieldsense.recommendations import RecommendationEngine
 from fieldsense.presentation import UIViewAdapter, LocalUIRenderer
 from fieldsense.ai import AIAdapterFactory, build_explanation_context
+from fieldsense.hardware.panel_renderer import write_panel_summary
 
 
 def run_demo(
@@ -108,7 +109,17 @@ def run_demo(
         "narrative_source": narrative.generated_by if narrative else "DISABLED",
         "narrative_status": narrative.generation_status.value if narrative else "DISABLED",
         "narrative_violations_blocked": len(narrative.guard_violations) if narrative else 0,
+        "evidence_level": ui_view.health_summary.evidence_level,
+        "field_name": ui_view.field.field_name,
+        "soil_health_percent": round(ui_view.health_summary.score * 100.0),
+        "provenance": "GOLDEN_DATASET",
     }
+
+    # Panel summary for the browser-free display path. The 2.8" panel needs a
+    # renderer that works with no Chromium installed, and that renderer reads
+    # these numbers rather than recomputing them, so the panel can never
+    # disagree with the dashboard. Failure to write it is non-fatal.
+    summary["panel_summary_path"] = write_panel_summary(summary)
 
     # Print clean terminal report
     print("\n==================================================")

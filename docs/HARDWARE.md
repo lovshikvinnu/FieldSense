@@ -325,15 +325,47 @@ The Arduino UNO Q has successfully passed ground-level hardware validation for t
 | Signal Name | Connected Hardware Device | Target Controller | Pin / Node Path | Confidence / Status |
 | :--- | :--- | :--- | :--- | :--- |
 | `GPS_TX` / `GPS_RX` | NEO-M8N GPS Module | STM32U585 MCU | `Serial1` (9600 8N1) | `🟢 VERIFIED` (Bridge → Linux) |
-| `USB_RS485` | JXBS 7-in-1 via USB-RS485 | Qualcomm QRB2210 Linux | USB-C Hub (`/dev/ttyUSB0`) | `🟢 VERIFIED` (Linux Modbus) |
+| `USB_RS485` | JXBS 7-in-1 via USB-RS485 | Qualcomm QRB2210 Linux | USB-C Hub (`/dev/ttyUSB0`) | `🟢 VERIFIED` (Linux Modbus, `FIELDSENSE_SOURCE=HARDWARE`) |
+| `MCU_RS485` | JXBS 7-in-1 via MAX485 on the MCU | STM32U585 MCU | `Serial1` (9600 8N1) + Bridge `get_soil_data` | `🟢 VERIFIED` (`FIELDSENSE_SOURCE=BRIDGE`) |
 | `TFT_SPI_CS` | ST7789 Display Chip Select | STM32U585 MCU | Pin 10 | `🟢 VERIFIED` (Hardware SPI) |
 | `TFT_DC` | ST7789 Data/Command | STM32U585 MCU | Pin 9 | `🟢 VERIFIED` |
 | `TFT_RST` | ST7789 Reset | STM32U585 MCU | Pin 8 | `🟢 VERIFIED` |
-| `TFT_LED` | ST7789 Backlight | STM32U585 MCU | Pin 7 | `🟢 VERIFIED` |
+| `TFT_LED` | ST7789 Backlight | STM32U585 MCU | Pin 6 | `🟡 REASSIGNED` (was Pin 7 — see the conflict note below) |
+| `MAX485_RE_DE` | MAX485 direction control (DE and RE tied) | STM32U585 MCU | Pin 7 | `🟢 VERIFIED` (exclusive to RS485) |
 | `TOUCH_SPI_CS`| XPT2046 Touch Chip Select | STM32U585 MCU | Pin 4 | `🟢 VERIFIED` (Hardware SPI) |
 | `TOUCH_IRQ` | XPT2046 Pen Interrupt | STM32U585 MCU | Pin 2 | `🟢 VERIFIED` |
 | `SPI_BUS` | Shared Display/Touch SPI | STM32U585 MCU | Hardware `&SPI` (SCK, MOSI, MISO) | `🟢 VERIFIED` |
 | `MCU_MPU_IPC` | Internal High-Speed Bridge | Shared Bridge | Arduino Bridge / RPC | `🟢 VERIFIED` |
+
+> [!CAUTION]
+> **Resolved pin conflict: digital pin 7.** The two bench sketches were
+> validated independently and both claimed pin 7. The RS485 sketch drives the
+> MAX485's tied `DE`/`RE` line from pin 7 (section 6); the TFT sketch used pin 7
+> for the display backlight. Each worked alone. In the assembled unit, where
+> both peripherals are on the same STM32, that single line would have driven the
+> transceiver into transmit whenever the backlight was lit — jamming the Modbus
+> bus — while every soil read flickered the screen.
+>
+> **Resolution:** the backlight moves to **pin 6**. Pin 7 is reserved
+> exclusively for `MAX485_RE_DE`. Applied in
+> `hardware_test/New folder/sketch.ino`. Re-flash the STM32 before wiring both
+> peripherals together, and confirm no other peripheral claims pin 6.
+
+### 8.4 Power Domain Isolation
+
+*(Status: `MEASURED` for each rail; whole-system draw still `UNKNOWN`)*
+
+| Rail | Supplies | Source | Isolation rule |
+| :--- | :--- | :--- | :--- |
+| `12 V DC` | JXBS-3001 soil probe only | Battery, direct | Never share a rail with the UNO Q. The probe's 12–24 V input is not tolerated by anything else in the enclosure. |
+| `5 V DC` | Arduino UNO Q, MAX485 module | 12 V → regulator → 5 V bus | The MAX485 breakout under test is a 5 V part; do not run it at 3.3 V. |
+| `3.3 V DC` | NEO-M8N GPS, ST7789V display board | UNO Q 3.3 V / onboard LDO | Board power only. Every **signal** line on the display is strictly 3.3 V CMOS. |
+| `GND` | Common | — | Single common ground. The RS485 pair needs a shared reference or the differential receiver floats. |
+
+> [!WARNING]
+> The 12 V probe rail and the 5 V board rail are separate domains sharing only
+> ground. Bridging them puts 12 V onto the UNO Q's 5 V bus and destroys it.
+> Confirm with a meter before first power-on, every time the harness is rebuilt.
 
 ---
 
