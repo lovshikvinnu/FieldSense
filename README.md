@@ -12,11 +12,12 @@ It is an *instrument*, not a web app.
 
 | Layer | State |
 | :--- | :--- |
-| Deterministic software pipeline (8 stages) | ✅ Complete — 178 tests passing |
+| Deterministic software pipeline (8 stages) | ✅ Complete — 231 tests passing |
 | AI explanation layer (`fieldsense/ai/`) | ✅ Complete — runs on templates; model weights optional |
 | Offline dashboard UI (240×320 + desktop) | ✅ Complete |
 | Component hardware bench tests | ✅ JXBS · MAX485 · NEO-M8N · TFT+touch · UNO Q all verified |
 | Soil sensor → MAX485 → UNO Q integration | ✅ Verified end-to-end |
+| Hardware → `FieldSample` adapter layer | ✅ Complete — 53 tests |
 | GPS / TFT wired to UNO Q | ⚠️ `PENDING HARDWARE` — pin assignment not yet fixed |
 | TFT showing the dashboard | ❌ **Not yet possible — see [Known Gaps](#known-gaps)** |
 
@@ -119,7 +120,7 @@ A **linear 8-stage pipeline**. Data enters at stage 1 and flows one way to stage
 | :--- | :--- | :--- |
 | `domain/` | Pure data contracts: `FieldSample`, `FieldSession`, enums, `SensorAdapter` ABC. Depends on nothing. | — |
 | `input/` | `VirtualSensorAdapter` — deterministic synthetic soil field for testing without hardware. | 1 |
-| `hardware/` | `HardwareSensorAdapter`, `transport/` (RS485 ABC + mock), `gps/` (ABC + virtual/stub), `HardwareConfig`, adapter factory, and `display_bridge.py` for the 2.8" panel. | 1 |
+| `hardware/` | **Adapter & contract layer.** `gps_adapter.py` (NMEA → `GPSData`), `soil_adapter.py` (JXBS Modbus → `SoilData`), `hardware_sample_adapter.py` (→ `FieldSample`), `transport/` (serial + mock), `gps/`, `display_bridge.py`. | 1 |
 | `intelligence/` | `validation/` (sanity gatekeeper), `normalization/` (raw → 0–1), `scoring/` (MCDA weights, Soil Health, N, Moisture, Carbon Readiness). | 2–3 |
 | `spatial/` | lat/lon → local Cartesian metres, field bounds, grid generation, IDW interpolation (p = 2.0, 100 m max support). | 4 |
 | `zones/` | 4-neighbour BFS connected components, small-region merging, primary-issue selection. | 5 |
@@ -170,7 +171,8 @@ These are deliberate and load-bearing. Do not "fix" them without a Contract Chan
 - **No dosages, ever.** Recommendations are directional ("review nitrogen management"), never `kg/ha` or litres. Rule tables cannot emit a quantity.
 - **Carbon Readiness is a proxy**, tagged `decision_support_only = True`, `evidence_level = "LIMITED"`, publishing its own missing inputs. FieldSense does not measure soil organic carbon or certify credits.
 - **AI cannot compute.** The explanation layer only narrates. `NarrativeGuard` deterministically blocks any generated sentence containing a dose unit, an agrochemical name, a carbon claim, or a number absent from the deterministic context.
-- **Zero dependencies.** `dependencies = []`. `llama.cpp` is invoked as an external binary via stdlib `subprocess`, never as a Python extension.
+- **Zero dependencies.** `dependencies = []`. `llama.cpp`, the browser, and `pyserial` are external system assets, imported lazily or shelled out to — never module-level imports. Serial I/O uses stdlib `termios`.
+- **One adapter boundary.** `FieldSample` is the only contract between hardware telemetry and software intelligence. Unit conversion happens once, in `fieldsense/hardware/`. The adapters never validate, score, or interpret — `ValidationEngine` and the pipeline own that.
 
 ---
 
@@ -186,6 +188,7 @@ Eight documents, each with one job.
 | [docs/AI_DEPLOYMENT.md](docs/AI_DEPLOYMENT.md) | Part I: local SLM. Part II: display bridge to the 2.8" panel |
 | [docs/PROJECT_HANDBOOK.md](docs/PROJECT_HANDBOOK.md) | Problem statement, users, value proposition, phases |
 | [docs/STATUS.md](docs/STATUS.md) | Requirements matrix and every open specification item |
+| [docs/INTEGRATION_RUNBOOK.md](docs/INTEGRATION_RUNBOOK.md) | **Four-step board bring-up**: acquisition → contract → pipeline → display |
 | [docs/DEMO_GUIDE.md](docs/DEMO_GUIDE.md) | Presentation walkthrough |
 | [docs/DOCUMENTATION_AUDIT.md](docs/DOCUMENTATION_AUDIT.md) | Record of the documentation audit and cleanup |
 

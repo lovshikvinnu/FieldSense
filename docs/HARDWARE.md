@@ -410,3 +410,104 @@ The Arduino UNO Q has successfully passed ground-level hardware validation for t
   - Physical UART: TX/RX signals physically transmitted and received on board pins (`PASS`).
   - Integration Status: UNO Q platform component verified; peripheral wiring to external sensors/display remains `PENDING HARDWARE`.
 - **Physical MPU Benchmarks**: `UNO_Q_PHYSICAL_BENCHMARK = PENDING_HARDWARE` (Awaiting complete V1 hardware system pipeline benchmarks).
+
+---
+
+## Component Datasheets & Reference Documents
+
+Vendor **product pages** are linked rather than deep PDF URLs, because product
+pages stay stable while direct PDF links rot. Where a vendor assigns a document
+number (u-blox `UBX-…`), that number is the durable identifier — search it on
+the vendor site if a link moves.
+
+> Verify each link before relying on it. These were compiled from vendor
+> identifiers, not fetched and checked in an offline build environment.
+
+### Soil probe — JXBS-3001-TR 7-in-1
+
+| Item | Reference |
+| :--- | :--- |
+| Product class | RS485 soil moisture / temperature / EC / pH / NPK integrated probe |
+| Protocol | Modbus RTU over RS485, function `0x03`, 9600 8-N-1, slave `0x01` |
+| Modbus specification | <https://modbus.org/docs/Modbus_Application_Protocol_V1_1b3.pdf> |
+| Modbus serial line spec | <https://modbus.org/docs/Modbus_over_serial_line_V1_02.pdf> |
+| Register map | **Section 4 of this document** — empirically verified against the physical probe |
+
+> [!IMPORTANT]
+> JXBS probes are sold by many resellers under near-identical part numbers with
+> **different register maps**. Do not substitute a generic datasheet for the
+> verified map in section 4. The map in this repository was read off the actual
+> unit; a downloaded PDF for a similar-looking probe may not match.
+> Register decoding is implemented once, in `fieldsense/hardware/soil_adapter.py`.
+
+### GPS — u-blox NEO-M8N (`GY-GPSV3-NEO` breakout)
+
+| Item | Reference |
+| :--- | :--- |
+| Product page | <https://www.u-blox.com/en/product/neo-m8-series> |
+| Data sheet | u-blox document `UBX-15031086` (NEO-M8 series) |
+| Receiver description & protocol spec | u-blox document `UBX-13003221` — covers NMEA output and UBX binary |
+| NMEA 0183 practical reference | <https://gpsd.gitlab.io/gpsd/NMEA.html> |
+| Sentences consumed | `GGA` (position, fix quality, satellites, HDOP), `RMC` (position, validity) |
+| Talker IDs handled | `$GN` `$GP` `$GL` `$GA` `$BD` `$QZ` |
+
+Parsing and DDMM.MMMM → decimal degrees conversion: `fieldsense/hardware/gps_adapter.py`.
+
+### RS485 transceiver — MAX485
+
+| Item | Reference |
+| :--- | :--- |
+| Product page | <https://www.analog.com/en/products/max485.html> |
+| Data sheet | Analog Devices / Maxim `MAX481/483/485/487–MAX491` family data sheet |
+| Standard | TIA/EIA-485-A differential signalling |
+| Module identity | Breakout marked `HW-097`, IC `MAX485CSA +DNHK`, onboard 120 Ω terminator `R7` |
+
+> No automatic direction control. `DE`/`RE` are tied together and driven by the
+> STM32 on digital pin 7. Transmission must fully complete before switching to
+> receive, or the frame truncates. See section 6.
+
+### Display — ST7789V + XPT2046 (2.8" 240×320 SPI)
+
+| Item | Reference |
+| :--- | :--- |
+| Display controller | Sitronix **ST7789V** — 240×320 RGB TFT controller/driver |
+| Sitronix product listing | <https://www.sitronix.com.tw/en/products/display-driver-ic/> |
+| Touch controller | XPT2046 / HR2046 — 12-bit SAR ADC resistive touch controller |
+| Pin-compatible reference part | Texas Instruments ADS7846: <https://www.ti.com/product/ADS7846> |
+| Board marking | `2.8" TFT 240xRGBx320 V1.1`, onboard 3.3 V LDO `U2`, SD slot `SD1` |
+
+> [!CAUTION]
+> **ST7789V, not ILI9341.** These boards are widely mislabelled. An ILI9341
+> driver will not initialise this panel correctly. Bench verification used
+> `Adafruit_ST7789`. Signal lines are **strictly 3.3 V** — the power pin accepts
+> 5 V only because of the onboard LDO.
+
+Framebuffer path to this panel: [AI_DEPLOYMENT.md](AI_DEPLOYMENT.md) Part II.
+
+### Compute — Arduino UNO Q (Qualcomm QRB2210 + STM32U585)
+
+| Item | Reference |
+| :--- | :--- |
+| Board documentation | <https://docs.arduino.cc/hardware/uno-q/> |
+| Board product page | <https://store.arduino.cc/products/uno-q> |
+| MPU — Qualcomm QRB2210 | <https://www.qualcomm.com/products/internet-of-things/industrial/industrial-processors/qrb2210> |
+| MPU cores | 4× ARM Cortex-A53, ARMv8.0-A (no `SDOT`, no FP16 extensions) |
+| MCU — STM32U585 | <https://www.st.com/en/microcontrollers-microprocessors/stm32u5-series.html> |
+| MCU↔MPU IPC | Arduino RouterBridge (`Bridge.provide()` / `Bridge.call()`) |
+
+The dual-processor split matters: Linux on the QRB2210 cannot meet hard
+microsecond deadlines, so the STM32 owns RS485 direction timing and other
+real-time I/O. Confirm `asimddp` presence with `cat /proc/cpuinfo` before
+sizing any on-device model — see [AI_DEPLOYMENT.md](AI_DEPLOYMENT.md) Part I.
+
+### Where each specification is implemented
+
+| Specification | Implementation | Never duplicated in |
+| :--- | :--- | :--- |
+| Modbus framing, CRC-16, register map, scaling | `fieldsense/hardware/soil_adapter.py` | `hardware_test/` scripts |
+| NMEA parsing, checksum, DDMM → decimal | `fieldsense/hardware/gps_adapter.py` | `hardware_test/` scripts |
+| Serial 8-N-1 device access | `fieldsense/hardware/transport/serial_port.py` | anywhere else |
+| Telemetry → `FieldSample` contract | `fieldsense/hardware/hardware_sample_adapter.py` | the pipeline |
+
+One implementation per specification. Bench scripts in `hardware_test/` are
+thin console harnesses over these adapters and hold no protocol logic.

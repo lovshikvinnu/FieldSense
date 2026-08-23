@@ -231,7 +231,7 @@ hardware_test/
 | `0x0006` | Soil pH | uint16 | $\div 100$ | `01 03 00 06 00 01 64 0B` | 7 bytes: `01 03 02 DH DL CL CH` | `jxbs_test.py`: L130<br>`sketch.ino`: L35 | 6.89 pH |
 | `0x0012` | Moisture | uint16 | $\div 10$ | `01 03 00 12 00 01 24 0F` | 7 bytes: `01 03 02 DH DL CL CH` | `jxbs_test.py`: L147<br>`sketch.ino`: L40 | 0.0 – 22.9 % |
 | `0x0013` | Temperature | int16 | $\div 10$ | `01 03 00 13 00 01 75 CF` | 7 bytes: `01 03 02 DH DL CL CH` | `jxbs_test.py`: L165<br>`sketch.ino`: L40 | 27.7 °C |
-| `0x0015` | EC | uint16 | $\times 1$ | `01 03 00 15 00 01 95 CD` | 7 bytes: `01 03 02 DH DL CL CH` | `jxbs_test.py`: L181<br>`sketch.ino`: L40 | 603 µS/cm |
+| `0x0015` | EC | uint16 | $\times 1$ | `01 03 00 15 00 01 95 CE` | 7 bytes: `01 03 02 DH DL CL CH` | `jxbs_test.py`: L181<br>`sketch.ino`: L40 | 603 µS/cm |
 | `0x001E` | Nitrogen (N) | uint16 | $\times 1$ | `01 03 00 1E 00 01 E4 0C` | 7 bytes: `01 03 02 DH DL CL CH` | `jxbs_test.py`: L198<br>`sketch.ino`: L48 | 43 mg/kg |
 | `0x001F` | Phosphorus (P)| uint16 | $\times 1$ | `01 03 00 1F 00 01 B5 CC` | 7 bytes: `01 03 02 DH DL CL CH` | `jxbs_test.py`: L215<br>`sketch.ino`: L48 | 60 mg/kg |
 | `0x0020` | Potassium (K) | uint16 | $\times 1$ | `01 03 00 20 00 01 85 C0` | 7 bytes: `01 03 02 DH DL CL CH` | `jxbs_test.py`: L232<br>`sketch.ino`: L48 | 120 mg/kg |
