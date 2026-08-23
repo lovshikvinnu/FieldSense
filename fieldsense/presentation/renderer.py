@@ -1,0 +1,706 @@
+"""Local UI HTML/SVG renderer for presentation layer.
+
+Compact-first layout. Base styles target the physical deployment panel, a
+2.8 inch 240x320 portrait display, and progressive media queries scale the same
+document up for laptop demonstration. One artifact serves both.
+
+Information priority on the 240x320 first screen, in order:
+
+    1. Overall soil health score and status
+    2. Colour-coded zone status bar
+    3. Field intelligence map
+    4. One-line plain-language teaser plus an AI Insights control
+
+Everything else (zone list, recommendations, diagnostics) sits below the fold.
+The full zone-by-zone narrative opens in a bottom drawer that covers the lower
+part of the screen only, so the map is never replaced.
+
+The document is assembled by token substitution rather than an f-string, so
+CSS and JavaScript braces are written literally and need no escaping.
+"""
+
+import json
+import http.server
+import socketserver
+import threading
+from typing import Optional
+
+from .models import UIFieldView
+
+_FIELD_DATA_TOKEN = "__FIELD_DATA__"
+
+_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>FieldSense AI — Offline Field Intelligence</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --green: #10b981;
+      --yellow: #f59e0b;
+      --red: #ef4444;
+      --blue: #3b82f6;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --border: #334155;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    html { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-size: 11px;
+      line-height: 1.4;
+      padding: 6px 6px 64px;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    /* ---------------------------------------------------------- header */
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 6px; flex-wrap: nowrap;
+      padding-bottom: 4px; margin-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+    }
+    .logo { font-size: 11px; font-weight: 800; letter-spacing: 0.3px; color: var(--green); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tagline { display: none; font-size: 9px; color: var(--muted); }
+    .badges { display: flex; gap: 4px; align-items: center; flex: 0 0 auto; }
+    .status-badge {
+      font-size: 7px; font-weight: 700; letter-spacing: 0.2px;
+      padding: 2px 5px; border-radius: 9px;
+      background: var(--panel); border: 1px solid var(--border);
+      display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;
+    }
+    .dot { width: 5px; height: 5px; border-radius: 50%; display: inline-block; flex: 0 0 auto; }
+    .dot-green { background: var(--green); }
+    .dot-blue { background: var(--blue); }
+
+    /* ---------------------------------------------------------- layout */
+    .layout { display: flex; flex-direction: column; gap: 6px; }
+    /* On the compact panel the wrappers dissolve so every panel is a direct
+       flex item and can be ordered independently of its desktop column. */
+    .col { display: contents; }
+    .p-hero { order: 1; }
+    .p-map { order: 2; }
+    .p-zones { order: 3; }
+    .p-recs { order: 4; }
+    .p-status { order: 5; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 7px; }
+    .panel-title {
+      font-size: 8px; font-weight: 700; letter-spacing: 0.6px;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
+    }
+
+    /* ---------------------------------------------------------- hero */
+    .hero-top { display: flex; align-items: center; gap: 7px; min-width: 0; }
+    .score { font-size: 26px; font-weight: 800; line-height: 1; flex: 0 0 auto; }
+    .hero-bar { margin-left: auto; flex: 1 1 auto; min-width: 60px; max-width: 104px; }
+    .status-tag {
+      display: inline-block; padding: 2px 6px; border-radius: 4px;
+      font-size: 8px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.3px;
+    }
+    .status-HEALTHY { background: rgba(16, 185, 129, 0.18); color: var(--green); border: 1px solid var(--green); }
+    .status-MODERATE { background: rgba(245, 158, 11, 0.18); color: var(--yellow); border: 1px solid var(--yellow); }
+    .status-POOR { background: rgba(239, 68, 68, 0.18); color: var(--red); border: 1px solid var(--red); }
+    .status-UNAVAILABLE { background: rgba(148, 163, 184, 0.15); color: var(--muted); border: 1px solid var(--border); }
+
+    .zonebar { display: flex; height: 7px; border-radius: 4px; overflow: hidden; background: var(--border); }
+    .zonebar span { display: block; height: 100%; }
+    .zonekey { display: flex; gap: 8px; flex-wrap: wrap; font-size: 7px; color: var(--muted); margin-top: 4px; line-height: 1.2; }
+    .zonekey i { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 3px; }
+
+    /* ---------------------------------------------------------- map */
+    .map-head { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 6px; }
+    .map-head .panel-title { margin-bottom: 0; }
+    select {
+      background: var(--bg); color: var(--text); border: 1px solid var(--border);
+      border-radius: 5px; font-size: 9px; padding: 3px 4px; max-width: 118px; cursor: pointer;
+    }
+    .map-box {
+      width: 100%; height: 130px; max-width: 174px; margin: 0 auto;
+      background: #080c14;
+      border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+    }
+    .map-hint { margin-top: 3px; font-size: 7px; color: var(--muted); line-height: 1.35; }
+
+    /* ---------------------------------------------------------- insights teaser
+       Pinned to the bottom of the viewport on the 240x320 panel so the
+       one-line summary and its Read More control are always reachable
+       without scrolling, whatever the map and list content height. */
+    .p-insights {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+      border-radius: 10px 10px 0 0;
+      border-bottom: none;
+      box-shadow: 0 -4px 14px rgba(0, 0, 0, 0.5);
+      padding: 6px 8px 8px;
+    }
+    .teaser { display: flex; align-items: center; gap: 5px; min-width: 0; }
+    .teaser-icon { color: var(--blue); font-weight: 800; flex: 0 0 auto; font-size: 10px; }
+    .teaser-text {
+      font-size: 10px; color: var(--text); min-width: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .insights-btn {
+      margin-top: 5px; width: 100%; min-height: 28px;
+      background: rgba(59, 130, 246, 0.14); border: 1px solid var(--blue);
+      color: #dbeafe; border-radius: 6px;
+      font-size: 10px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase;
+      cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    .insights-btn:active { background: rgba(59, 130, 246, 0.3); }
+    .insights-btn .chev { transition: transform 0.2s ease; }
+    .insights-btn.open .chev { transform: rotate(90deg); }
+
+    /* ---------------------------------------------------------- lists */
+    .row { border-bottom: 1px solid var(--border); padding: 6px 0; }
+    .row:first-child { padding-top: 0; }
+    .row:last-child { border-bottom: none; padding-bottom: 0; }
+    .row-head { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+    .row-id { font-size: 10px; font-weight: 700; }
+    .row-sub { font-size: 8px; color: var(--muted); margin-top: 2px; }
+    .row-body { font-size: 9px; margin-top: 3px; line-height: 1.45; }
+    .prio { display: inline-block; font-size: 7px; padding: 1px 4px; border-radius: 3px; font-weight: 800; margin-right: 4px; letter-spacing: 0.3px; }
+    .prio-HIGH, .prio-CRITICAL { background: var(--red); color: #fff; }
+    .prio-MEDIUM { background: var(--yellow); color: #000; }
+    .prio-LOW { background: var(--blue); color: #fff; }
+    .empty { font-size: 9px; color: var(--muted); }
+
+    .kv { display: flex; justify-content: space-between; gap: 8px; font-size: 9px; padding: 2px 0; }
+    .kv span:last-child { font-weight: 700; }
+    .progress-bar { width: 100%; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 5px; }
+    .progress-fill { height: 100%; background: var(--blue); width: 0%; }
+    .reject { color: var(--red); }
+
+    /* ---------------------------------------------------------- insights drawer */
+    .drawer {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+      max-height: 55%;
+      background: var(--panel);
+      border-top: 1px solid var(--blue);
+      border-radius: 12px 12px 0 0;
+      box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.55);
+      transform: translateY(110%);
+      transition: transform 0.25s ease;
+      display: flex; flex-direction: column;
+    }
+    .drawer.open { transform: translateY(0); }
+    .drawer-grip { width: 34px; height: 3px; border-radius: 2px; background: var(--border); margin: 6px auto 3px; flex: 0 0 auto; }
+    .drawer-head {
+      display: flex; align-items: center; gap: 6px;
+      padding: 3px 8px 6px; border-bottom: 1px solid var(--border); flex: 0 0 auto;
+    }
+    .drawer-title { font-size: 9px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase; color: var(--muted); }
+    .ai-badge {
+      font-size: 7px; font-weight: 800; letter-spacing: 0.4px; text-transform: uppercase;
+      padding: 2px 5px; border-radius: 3px;
+      background: rgba(59, 130, 246, 0.15); color: var(--blue); border: 1px solid var(--blue);
+    }
+    .drawer-close {
+      margin-left: auto; flex: 0 0 auto;
+      width: 24px; height: 24px; line-height: 1;
+      background: transparent; border: 1px solid var(--border); color: var(--muted);
+      border-radius: 5px; font-size: 13px; cursor: pointer;
+    }
+    .drawer-body { overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 8px; }
+    .narrative-text { font-size: 10px; line-height: 1.6; }
+    .narrative-zone { border-left: 2px solid var(--border); padding: 5px 0 5px 8px; margin-top: 8px; }
+    .narrative-zone strong { display: block; font-size: 8px; letter-spacing: 0.4px; color: var(--text); margin-bottom: 2px; }
+    .narrative-zone div { font-size: 9px; color: var(--muted); line-height: 1.55; }
+    .narrative-footnote {
+      margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border);
+      font-size: 7px; color: var(--muted); line-height: 1.5;
+    }
+
+    /* ---------------------------------------------------------- tablet */
+    @media (min-width: 480px) {
+      body { font-size: 12px; padding: 10px; }
+      .logo { font-size: 15px; }
+      .tagline { display: block; }
+      .status-badge { font-size: 9px; padding: 3px 8px; }
+      .panel { padding: 12px; border-radius: 10px; }
+      .panel-title { font-size: 9px; }
+      .score { font-size: 38px; }
+      .map-box { height: 240px; max-width: 320px; }
+      .teaser-text { font-size: 12px; }
+      .insights-btn { min-height: 34px; font-size: 11px; }
+      .row-id { font-size: 12px; }
+      .row-sub, .row-body { font-size: 10px; }
+      .narrative-text { font-size: 12px; }
+      .narrative-zone div { font-size: 11px; }
+      .drawer-title { font-size: 10px; }
+    }
+
+    /* ---------------------------------------------------------- desktop */
+    @media (min-width: 900px) {
+      .layout {
+        display: grid;
+        grid-template-columns: 250px 1fr 280px;
+        gap: 14px; align-items: start;
+      }
+      .col { display: flex; flex-direction: column; gap: 14px; }
+      /* Compact ordering is column-relative only; inside a desktop column the
+         panels follow document order. */
+      .col > .panel { order: 0; }
+      .p-insights {
+        position: static; box-shadow: none; border-radius: 10px;
+        border-bottom: 1px solid var(--border); padding: 12px;
+      }
+      body { padding-bottom: 10px; }
+      .map-box { height: 380px; max-width: 507px; }
+      .drawer {
+        left: 50%; right: auto; width: 100%; max-width: 660px; max-height: 62%;
+        transform: translateX(-50%) translateY(110%);
+      }
+      .drawer.open { transform: translateX(-50%) translateY(0); }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div>
+      <div class="logo">FIELDSENSE AI</div>
+      <div class="tagline">Offline Portable Edge-Intelligence Platform</div>
+    </div>
+    <div class="badges">
+      <span class="status-badge"><span class="dot dot-green"></span> OFFLINE MODE</span>
+      <span class="status-badge"><span class="dot dot-blue"></span> <strong id="dataSource">VIRTUAL</strong></span>
+    </div>
+  </header>
+
+  <div class="layout">
+
+   <div class="col col-left">
+    <!-- 1. Overall score + colour-coded zone status -->
+    <section class="panel p-hero">
+      <div class="hero-top">
+        <div id="healthScore" class="score">--%</div>
+        <span id="healthStatusTag" class="status-tag status-MODERATE">MODERATE</span>
+        <div class="hero-bar"><div id="zoneBar" class="zonebar"></div></div>
+      </div>
+      <div id="zoneKey" class="zonekey"></div>
+    </section>
+
+    
+
+    <!-- 3. One-line teaser + Read More -->
+    <section class="panel p-insights" id="insightsPanel">
+      <div class="teaser">
+        <span class="teaser-icon">&#9679;</span>
+        <span class="teaser-text" id="teaserText"></span>
+      </div>
+      <button type="button" class="insights-btn" id="insightsBtn" aria-expanded="false" aria-controls="insightsDrawer">
+        <span>Read More &mdash; AI Insights</span><span class="chev">&#9656;</span>
+      </button>
+    </section>
+
+    <section class="panel p-status">
+      <div class="panel-title">Status &amp; Diagnostics</div>
+      <div class="kv"><span>Evidence Level</span><span id="evidenceLevel">LIMITED</span></div>
+      <div class="kv"><span>GPS Fix</span><span id="gpsStatus">--</span></div>
+      <div class="kv"><span>Sampling</span><span id="sampleProgress">-- / --</span></div>
+      <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
+      <div class="kv" style="margin-top:6px;"><span>Total Samples</span><span id="diagTotal">0</span></div>
+      <div class="kv"><span>Valid</span><span id="diagValid">0</span></div>
+      <div class="kv"><span>Rejected</span><span id="diagRejected" class="reject">0</span></div>
+    </section>
+   </div>
+
+   <div class="col col-mid">
+    <!-- 2. Field intelligence map -->
+    <section class="panel p-map" id="mapPanel">
+      <div class="map-head">
+        <div class="panel-title">Field Map</div>
+        <select id="layerSelect" aria-label="Map layer">
+          <option value="soil_health">Soil Health</option>
+          <option value="nitrogen">Nitrogen</option>
+          <option value="moisture">Moisture</option>
+          <option value="carbon_readiness">Carbon Readiness</option>
+        </select>
+      </div>
+      <div class="map-box" id="mapSvgContainer">
+        <svg id="fieldMapSvg" width="100%" height="100%" viewBox="0 0 400 300"></svg>
+      </div>
+      <div id="pointDetails" class="map-hint">Tap a cell for details.</div>
+    </section>
+   </div>
+
+   <div class="col col-right">
+    <section class="panel p-zones">
+      <div class="panel-title">Management Zones</div>
+      <div id="zonesList"></div>
+    </section>
+
+    <section class="panel p-recs">
+      <div class="panel-title">What Needs Attention</div>
+      <div id="recsList"></div>
+    </section>
+
+   </div>
+
+  </div>
+
+  <!-- Bottom drawer: covers the lower screen only, the map above stays visible -->
+  <aside class="drawer" id="insightsDrawer" role="region" aria-label="AI insights">
+    <div class="drawer-grip"></div>
+    <div class="drawer-head">
+      <span class="drawer-title">Plain Language Summary</span>
+      <span class="ai-badge" id="narrativeBadge">TEMPLATE</span>
+      <button type="button" class="drawer-close" id="insightsClose" aria-label="Close insights">&times;</button>
+    </div>
+    <div class="drawer-body">
+      <div id="narrativeSummary" class="narrative-text"></div>
+      <div id="narrativeZones"></div>
+      <div id="narrativeFootnote" class="narrative-footnote"></div>
+    </div>
+  </aside>
+
+  <script>
+    const FIELD_DATA = __FIELD_DATA__;
+
+    function colorFor(value) {
+      if (value === null || value === undefined) return '#475569';
+      if (value >= 0.70) return '#10b981';
+      if (value >= 0.40) return '#f59e0b';
+      return '#ef4444';
+    }
+
+    function initUI() {
+      document.getElementById('dataSource').innerText = FIELD_DATA.system_status.data_source;
+      document.getElementById('gpsStatus').innerText = FIELD_DATA.gps_status.status;
+
+      const samp = FIELD_DATA.sampling_status;
+      document.getElementById('sampleProgress').innerText = samp.valid_samples + ' / ' + samp.expected_samples;
+      document.getElementById('progressFill').style.width =
+        Math.min(100, (samp.valid_samples / (samp.expected_samples || 1)) * 100) + '%';
+      document.getElementById('diagTotal').innerText = samp.total_samples;
+      document.getElementById('diagValid').innerText = samp.valid_samples;
+      document.getElementById('diagRejected').innerText = samp.rejected_samples;
+
+      const health = FIELD_DATA.health_summary;
+      document.getElementById('healthScore').innerText = Math.round(health.score * 100) + '%';
+      const tag = document.getElementById('healthStatusTag');
+      tag.innerText = health.status;
+      tag.className = 'status-tag status-' + health.status;
+      document.getElementById('evidenceLevel').innerText = health.evidence_level;
+
+      renderZoneStatusBar();
+      renderMap(FIELD_DATA.map.active_layer);
+      renderZones();
+      renderRecommendations();
+      renderNarrative();
+      wireInsights();
+
+      document.getElementById('layerSelect').addEventListener('change', function (e) {
+        renderMap(e.target.value);
+      });
+    }
+
+    // Colour-coded zone status, given top visual priority beside the score.
+    function renderZoneStatusBar() {
+      const order = ['HEALTHY', 'MODERATE', 'POOR'];
+      const tint = { HEALTHY: '#10b981', MODERATE: '#f59e0b', POOR: '#ef4444' };
+      const counts = { HEALTHY: 0, MODERATE: 0, POOR: 0 };
+
+      FIELD_DATA.zones.forEach(function (z) {
+        if (counts[z.status] === undefined) counts[z.status] = 0;
+        counts[z.status] += 1;
+      });
+
+      const total = FIELD_DATA.zones.length;
+      const bar = document.getElementById('zoneBar');
+      const key = document.getElementById('zoneKey');
+      bar.innerHTML = '';
+      key.innerHTML = '';
+
+      if (total === 0) {
+        key.innerText = 'No management zones detected.';
+        return;
+      }
+
+      order.forEach(function (status) {
+        if (!counts[status]) return;
+
+        const seg = document.createElement('span');
+        seg.style.width = ((counts[status] / total) * 100) + '%';
+        seg.style.background = tint[status];
+        seg.title = counts[status] + ' ' + status;
+        bar.appendChild(seg);
+
+        const item = document.createElement('div');
+        const swatch = document.createElement('i');
+        swatch.style.background = tint[status];
+        item.appendChild(swatch);
+        item.appendChild(document.createTextNode(counts[status] + ' ' + status));
+        key.appendChild(item);
+      });
+    }
+
+    function renderMap(layerId) {
+      const svg = document.getElementById('fieldMapSvg');
+      svg.innerHTML = '';
+
+      const gridPoints = FIELD_DATA.map.grid_by_layer[layerId] || [];
+      if (gridPoints.length === 0) return;
+
+      const bounds = FIELD_DATA.map.bounds;
+      const minLat = bounds.min_latitude, maxLat = bounds.max_latitude;
+      const minLon = bounds.min_longitude, maxLon = bounds.max_longitude;
+      const width = 360, height = 260, margin = 20;
+
+      gridPoints.forEach(function (pt) {
+        if (pt.value === null) return;
+
+        const x = margin + ((pt.longitude - minLon) / (maxLon - minLon || 1)) * (width - 2 * margin);
+        const y = height - margin - ((pt.latitude - minLat) / (maxLat - minLat || 1)) * (height - 2 * margin);
+
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', x - 12);
+        rect.setAttribute('y', y - 12);
+        rect.setAttribute('width', 24);
+        rect.setAttribute('height', 24);
+        rect.setAttribute('rx', '4');
+        rect.setAttribute('fill', colorFor(pt.value));
+        rect.setAttribute('opacity', '0.88');
+        rect.style.cursor = 'pointer';
+
+        rect.addEventListener('click', function () {
+          const previous = svg.querySelector('.cell-selected');
+          if (previous) {
+            previous.classList.remove('cell-selected');
+            previous.removeAttribute('stroke');
+          }
+          rect.classList.add('cell-selected');
+          rect.setAttribute('stroke', '#f8fafc');
+          rect.setAttribute('stroke-width', '2');
+
+          document.getElementById('pointDetails').innerText =
+            pt.latitude.toFixed(5) + ', ' + pt.longitude.toFixed(5)
+            + ' | value ' + pt.value.toFixed(2) + ' | ' + pt.status
+            + ' | nearest sample ' + pt.support_distance + 'm';
+        });
+
+        svg.appendChild(rect);
+      });
+    }
+
+    function renderZones() {
+      const container = document.getElementById('zonesList');
+      container.innerHTML = '';
+
+      if (FIELD_DATA.zones.length === 0) {
+        container.innerHTML = '<div class="empty">No management zones detected.</div>';
+        return;
+      }
+
+      FIELD_DATA.zones.forEach(function (z) {
+        const row = document.createElement('div');
+        row.className = 'row';
+
+        const head = document.createElement('div');
+        head.className = 'row-head';
+        const id = document.createElement('span');
+        id.className = 'row-id';
+        id.innerText = z.zone_id;
+        const status = document.createElement('span');
+        status.className = 'status-tag status-' + z.status;
+        status.innerText = z.status;
+        head.appendChild(id);
+        head.appendChild(status);
+
+        const sub = document.createElement('div');
+        sub.className = 'row-sub';
+        sub.innerText = 'Issue: ' + (z.primary_issue || 'none') + '  |  ' + z.area_estimate + ' m\\u00B2';
+
+        row.appendChild(head);
+        row.appendChild(sub);
+        container.appendChild(row);
+      });
+    }
+
+    function renderRecommendations() {
+      const container = document.getElementById('recsList');
+      container.innerHTML = '';
+
+      if (FIELD_DATA.recommendations.length === 0) {
+        container.innerHTML = '<div class="empty">No urgent actions required.</div>';
+        return;
+      }
+
+      FIELD_DATA.recommendations.forEach(function (r) {
+        const row = document.createElement('div');
+        row.className = 'row';
+
+        const head = document.createElement('div');
+        const prio = document.createElement('span');
+        prio.className = 'prio prio-' + r.priority;
+        prio.innerText = r.priority;
+        const label = document.createElement('strong');
+        label.className = 'row-id';
+        label.innerText = r.category + ' \\u2014 ' + r.zone_id;
+        head.appendChild(prio);
+        head.appendChild(label);
+
+        const body = document.createElement('div');
+        body.className = 'row-body';
+        body.innerText = r.action;
+
+        row.appendChild(head);
+        row.appendChild(body);
+        container.appendChild(row);
+      });
+    }
+
+    function renderNarrative() {
+      const panel = document.getElementById('insightsPanel');
+      const n = FIELD_DATA.narrative;
+
+      // An absent explanation layer is a normal condition, not an error.
+      if (!n || !n.field_summary) {
+        panel.style.display = 'none';
+        // Reclaim the space reserved for the pinned action bar.
+        document.body.style.paddingBottom = '10px';
+        return;
+      }
+      panel.style.display = '';
+
+      document.getElementById('teaserText').innerText = buildTeaser();
+
+      document.getElementById('narrativeBadge').innerText =
+        n.is_ai_generated ? 'AI Generated' : 'Template';
+      document.getElementById('narrativeSummary').innerText = n.field_summary;
+
+      // Narrative strings are treated as untrusted text and never injected as
+      // HTML, so a future model backend cannot emit markup into the dashboard.
+      const zoneBox = document.getElementById('narrativeZones');
+      zoneBox.innerHTML = '';
+      Object.keys(n.zone_narratives || {}).forEach(function (zid) {
+        const wrap = document.createElement('div');
+        wrap.className = 'narrative-zone';
+        const label = document.createElement('strong');
+        label.innerText = zid;
+        const body = document.createElement('div');
+        body.innerText = n.zone_narratives[zid];
+        wrap.appendChild(label);
+        wrap.appendChild(body);
+        zoneBox.appendChild(wrap);
+      });
+
+      const blocked = (n.guard_violations || []).length;
+      document.getElementById('narrativeFootnote').innerText =
+        'Explanation text only. It restates deterministic engine output and cannot change any score, map, zone, or recommendation. '
+        + 'Source: ' + n.generated_by + ' | Status: ' + n.generation_status
+        + ' | Evidence level: ' + n.evidence_level
+        + ' | Decision support only: ' + n.decision_support_only
+        + ' | Safety filter violations blocked: ' + blocked + '.';
+    }
+
+    // One-line teaser. A 240px line fits roughly 40 characters, so this states
+    // the single most actionable fact rather than truncating the narrative.
+    // The score and status are already shown above it, so the teaser adds new
+    // information instead of repeating them. Values are deterministic, never
+    // model text; the full narrative lives one tap away in the drawer.
+    function buildTeaser() {
+      const zones = FIELD_DATA.zones;
+      if (!zones.length) return 'No management zones detected.';
+
+      let attention = 0;
+      zones.forEach(function (z) { if (z.status === 'POOR') attention += 1; });
+
+      if (attention === 0) return 'All ' + zones.length + ' zones look acceptable.';
+      return attention + ' of ' + zones.length
+           + (attention === 1 ? ' zones needs' : ' zones need') + ' attention.';
+    }
+
+    function isDrawerOpen() {
+      return document.getElementById('insightsDrawer').classList.contains('open');
+    }
+
+    function openInsights() {
+      // Scroll the map to the top of the viewport first, so the area left
+      // uncovered by the drawer shows the map rather than arbitrary content.
+      const mapPanel = document.getElementById('mapPanel');
+      if (mapPanel && mapPanel.scrollIntoView) mapPanel.scrollIntoView(true);
+
+      document.getElementById('insightsDrawer').classList.add('open');
+      const btn = document.getElementById('insightsBtn');
+      btn.classList.add('open');
+      btn.setAttribute('aria-expanded', 'true');
+    }
+
+    function closeInsights() {
+      document.getElementById('insightsDrawer').classList.remove('open');
+      const btn = document.getElementById('insightsBtn');
+      btn.classList.remove('open');
+      btn.setAttribute('aria-expanded', 'false');
+    }
+
+    function wireInsights() {
+      document.getElementById('insightsBtn').addEventListener('click', function () {
+        if (isDrawerOpen()) closeInsights(); else openInsights();
+      });
+      document.getElementById('insightsClose').addEventListener('click', closeInsights);
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && isDrawerOpen()) closeInsights();
+      });
+    }
+
+    window.onload = initUI;
+  </script>
+</body>
+</html>"""
+
+
+class LocalUIRenderer:
+    """Renders UIFieldView to a lightweight, self-contained offline HTML/CSS/SVG dashboard.
+
+    Runs 100% locally with zero internet dependencies or external JS/CSS frameworks.
+    Layout is compact-first for the 2.8 inch 240x320 target panel and scales up
+    for desktop demonstration from the same document.
+    """
+
+    def render_html(self, view: UIFieldView) -> str:
+        """Generate standalone HTML/CSS/JS document from UIFieldView.
+
+        Args:
+            view: Target UIFieldView model.
+
+        Returns:
+            Complete HTML string document.
+        """
+        view_json = json.dumps(view.to_dict(), indent=2)
+        return _TEMPLATE.replace(_FIELD_DATA_TOKEN, view_json)
+
+    def serve_local(self, view: UIFieldView, port: int = 8080) -> socketserver.TCPServer:
+        """Launch local lightweight HTTP server serving rendered HTML UI.
+
+        Args:
+            view: Target UIFieldView model.
+            port: Preferred TCP port.
+
+        Returns:
+            Running TCPServer instance.
+        """
+        html_content = self.render_html(view).encode("utf-8")
+
+        class SimpleHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(html_content)))
+                self.end_headers()
+                self.wfile.write(html_content)
+
+            def log_message(self, format, *args):
+                pass  # Suppress console logging for quiet embedded operation
+
+        server = socketserver.TCPServer(("127.0.0.1", port), SimpleHandler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.daemon = True
+        thread.start()
+
+        return server
