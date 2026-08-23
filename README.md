@@ -1,51 +1,241 @@
+<div align="center">
+
 # FieldSense AI
 
-**Offline, portable edge-intelligence platform for multi-point soil assessment and Carbon Readiness.**
+### Edge-Native Soil Intelligence & Autonomous Spatial Agronomy System
 
-Walk a field taking GPS-tagged soil readings at ~25 points. FieldSense builds a colour-coded field map, splits the field into contiguous management zones, and tells the farmer which zones need attention — all computed locally on an embedded Linux board, with **no internet and no cloud**.
+**Built by Lovshik Vinnu & Neha Priya**
+*Electronics & Communication Engineering*
 
-It is an *instrument*, not a web app.
+![Tests](https://img.shields.io/badge/tests-231%20passing-10b981?style=flat-square)
+![Dependencies](https://img.shields.io/badge/runtime%20dependencies-0-3b82f6?style=flat-square)
+![Python](https://img.shields.io/badge/python-3.10%2B-f59e0b?style=flat-square)
+![Offline](https://img.shields.io/badge/network-not%20required-8b5cf6?style=flat-square)
+![Platform](https://img.shields.io/badge/target-Arduino%20UNO%20Q%20%C2%B7%20QRB2210-64748b?style=flat-square)
+
+*A portable instrument that reads soil at many points across a field, works out which patches need attention, and explains it in plain language — entirely offline, on a battery-powered board you can carry.*
+
+</div>
 
 ---
 
-## Status
+## The Problem
 
-| Layer | State |
+A farmer treats a field as one uniform thing. Fertiliser goes on at a single rate, everywhere.
+
+Fields are not uniform. One corner is nitrogen-starved while another is already saturated. Spreading a single rate across all of it means **half the field is underfed and half is over-fertilised**. The over-fertilised half is the expensive part: surplus nitrogen leaches into groundwater, salts accumulate, soil structure degrades, and next season needs *more* input to get the same yield. It is a loop that gets worse each cycle.
+
+Laboratory soil testing would resolve it, but the economics do not work. Samples go to a lab, results come back in one to two weeks, and the cost per sample means a farmer takes two or three for an entire field — far too coarse to see the variation that matters.
+
+## The Solution
+
+**Measure many points, map the variation, and act on patches instead of the whole field.**
+
+FieldSense is a handheld probe plus a small Linux board. You walk the field taking GPS-tagged readings — roughly 25 points across a plot. At every point it captures **nitrogen, phosphorus, potassium, pH, electrical conductivity, moisture and temperature** in seconds.
+
+The board then does the work a lab would do, on the spot:
+
+| Step | What happens |
 | :--- | :--- |
-| Deterministic software pipeline (8 stages) | ✅ Complete — 231 tests passing |
-| AI explanation layer (`fieldsense/ai/`) | ✅ Complete — runs on templates; model weights optional |
-| Offline dashboard UI (240×320 + desktop) | ✅ Complete |
-| Component hardware bench tests | ✅ JXBS · MAX485 · NEO-M8N · TFT+touch · UNO Q all verified |
-| Soil sensor → MAX485 → UNO Q integration | ✅ Verified end-to-end |
-| Hardware → `FieldSample` adapter layer | ✅ Complete — 53 tests |
-| GPS / TFT wired to UNO Q | ⚠️ `PENDING HARDWARE` — pin assignment not yet fixed |
-| TFT showing the dashboard | ❌ **Not yet possible — see [Known Gaps](#known-gaps)** |
+| **Reject bad readings** | A physically impossible value never reaches the map |
+| **Reconstruct the field** | Inverse-distance interpolation turns ~25 sparse points into a continuous surface |
+| **Find the patches** | Connected-component clustering groups neighbouring cells into management zones |
+| **Say what to do** | Deterministic rules produce directional guidance per zone |
+| **Explain it** | An optional on-device language model puts it in plain sentences |
+
+Results appear on a 2.8-inch screen **before you leave the field**. No signal, no subscription, no cloud.
+
+> **What it deliberately does not do.** FieldSense never prescribes a dosage. No *"apply 25 kg/acre urea."* It says *"review nitrogen management in this zone."* A wrong number here damages real soil and real livelihoods, so quantities are structurally impossible to emit — the rule tables cannot produce one, and a safety filter blocks the language model from inventing one. See [Design Boundaries](#design-boundaries).
 
 ---
 
-## Quick Start
+## Hardware
 
-Python 3.10+. The core package has **zero runtime dependencies** — standard library only.
+![FieldSense Hardware Circuit Diagram](docs/hardware_circuit_diagram.png)
+
+### Power — two isolated domains
+
+The single most important wiring rule in this build.
+
+| Domain | Source | Feeds |
+| :--- | :--- | :--- |
+| **A — 5 V** | USB power bank → UNO Q USB-C | The board, GPS, display |
+| **B — 12 V** | 3S 18650 pack (3 × Li-ion + BMS) | **JXBS soil probe only** |
+
+> ⚠️ **Never connect +12 V to any UNO Q pin.** The rails stay separate.
+> **Grounds must be tied together** — RS485 is differential and needs a shared reference. Without that link you get silence or nonsense.
+
+### Soil probe — JXBS-3001-TR (Modbus RTU / RS485)
+
+```
+JXBS probe ──> USB-RS485 adapter ──> UNO Q USB host  ──>  /dev/ttyUSB0
+```
+
+| Wire | Signal | Connects to |
+| :--- | :--- | :--- |
+| Brown | VCC | **+12 V** from the 18650 pack |
+| Black | GND | Pack ground, tied to UNO Q ground |
+| Yellow | RS485 **A** (D+) | Adapter terminal A |
+| Blue / Green | RS485 **B** (D−) | Adapter terminal B |
+
+`9600 8-N-1` · slave `0x01` · function `0x03` · seven holding registers.
+
+### GPS — NEO-M8N (UART / NMEA 0183)
+
+| Module pin | UNO Q |
+| :--- | :--- |
+| VCC | 5 V or 3.3 V |
+| GND | GND |
+| **TX** | **RX — Pin 0** (Serial1) |
+| **RX** | **TX — Pin 1** (Serial1) |
+
+> TX and RX **cross over**. Wiring them straight through is the most common reason a GPS looks dead.
+
+### Display — 2.8" SPI TFT, ST7789V + XPT2046 touch
+
+| Display pin | UNO Q |
+| :--- | :--- |
+| VCC | 3.3 V |
+| GND | GND |
+| CS | **D10** |
+| RESET | **D8** |
+| DC / RS | **D9** |
+| SDI / MOSI | **D11** |
+| SCK | **D13** |
+| LED / BLK | 3.3 V |
+| SDO / MISO | **D12** |
+
+> ⚠️ **3.3 V logic only.** The power pin tolerates 5 V because of an onboard LDO — the **signal** lines do not, and no level shifters are fitted.
+> ⚠️ The controller is **ST7789V**, not ILI9341. These boards are widely mislabelled and an ILI9341 driver will not initialise this panel.
+
+Full electrical specifications, verified register maps and datasheet references: **[docs/HARDWARE.md](docs/HARDWARE.md)**
+
+---
+
+## The Interface
+
+Compact-first. One HTML document serves the 240 × 320 panel and a laptop.
+
+<div align="center">
+
+| Field panel — 240 × 320 | AI insights drawer |
+| :---: | :---: |
+| <img src="docs/images/ui_panel_240x320.png" width="240" alt="FieldSense on the 2.8 inch panel"> | <img src="docs/images/ui_panel_ai_drawer.png" width="240" alt="Plain-language summary drawer"> |
+| Score, colour-coded zone bar, field map, and a one-line teaser — all above the fold | Tapping **Read More** slides the explanation up **without covering the map** |
+
+</div>
+
+![FieldSense desktop dashboard](docs/images/ui_dashboard_desktop.png)
+
+Run `python3 -m fieldsense.demo` and open `artifacts/fieldsense_competition_demo.html` in any browser — it is a single self-contained file with no external requests. The panel images above are generated straight from that same renderer, so what you see here is exactly what the hardware shows.
+
+---
+
+## Architecture
+
+![FieldSense signal chain](docs/images/pipeline_architecture.png)
+
+The hardware side and the software side are both **frozen**. An adapter layer is the only crossing point, and `FieldSample` is the only contract that crosses it.
+
+```
+   PHYSICAL TELEMETRY                                          FROZEN
+   ┌──────────────────┬──────────────────┬──────────────────┐
+   │ JXBS probe       │ NEO-M8N GPS      │ STM32 Bridge     │
+   │ Modbus RTU       │ NMEA 0183        │ RouterBridge IPC │
+   └────────┬─────────┴────────┬─────────┴────────┬─────────┘
+            │                  │                  │
+            ▼                  ▼                  ▼
+   ┌─────────────────────────────────────────────────────────┐
+   │  ADAPTER & CONTRACT LAYER      fieldsense/hardware/     │
+   │                                                         │
+   │  soil_adapter.py      CRC-16, registers, µS/cm → dS/m   │
+   │  gps_adapter.py       checksum, DDMM.MMMM → decimal °   │
+   │  hardware_sample_adapter.py    compose + quality score  │
+   └───────────────────────────┬─────────────────────────────┘
+                               ▼
+                     ┌───────────────────┐
+                     │   FieldSample     │   the sole boundary contract
+                     └─────────┬─────────┘
+                               ▼
+   ┌─────────────────────────────────────────────────────────┐
+   │  DETERMINISTIC INTELLIGENCE ENGINE    bit-exact <500 ms  │
+   │  Validation → Intelligence → Spatial → Zones → Rules    │
+   └──────────────┬───────────────────────────┬──────────────┘
+                  ▼                           ▼
+   ┌──────────────────────────┐   ┌──────────────────────────┐
+   │  AI EXPLANATION          │   │  PRESENTATION            │
+   │  local SLM / templates   │   │  UIViewAdapter           │
+   │       ↓                  │   │       ↓                  │
+   │  NarrativeGuard  ⛔      │   │  LocalUIRenderer         │
+   │  blocks dosages,         │   │  offline HTML + SVG      │
+   │  agrochemicals, carbon   │   │       ↓                  │
+   │  claims, invented numbers│   │  display_bridge.py       │
+   └──────────────────────────┘   └────────────┬─────────────┘
+                                               ▼
+                                   ┌───────────────────────┐
+                                   │  RGB565 → /dev/fb1    │
+                                   │  2.8" ST7789V panel   │
+                                   └───────────────────────┘
+```
+
+### Documentation
+
+| Document | What it covers |
+| :--- | :--- |
+| **[System Architecture](docs/ARCHITECTURE.md)** | Module contracts, algorithms, decision log, frozen contracts |
+| **[Hardware Specs & Datasheets](docs/HARDWARE.md)** | Component specs, register maps, wiring, vendor references |
+| **[Integration Runbook](docs/INTEGRATION_RUNBOOK.md)** | Four-step board bring-up: acquisition → contract → pipeline → display |
+| **[Testing Guide](TESTING_GUIDE.md)** | How to test every component, plus the test evidence register |
+| **[AI Deployment](docs/AI_DEPLOYMENT.md)** | Local SLM setup and the 2.8" display bridge |
+| [Project Handbook](docs/PROJECT_HANDBOOK.md) | Purpose, users, development phases |
+| [Status & Open Items](docs/STATUS.md) | Requirements matrix and every unresolved specification |
+| [Demo Guide](docs/DEMO_GUIDE.md) | Presentation walkthrough |
+
+---
+
+## Quickstart
+
+Python 3.10+. **No runtime dependencies** — standard library only.
 
 ```bash
 python3 -m pip install -e ".[dev]"
 ```
 
-Run the full pipeline and generate the offline dashboard:
-
-```bash
-python3 -m fieldsense.demo
-```
-
-Open `artifacts/fieldsense_competition_demo.html` in any browser.
-
-Run the test suite:
+**Run the tests** — 231 should pass:
 
 ```bash
 python3 -m pytest -q
 ```
 
-Hardware bench scripts need one extra package (not required for anything above):
+**Run the full pipeline** and generate the offline dashboard:
+
+```bash
+python3 -m fieldsense.demo
+```
+
+```
+Samples:            25 Total | 24 Valid | 1 Rejected
+Overall Health:     67% [MODERATE]
+Zones Detected:     4 Spatially Connected Management Zones
+Explanation Layer:  MOCK_TEMPLATE_v1 [FALLBACK_TEMPLATE] | Guard Blocks: 0
+Dashboard Artifact: artifacts/fieldsense_competition_demo.html
+```
+
+The `1 Rejected` is deliberate — the dataset plants one unstable sample so you can watch the validation gatekeeper work.
+
+**Push it to the 2.8" panel:**
+
+```bash
+./scripts/launch_display.sh
+```
+
+```bash
+./scripts/launch_display.sh probe
+```
+
+`probe` reports what your machine can do and changes nothing. Run it first. On a laptop without the panel, `./scripts/launch_display.sh png` writes the exact 240 × 320 frame instead.
+
+Hardware bench scripts need one extra package:
 
 ```bash
 python3 -m pip install pyserial
@@ -53,155 +243,73 @@ python3 -m pip install pyserial
 
 ---
 
-## How It Works
-
-A **linear 8-stage pipeline**. Data enters at stage 1 and flows one way to stage 8. No feedback, no shared mutable state.
-
-```
- STAGE 1        STAGE 2         STAGE 3          STAGE 4
-┌─────────┐   ┌──────────┐   ┌─────────────┐   ┌──────────────┐
-│ Sensor  │──>│Validation│──>│Intelligence │──>│   Spatial    │
-│ Adapter │   │  Engine  │   │   Engine    │   │    Engine    │
-│ acquire │   │physically│   │normalise +  │   │lat/lon → x,y │
-│ samples │   │plausible?│   │MCDA scoring │   │IDW raster    │
-└─────────┘   └────┬─────┘   └─────────────┘   └──────┬───────┘
-                   │                                   │
-             rejected samples                          ▼
-             kept for audit,               ┌──────────────────────┐
-             excluded from maps            │  STAGE 5: Zones      │
-                                           │  4-neighbour BFS     │
-                                           └──────────┬───────────┘
-                    STAGE 8         STAGE 7           ▼
-              ┌───────────────┐  ┌─────────────┐  ┌──────────────────┐
-              │LocalUIRenderer│<─│UIViewAdapter│<─│STAGE 6:          │
-              │ HTML+CSS+SVG  │  │passive view │  │Recommendations   │
-              └───────────────┘  └─────────────┘  └──────────────────┘
-                        ▲
-                        │  optional, out of band
-              ┌─────────┴──────────┐
-              │ fieldsense/ai/     │  narrates results in plain language;
-              │ guarded narrative  │  cannot change a single number
-              └────────────────────┘
-```
-
-### If you come from electronics rather than software
-
-| ECE concept | FieldSense equivalent |
-| :--- | :--- |
-| Sensor front-end | JXBS 7-in-1 probe over RS485 / Modbus RTU |
-| GPS receiver, NMEA parsing | NEO-M8N over UART |
-| Signal conditioning / sanity limits | `ValidationEngine` — rejects impossible readings |
-| Calibration curve | `Normalizer` — raw units → 0.0–1.0 optimality |
-| Weighted sensor fusion | MCDA scoring → Soil Health index |
-| 2-D field reconstruction from sparse probes | IDW spatial interpolation |
-| Connected-component labelling | Zone detection via 4-neighbour BFS |
-| HMI / front panel | Offline HTML + SVG dashboard |
-| Hardware abstraction layer | `SensorAdapter` — virtual and physical are interchangeable |
-
----
-
-## Directory Map
-
-### Repository root
+## Repository Layout
 
 | Path | Responsibility |
 | :--- | :--- |
-| `fieldsense/` | The product. Pure-Python package, standard library only. |
-| `tests/` | 147 automated tests. Pure software; no hardware required. |
-| `hardware_test/` | Bench-test scripts and empirical test records for each physical component. Requires hardware. |
-| `docs/` | Specifications, decision log, and test evidence. See [Documentation](#documentation). |
-| `scripts/` | Operator entry points. `launch_display.sh` pushes the dashboard to the 2.8" panel. |
-| `artifacts/` | Build output — generated dashboard and panel frames. Git-ignored; rebuild with `python3 -m fieldsense.demo`. |
-| `pyproject.toml` | Packaging and pytest configuration. `dependencies = []` is deliberate. |
+| `fieldsense/` | The product. Pure Python, standard library only. |
+| `tests/` | 231 automated tests. No hardware required. |
+| `hardware_test/` | Bench scripts and empirical test records per component. |
+| `docs/` | Specifications, runbook, decision log, images. |
+| `scripts/` | Operator entry points — `launch_display.sh`. |
+| `artifacts/` | Generated dashboard output. Git-ignored; rebuild with `python3 -m fieldsense.demo`. |
 
-### `fieldsense/` — the pipeline, one package per stage
+### Inside `fieldsense/`
 
 | Package | Responsibility | Stage |
 | :--- | :--- | :--- |
-| `domain/` | Pure data contracts: `FieldSample`, `FieldSession`, enums, `SensorAdapter` ABC. Depends on nothing. | — |
-| `input/` | `VirtualSensorAdapter` — deterministic synthetic soil field for testing without hardware. | 1 |
-| `hardware/` | **Adapter & contract layer.** `gps_adapter.py` (NMEA → `GPSData`), `soil_adapter.py` (JXBS Modbus → `SoilData`), `hardware_sample_adapter.py` (→ `FieldSample`), `transport/` (serial + mock), `gps/`, `display_bridge.py`. | 1 |
-| `intelligence/` | `validation/` (sanity gatekeeper), `normalization/` (raw → 0–1), `scoring/` (MCDA weights, Soil Health, N, Moisture, Carbon Readiness). | 2–3 |
-| `spatial/` | lat/lon → local Cartesian metres, field bounds, grid generation, IDW interpolation (p = 2.0, 100 m max support). | 4 |
-| `zones/` | 4-neighbour BFS connected components, small-region merging, primary-issue selection. | 5 |
-| `recommendations/` | Rule engine plus six rule classes: nutrient, moisture, salinity, soil condition, carbon, monitoring. | 6 |
-| `presentation/` | `UIViewAdapter` → `UIFieldView` → `LocalUIRenderer`. Compact-first HTML/CSS/SVG for the 240×320 panel, scaling up for desktop. Performs **zero** calculation. | 7–8 |
-| `ai/` | Optional explanation layer. `LocalLLMAdapter` ABC, `MockAIAdapter` (templates), `LlamaCppAdapter` (GGUF via `llama.cpp`), `NarrativeGuard` safety filter, `AIAdapterFactory`. | out of band |
-| `testing/` | Golden scenario datasets and the benchmark harness. Product code, not tests. | — |
-| `storage/` | Persistence layer. 🚧 **Stub** — docstring only. Serialization currently lives on the models as `to_dict`/`from_dict`. | — |
-| `application/` | Service orchestration. 🚧 **Stub** — docstring only. `demo.py` does this job today. | — |
-| `demo.py` | End-to-end runner wiring all 8 stages plus the optional narrative. The best single map of the system. | — |
-
-### `hardware_test/` — one folder per physical component
-
-| Path | Component | Status |
-| :--- | :--- | :--- |
-| `soil sensor/` | JXBS-3001-TR 7-in-1 probe, standalone over USB-RS485 | ✅ Verified |
-| `RS485/` | MAX485 transceiver module, transmit and receive paths | ✅ Verified |
-| `GPS/` | u-blox NEO-M8N (`GY-GPSV3-NEO`) NMEA output | ✅ Verified |
-| `TFT/` | 2.8" ST7789V display + XPT2046 resistive touch | ✅ Verified (on ESP32 bench host) |
-| `arduino uno q/` | UNO Q boot, Linux MPU, STM32 MCU, RouterBridge IPC, UART loopback | ✅ Verified |
-| `soil sensor with Max485-RS485/` | Full chain: JXBS → RS485 → MAX485 → STM32 → RouterBridge → Linux → Python | ✅ Verified |
-
-Step-by-step instructions for all of these are in **[TESTING_GUIDE.md](TESTING_GUIDE.md)**.
-
----
-
-## Hardware
-
-| Component | Part | Role |
-| :--- | :--- | :--- |
-| Compute | Arduino UNO Q 4 GB (`ABX00173`) | QRB2210 MPU (Debian Linux) + STM32U585 MCU |
-| Soil probe | JXBS-3001-TR 7-in-1 | N, P, K, pH, EC, moisture, temperature over Modbus RTU |
-| Bus transceiver | MAX485 module (`HW-097`) | TTL ↔ RS485 differential. **No auto-direction — MCU drives DE/RE.** |
-| GPS | u-blox NEO-M8N (`GY-GPSV3-NEO`) | Position fix over UART NMEA 0183 |
-| Display | 2.8" SPI TFT, ST7789V + XPT2046 | 240×320 panel with resistive touch. **3.3 V logic only.** |
-| Power | 3S 18650 pack + BMS → LM2596S buck | 12 V rail for the probe, 5 V for the board |
-| Bench tools | FT232 USB-RS485, CH340 USB-TTL | Laptop-side testing without the UNO Q |
-
-**Power rails:** probe 12 V (external), MAX485 5 V (UNO Q rail), GPS 3.3 V, TFT 3.3 V logic. All grounds common.
+| `domain/` | Pure data contracts: `FieldSample`, `FieldSession`, enums, `SensorAdapter` ABC. | — |
+| `input/` | `VirtualSensorAdapter` — deterministic synthetic field for hardware-free testing. | 1 |
+| `hardware/` | **Adapter & contract layer**: `gps_adapter.py`, `soil_adapter.py`, `hardware_sample_adapter.py`, `transport/`, `gps/`, `display_bridge.py`. | 1 |
+| `intelligence/` | `validation/` gatekeeper, `normalization/`, `scoring/` MCDA indices. | 2–3 |
+| `spatial/` | lat/lon → local metres, grid, IDW interpolation (p = 2.0, 100 m cap). | 4 |
+| `zones/` | 4-neighbour BFS clustering, small-region merging, primary-issue selection. | 5 |
+| `recommendations/` | Rule engine and six agronomic rule classes. | 6 |
+| `presentation/` | `UIViewAdapter` → `UIFieldView` → `LocalUIRenderer`. Performs **zero** calculation. | 7–8 |
+| `ai/` | `LocalLLMAdapter`, `MockAIAdapter`, `LlamaCppAdapter`, `NarrativeGuard`, factory. | out of band |
+| `testing/` | Golden scenario datasets and the benchmark harness. | — |
+| `storage/`, `application/` | 🚧 Planned. Docstring stubs only today. | — |
 
 ---
 
 ## Design Boundaries
 
-These are deliberate and load-bearing. Do not "fix" them without a Contract Change Request ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) Part IV).
+Deliberate and load-bearing. Changing one requires a Contract Change Request — [ARCHITECTURE.md](docs/ARCHITECTURE.md) Part IV.
 
-- **Deterministic core.** Same inputs → bit-identical outputs. Every number traces to an explicit formula and config constant.
-- **No dosages, ever.** Recommendations are directional ("review nitrogen management"), never `kg/ha` or litres. Rule tables cannot emit a quantity.
-- **Carbon Readiness is a proxy**, tagged `decision_support_only = True`, `evidence_level = "LIMITED"`, publishing its own missing inputs. FieldSense does not measure soil organic carbon or certify credits.
-- **AI cannot compute.** The explanation layer only narrates. `NarrativeGuard` deterministically blocks any generated sentence containing a dose unit, an agrochemical name, a carbon claim, or a number absent from the deterministic context.
-- **Zero dependencies.** `dependencies = []`. `llama.cpp`, the browser, and `pyserial` are external system assets, imported lazily or shelled out to — never module-level imports. Serial I/O uses stdlib `termios`.
-- **One adapter boundary.** `FieldSample` is the only contract between hardware telemetry and software intelligence. Unit conversion happens once, in `fieldsense/hardware/`. The adapters never validate, score, or interpret — `ValidationEngine` and the pipeline own that.
+- **Deterministic core.** Identical inputs give bit-identical outputs. Every number traces to an explicit formula and a config constant.
+- **No dosages, ever.** Recommendations are directional. The rule tables cannot emit `kg/ha` or litres.
+- **Carbon Readiness is a proxy**, tagged `decision_support_only = True`, `evidence_level = "LIMITED"`, and it publishes its own missing inputs. FieldSense does not measure soil organic carbon or certify credits.
+- **AI cannot compute.** The explanation layer only narrates. `NarrativeGuard` deterministically blocks any sentence containing a dose unit, an agrochemical name, a carbon claim, or a number absent from the deterministic context.
+- **One adapter boundary.** Unit conversion happens once, in `fieldsense/hardware/`. The adapters never validate, score, or interpret.
+- **Zero dependencies.** `dependencies = []`. `llama.cpp`, the browser and `pyserial` are optional *system assets*, shelled out to or imported lazily — never module-level. Serial I/O uses stdlib `termios`.
 
 ---
 
-## Documentation
+## Status
 
-Eight documents, each with one job.
-
-| Document | Contents |
+| Layer | State |
 | :--- | :--- |
-| [TESTING_GUIDE.md](TESTING_GUIDE.md) | **How to test every component**, standalone and integrated, plus the test evidence register |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture · software specification · decision log · frozen contracts |
-| [docs/HARDWARE.md](docs/HARDWARE.md) | Component specs, register maps, wiring, verification status |
-| [docs/AI_DEPLOYMENT.md](docs/AI_DEPLOYMENT.md) | Part I: local SLM. Part II: display bridge to the 2.8" panel |
-| [docs/PROJECT_HANDBOOK.md](docs/PROJECT_HANDBOOK.md) | Problem statement, users, value proposition, phases |
-| [docs/STATUS.md](docs/STATUS.md) | Requirements matrix and every open specification item |
-| [docs/INTEGRATION_RUNBOOK.md](docs/INTEGRATION_RUNBOOK.md) | **Four-step board bring-up**: acquisition → contract → pipeline → display |
-| [docs/DEMO_GUIDE.md](docs/DEMO_GUIDE.md) | Presentation walkthrough |
-| [docs/DOCUMENTATION_AUDIT.md](docs/DOCUMENTATION_AUDIT.md) | Record of the documentation audit and cleanup |
+| Deterministic pipeline (8 stages) | ✅ Complete — 231 tests |
+| Hardware → `FieldSample` adapter layer | ✅ Complete |
+| AI explanation layer + safety guard | ✅ Complete — runs on templates; weights optional |
+| Offline dashboard (240 × 320 + desktop) | ✅ Complete |
+| Display bridge → RGB565 framebuffer | ✅ Complete |
+| Component bench verification | ✅ JXBS · MAX485 · NEO-M8N · TFT+touch · UNO Q |
+| Probe → MAX485 → UNO Q acquisition | ✅ Verified end-to-end |
+| GPS wired to UNO Q | ⚠️ `HW-03` — UART node unconfirmed |
+| Display wired to QRB2210 SPI | ⚠️ `DSP-01` / `DSP-02` — pins unassigned, `fbtft` unverified |
+| Touch events reaching the UI | ⚠️ `DSP-05` — calibration matrix not derived |
 
-`docs/archive/` holds the superseded Phase 1 documentation. History only — do not treat as current.
+### Honest limitations
+
+The scoring curves and MCDA weights are **unvalidated prototype values** at `methodology_version = "0.1"`. Every hardware test above can pass while the agronomic interpretation remains unproven — *"the sensor chain works"* and *"the soil advice is correct"* are different claims, and only the first is currently evidenced.
+
+Full register of open items: **[docs/STATUS.md](docs/STATUS.md)**
 
 ---
 
-## Known Gaps
+<div align="center">
 
-Tracked honestly rather than hidden. Full analysis in `docs/DOCUMENTATION_AUDIT.md`.
+**FieldSense AI** · Built for farmers who need answers in the field, not in two weeks.
 
-1. **TFT display bridge — software done, wiring pending.** The framebuffer route is implemented (`fieldsense/hardware/display_bridge.py`, `scripts/launch_display.sh`) and renders a verified pixel-exact 240×320 frame today. It cannot reach the panel until the display is moved from the STM32 to the **QRB2210 SPI bus** (`HW-04`), and until `fbtft` is confirmed present in the shipped kernel (`DSP-02`). See `docs/AI_LAYER_DEPLOYMENT.md` Part II.
-2. **GPS and TFT are not yet wired to the UNO Q.** Both are verified standalone, on a CH340 adapter and an ESP32 respectively. UNO Q pin assignment is `PENDING HARDWARE`.
-3. **Touch calibration matrix is not derived.** Raw ADC range ~500–3500 measured; the mapping to pixel coordinates is not yet computed.
-4. **Hardware scripts are Windows-only.** They hardcode `COM8` / `COM10`. Running on the UNO Q needs `/dev/ttyUSB*` or `/dev/ttyS*`.
-5. **Model weights are absent by default.** The AI layer runs on deterministic templates until a `.gguf` is installed. This is intended, not a defect.
+</div>

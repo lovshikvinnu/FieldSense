@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 940" width="1240" height="940" font-family="system-ui,-apple-system,Segoe UI,Roboto,sans-serif">
+  <defs>
+    <marker id="a" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748b"/>
+    </marker>
+    <marker id="ag" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#10b981"/>
+    </marker>
+  </defs>
+  <rect width="1240" height="940" rx="10" fill="#0f172a"/>
+
+  <text x="30" y="42" fill="#10b981" font-size="24" font-weight="800" letter-spacing="0.6">FieldSense AI — Signal Chain</text>
+  <text x="30" y="64" fill="#94a3b8" font-size="13">Physical telemetry to farmer-readable panel. Both ends are frozen; the adapter layer is the only crossing point.</text>
+
+  <!-- ===== 1. HARDWARE ===== -->
+  <rect x="30" y="92" width="1180" height="104" rx="9" fill="#172033" stroke="#f59e0b" stroke-width="1.6"/>
+  <text x="48" y="116" fill="#f59e0b" font-size="12" font-weight="800" letter-spacing="0.8">① HARDWARE TELEMETRY   ·   FROZEN</text>
+  <rect x="48" y="128" width="360" height="54" rx="7" fill="#1e293b" stroke="#334155"/>
+  <text x="66" y="150" fill="#f8fafc" font-size="13" font-weight="700">JXBS-3001-TR probe</text>
+  <text x="66" y="169" fill="#94a3b8" font-size="11">Modbus RTU / RS485 · 7 holding registers</text>
+  <rect x="430" y="128" width="360" height="54" rx="7" fill="#1e293b" stroke="#334155"/>
+  <text x="448" y="150" fill="#f8fafc" font-size="13" font-weight="700">NEO-M8N GPS</text>
+  <text x="448" y="169" fill="#94a3b8" font-size="11">NMEA 0183 · $GN/$GP/$GL GGA + RMC</text>
+  <rect x="812" y="128" width="380" height="54" rx="7" fill="#1e293b" stroke="#334155"/>
+  <text x="830" y="150" fill="#f8fafc" font-size="13" font-weight="700">STM32 RouterBridge</text>
+  <text x="830" y="169" fill="#94a3b8" font-size="11">get_soil_data() · get_gps_data() IPC</text>
+
+  <line x1="620" y1="196" x2="620" y2="224" stroke="#64748b" stroke-width="2.2" marker-end="url(#a)"/>
+
+  <!-- ===== 2. ADAPTER ===== -->
+  <rect x="30" y="228" width="1180" height="150" rx="9" fill="#172033" stroke="#3b82f6" stroke-width="2"/>
+  <text x="48" y="252" fill="#3b82f6" font-size="12" font-weight="800" letter-spacing="0.8">② ADAPTER &amp; CONTRACT LAYER   ·   fieldsense/hardware/</text>
+  <text x="48" y="271" fill="#94a3b8" font-size="11">Decodes protocol, converts units, scores acquisition health. Never validates, scores, or interprets.</text>
+
+  <rect x="48" y="284" width="340" height="76" rx="7" fill="#1e293b" stroke="#3b82f6"/>
+  <text x="66" y="306" fill="#f8fafc" font-size="12.5" font-weight="700">soil_adapter.py</text>
+  <text x="66" y="324" fill="#94a3b8" font-size="10.5">CRC-16 · register map · scaling</text>
+  <text x="66" y="341" fill="#f59e0b" font-size="10.5" font-weight="700">µS/cm → dS/m  (÷1000)</text>
+  <text x="66" y="356" fill="#10b981" font-size="10.5">→ SoilData</text>
+
+  <rect x="410" y="284" width="340" height="76" rx="7" fill="#1e293b" stroke="#3b82f6"/>
+  <text x="428" y="306" fill="#f8fafc" font-size="12.5" font-weight="700">gps_adapter.py</text>
+  <text x="428" y="324" fill="#94a3b8" font-size="10.5">checksum · sentence parse</text>
+  <text x="428" y="341" fill="#f59e0b" font-size="10.5" font-weight="700">DDMM.MMMM → decimal degrees</text>
+  <text x="428" y="356" fill="#10b981" font-size="10.5">→ GPSData</text>
+
+  <rect x="772" y="284" width="420" height="76" rx="7" fill="#1e293b" stroke="#10b981" stroke-width="1.6"/>
+  <text x="790" y="306" fill="#f8fafc" font-size="12.5" font-weight="700">hardware_sample_adapter.py</text>
+  <text x="790" y="324" fill="#94a3b8" font-size="10.5">composes both + timestamp</text>
+  <text x="790" y="341" fill="#94a3b8" font-size="10.5">derives measurement_quality [0..1]</text>
+  <text x="790" y="356" fill="#10b981" font-size="10.5" font-weight="700">→ FieldSample</text>
+
+  <line x1="620" y1="378" x2="620" y2="404" stroke="#10b981" stroke-width="2.6" marker-end="url(#ag)"/>
+
+  <!-- ===== 3. CONTRACT ===== -->
+  <rect x="330" y="408" width="580" height="62" rx="9" fill="#1e293b" stroke="#10b981" stroke-width="2.6"/>
+  <text x="620" y="434" fill="#10b981" font-size="15" font-weight="800" text-anchor="middle">FieldSample</text>
+  <text x="620" y="456" fill="#94a3b8" font-size="11" text-anchor="middle">the sole boundary contract · immutable · identical from probe or simulator</text>
+
+  <line x1="620" y1="470" x2="620" y2="496" stroke="#64748b" stroke-width="2.2" marker-end="url(#a)"/>
+
+  <!-- ===== 4. DETERMINISTIC ===== -->
+  <rect x="30" y="500" width="1180" height="150" rx="9" fill="#172033" stroke="#8b5cf6" stroke-width="2"/>
+  <text x="48" y="524" fill="#8b5cf6" font-size="12" font-weight="800" letter-spacing="0.8">③ DETERMINISTIC INTELLIGENCE ENGINE   ·   FROZEN   ·   bit-exact, &lt; 500 ms</text>
+  <text x="48" y="543" fill="#94a3b8" font-size="11">Pure Python, standard library only. Same inputs always produce identical outputs.</text>
+
+  <rect x="48" y="558" width="200" height="74" rx="7" fill="#1e293b" stroke="#334155"/>
+  <text x="66" y="580" fill="#f8fafc" font-size="12" font-weight="700">Validation</text>
+  <text x="66" y="598" fill="#94a3b8" font-size="10.5">sanity gatekeeper</text>
+  <text x="66" y="615" fill="#ef4444" font-size="10.5">REJECTED excluded,</text>
+  <text x="66" y="629" fill="#94a3b8" font-size="10.5">retained for audit</text>
+
+  <rect x="266" y="558" width="200" height="74" rx="7" fill="#1e293b" stroke="#334155"/>
+  <text x="284" y="580" fill="#f8fafc" font-size="12" font-weight="700">Intelligence</text>
+  <text x="284" y="598" fill="#94a3b8" font-size="10.5">normalise → 0..1</text>
+  <text x="284" y="615" fill="#94a3b8" font-size="10.5">MCDA weighted fusion</text>
+  <text x="284" y="629" fill="#94a3b8" font-size="10.5">soil health index</text>
+
+  <rect x="484" y="558" width="200" height="74" rx="7" fill="#1e293b" stroke="#334155"/>
+  <text x="502" y="580" fill="#f8fafc" font-size="12" font-weight="700">Spatial</text>
+  <text x="502" y="598" fill="#94a3b8" font-size="10.5">lat/lon → metres</text>
+  <text x="502" y="615" fill="#94a3b8" font-size="10.5">IDW raster, p = 2.0</text>
+  <text x="502" y="629" fill="#94a3b8" font-size="10.5">100 m support cap</text>
+
+  <rect x="702" y="558" width="200" height="74" rx="7" fill="#1e293b" stroke="#334155"/>
+  <text x="720" y="580" fill="#f8fafc" font-size="12" font-weight="700">Zones</text>
+  <text x="720" y="598" fill="#94a3b8" font-size="10.5">4-neighbour BFS</text>
+  <text x="720" y="615" fill="#94a3b8" font-size="10.5">connected components</text>
+  <text x="720" y="629" fill="#94a3b8" font-size="10.5">primary issue per zone</text>
+
+  <rect x="920" y="558" width="272" height="74" rx="7" fill="#1e293b" stroke="#334155"/>
+  <text x="938" y="580" fill="#f8fafc" font-size="12" font-weight="700">Recommendations</text>
+  <text x="938" y="598" fill="#94a3b8" font-size="10.5">deterministic rule tables</text>
+  <text x="938" y="615" fill="#ef4444" font-size="10.5" font-weight="700">zero dosages, ever</text>
+  <text x="938" y="629" fill="#94a3b8" font-size="10.5">max 3 actions per zone</text>
+
+  <line x1="400" y1="650" x2="400" y2="682" stroke="#64748b" stroke-width="2.2" marker-end="url(#a)"/>
+  <line x1="880" y1="650" x2="880" y2="682" stroke="#64748b" stroke-width="2.2" marker-end="url(#a)"/>
+
+  <!-- ===== 5. AI + UI ===== -->
+  <rect x="30" y="686" width="560" height="152" rx="9" fill="#172033" stroke="#ef4444" stroke-width="1.8"/>
+  <text x="48" y="710" fill="#ef4444" font-size="12" font-weight="800" letter-spacing="0.8">④ AI EXPLANATION   ·   optional, out of band</text>
+  <rect x="48" y="722" width="240" height="48" rx="7" fill="#1e293b" stroke="#334155"/>
+  <text x="66" y="742" fill="#f8fafc" font-size="12" font-weight="700">Local SLM / templates</text>
+  <text x="66" y="760" fill="#94a3b8" font-size="10.5">llama.cpp GGUF or Mock</text>
+  <rect x="306" y="722" width="266" height="48" rx="7" fill="#1e293b" stroke="#ef4444" stroke-width="1.6"/>
+  <text x="324" y="742" fill="#ef4444" font-size="12" font-weight="800">NarrativeGuard</text>
+  <text x="324" y="760" fill="#94a3b8" font-size="10.5">deterministic safety filter</text>
+  <text x="48" y="792" fill="#cbd5e1" font-size="11">Blocks dose units · agrochemical names · carbon claims ·</text>
+  <text x="48" y="809" fill="#cbd5e1" font-size="11">any number absent from the deterministic context.</text>
+  <text x="48" y="828" fill="#94a3b8" font-size="10.5">Rejected text degrades to a template. Never blocks the dashboard.</text>
+
+  <rect x="614" y="686" width="596" height="152" rx="9" fill="#172033" stroke="#3b82f6" stroke-width="1.8"/>
+  <text x="632" y="710" fill="#3b82f6" font-size="12" font-weight="800" letter-spacing="0.8">⑤ PRESENTATION   ·   passive, zero computation</text>
+  <rect x="632" y="722" width="270" height="48" rx="7" fill="#1e293b" stroke="#334155"/>
+  <text x="650" y="742" fill="#f8fafc" font-size="12" font-weight="700">UIViewAdapter → UIFieldView</text>
+  <text x="650" y="760" fill="#94a3b8" font-size="10.5">reshapes results, computes nothing</text>
+  <rect x="920" y="722" width="272" height="48" rx="7" fill="#1e293b" stroke="#334155"/>
+  <text x="938" y="742" fill="#f8fafc" font-size="12" font-weight="700">LocalUIRenderer</text>
+  <text x="938" y="760" fill="#94a3b8" font-size="10.5">self-contained HTML + SVG</text>
+  <text x="632" y="792" fill="#cbd5e1" font-size="11">Compact-first 240 × 320, scaling up to desktop from one document.</text>
+  <text x="632" y="809" fill="#cbd5e1" font-size="11">No external URLs, no CDN, no map tiles — fully offline.</text>
+  <text x="632" y="828" fill="#94a3b8" font-size="10.5">display_bridge.py → RGB565 → /dev/fb1</text>
+
+  <line x1="590" y1="762" x2="610" y2="762" stroke="#64748b" stroke-width="2.2" marker-end="url(#a)"/>
+  <line x1="905" y1="866" x2="905" y2="886" stroke="#10b981" stroke-width="2.6" marker-end="url(#ag)"/>
+  <line x1="1056" y1="838" x2="1056" y2="886" stroke="#10b981" stroke-width="2.6" marker-end="url(#ag)"/>
+
+  <!-- ===== 6. OUTPUT ===== -->
+  <rect x="860" y="888" width="350" height="38" rx="8" fill="#1e293b" stroke="#10b981" stroke-width="2"/>
+  <text x="1035" y="913" fill="#10b981" font-size="13" font-weight="800" text-anchor="middle">2.8" ST7789V panel · 240 × 320</text>
+
+  <text x="30" y="880" fill="#64748b" font-size="10.5">Dependency direction is strictly one-way. The AI layer cannot alter a score, raster, zone, or recommendation.</text>
+  <text x="30" y="899" fill="#64748b" font-size="10.5">Presentation performs no arithmetic. Full contracts: docs/ARCHITECTURE.md</text>
+</svg>
