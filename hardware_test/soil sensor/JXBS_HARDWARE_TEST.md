@@ -102,7 +102,7 @@ External 12–24 V DC supply
 | **pH** | `0x0006` | `01 03 00 06 00 01 64 0B` | Raw / 100 | pH |
 | **Moisture** | `0x0012` | `01 03 00 12 00 01 24 0F` | Raw / 10 | %RH |
 | **Temperature** | `0x0013` | `01 03 00 13 00 01 75 CF` | Raw / 10 | °C |
-| **Conductivity (EC)** | `0x0015` | `01 03 00 15 00 01 95 CD` | Raw / 1 | µS/cm |
+| **Conductivity (EC)** | `0x0015` | `01 03 00 15 00 01 95 CE` | Raw / 1 | µS/cm |
 | **Nitrogen (N)** | `0x001E` | `01 03 00 1E 00 01 E4 0C` | Raw / 1 | mg/kg |
 | **Phosphorus (P)** | `0x001F` | `01 03 00 1F 00 01 B5 CC` | Raw / 1 | mg/kg |
 | **Potassium (K)** | `0x0020` | `01 03 00 20 00 01 85 C0` | Raw / 1 | mg/kg |
