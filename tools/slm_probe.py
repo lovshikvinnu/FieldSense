@@ -490,10 +490,29 @@ def main(argv=None) -> int:
         print("  status    : {}".format(result["status"]))
         print("  wall clock: {} ms".format(result["wall_ms"]))
         print("\nOn-board execution IS proven - the GGUF loaded and generated.")
-        print("What failed is downstream acceptance, which is a different problem")
-        print("from a missing or broken model. EMPTY_NARRATIVE means the adapter")
-        print("received no text: check that llama-cli writes generation to stdout,")
-        print("since _run_binary reads stdout and discards stderr.")
+        print("What failed is downstream acceptance, a different problem from a")
+        print("missing or broken model.\n")
+
+        # Say what these violations mean, rather than a fixed note about one
+        # failure mode. This block used to explain EMPTY_NARRATIVE unconditionally
+        # and kept saying "the adapter received no text" for runs where the model
+        # had plainly produced text and been rejected on its content.
+        codes = {v.split("[")[0] for v in result.get("violations", [])}
+        if "EMPTY_NARRATIVE" in codes:
+            print("  EMPTY_NARRATIVE - the adapter received nothing. Check that")
+            print("    llama-cli writes generation to a pipe: --dump-streams shows")
+            print("    which stream carries it, --tty-matrix which invocation does.")
+        if "LENGTH_EXCEEDED" in codes:
+            print("  LENGTH_EXCEEDED - the model wrote past the section limit. A")
+            print("    prompt word budget and max_output_tokens govern this.")
+        if "FORBIDDEN_CLAIM" in codes or "FORBIDDEN_UNIT" in codes:
+            print("  FORBIDDEN_CLAIM / FORBIDDEN_UNIT - the model raised a subject")
+            print("    the guard refuses. A prompt scope problem, not a guard fault.")
+        if "UNSUPPORTED_NUMBER" in codes:
+            print("  UNSUPPORTED_NUMBER - a number appeared that is not in the")
+            print("    context. Check it is the model's and not the tool's output.")
+        if not codes:
+            print("  No violations recorded, so the rejection came from elsewhere.")
         return 1
 
     print("VERDICT: NO real inference. The narrative came from templates.")
