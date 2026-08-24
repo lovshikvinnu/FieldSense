@@ -96,3 +96,47 @@ def test_collected_samples_drive_the_full_pipeline_and_dashboard(tmp_path):
     content = open(html, encoding="utf-8").read()
     assert "FIELDSENSE AI" in content
     assert 'src="http' not in content and 'href="http' not in content
+
+
+# --------------------------------------------------------- defect vs bench fault
+
+def test_code_defect_during_init_is_not_reported_as_a_wiring_fault(monkeypatch):
+    """A NameError must reach the operator as a NameError.
+
+    Regression guard for the `Any` import missing from factory.py: the broad
+    handler dressed that up as "check the probe is powered from 12 V", which
+    sent a bench hunt after a one-word import bug.
+    """
+    def exploding_factory(_config):
+        raise NameError("name 'Any' is not defined")
+
+    monkeypatch.setattr(
+        "fieldsense.live_collector.SensorAdapterFactory.create_adapter",
+        staticmethod(exploding_factory),
+    )
+
+    with pytest.raises(NameError):
+        collect_samples(points=1, interactive=False, settle_seconds=0)
+
+
+def test_genuine_hardware_failure_still_reports_the_bench_checklist(monkeypatch):
+    """A real transport failure keeps the wiring advice, and names the type."""
+    from fieldsense.hardware.models import HardwareError, HardwareErrorCode
+
+    def unreachable_factory(_config):
+        raise HardwareError(
+            HardwareErrorCode.TRANSPORT_ERROR, "Could not open /dev/ttyUSB0"
+        )
+
+    monkeypatch.setattr(
+        "fieldsense.live_collector.SensorAdapterFactory.create_adapter",
+        staticmethod(unreachable_factory),
+    )
+
+    with pytest.raises(CollectionError) as caught:
+        collect_samples(points=1, interactive=False, settle_seconds=0)
+
+    message = str(caught.value)
+    assert "HardwareError" in message          # the type is named, not swallowed
+    assert "12 V" in message                   # bench checklist survives
+    assert "rs485_probe_sweep.py" in message   # points at the isolation tool

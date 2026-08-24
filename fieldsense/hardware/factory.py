@@ -26,7 +26,7 @@ can select a source without editing code:
 
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 from fieldsense.domain.contracts.sensor import SensorAdapter
 from fieldsense.input.virtual_sensor import VirtualSensorAdapter

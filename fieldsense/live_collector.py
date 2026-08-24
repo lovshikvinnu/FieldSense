@@ -96,12 +96,25 @@ def collect_samples(
             DataSourceConfig.from_env(source=source, sensor_port=sensor_port)
         )
         adapter.initialize()
+    except (NameError, TypeError, AttributeError, ImportError, SyntaxError):
+        # A defect in FieldSense itself, not a fault on the bench. Let it fly
+        # with its traceback intact, which names the line to fix. The handler
+        # below would instead send the operator to a multimeter for something
+        # no amount of rewiring can clear -- a missing `Any` import in
+        # factory.py once cost exactly that, presenting a NameError as a
+        # suspected wiring fault.
+        raise
     except Exception as exc:
         raise CollectionError(
-            "Could not initialise the {} adapter: {}\n"
-            "Check the probe is powered from 12 V, RS485 A/B are not swapped, "
-            "and that {} exists.".format(source, exc, sensor_port)
-        )
+            "Could not initialise the {} adapter.\n"
+            "  {}: {}\n"
+            "Check the probe is powered from 12 V (its own supply, not the 5 V "
+            "board rail), that RS485 A/B are not swapped, that the 12 V ground "
+            "is tied to board ground, and that {} exists.\n"
+            "Isolate the link before suspecting software:\n"
+            "  python3 \"hardware_test/soil sensor/rs485_probe_sweep.py\" --port {}".format(
+                source, type(exc).__name__, exc, sensor_port, sensor_port)
+        ) from exc
 
     validator = ValidationEngine()
     intelligence = FieldIntelligenceEngine()
@@ -126,8 +139,17 @@ def collect_samples(
                     adapter.initialize()
 
                 sample = adapter.acquire_sample()
+            except (NameError, TypeError, AttributeError, ImportError) as exc:
+                # Same boundary as initialise: a code defect repeats identically
+                # at every point, so swallowing it per-point would print the
+                # same misleading line N times and still write no data.
+                raise CollectionError(
+                    "Acquisition raised {}, which is a FieldSense defect rather "
+                    "than a hardware fault: {}".format(type(exc).__name__, exc)
+                ) from exc
             except Exception as exc:
-                print(f"      [!!] acquisition failed at point {index}: {exc}")
+                print(f"      [!!] acquisition failed at point {index}: "
+                      f"{type(exc).__name__}: {exc}")
                 continue
 
             result = validator.validate(sample)
