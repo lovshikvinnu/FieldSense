@@ -308,6 +308,83 @@ def dump_streams(config: AIConfig) -> int:
     return 0
 
 
+def tty_matrix(config: AIConfig) -> int:
+    """Run the real command four ways and report which one yields piped output.
+
+    Detaching stdin was not enough on the UNO Q: llama-cli still rendered to the
+    screen with stdin on /dev/null and both pipes empty. That rules out an
+    isatty(stdin) check and points at the program opening /dev/tty directly,
+    which no stream redirection can defeat - only removing the controlling
+    terminal, which is what start_new_session (setsid) does.
+
+    This runs every combination so the answer is observed rather than argued.
+    """
+    from fieldsense.ai.llama_cpp import LlamaCppAdapter
+
+    adapter = LlamaCppAdapter(config=config)
+    command = adapter._build_command("Summarise in one sentence: soil health is poor.")
+
+    print("Probe process context")
+    line(INFO, "sys.stdin.isatty()", str(sys.stdin.isatty()))
+    line(INFO, "sys.stdout.isatty()", str(sys.stdout.isatty()))
+    try:
+        with open("/dev/tty", "w"):
+            has_tty = True
+    except OSError:
+        has_tty = False
+    line(INFO, "/dev/tty openable", str(has_tty))
+    if not sys.stdin.isatty() and not has_tty:
+        line(WARN, "", "no controlling terminal here - the 'inherited' row "
+                       "cannot reproduce the interactive case")
+
+    variants = (
+        ("inherited stdin (what the adapter does today)", {}),
+        ("stdin=DEVNULL", {"stdin": subprocess.DEVNULL}),
+        ("start_new_session=True (setsid)", {"start_new_session": True}),
+        ("DEVNULL + new session", {"stdin": subprocess.DEVNULL,
+                                   "start_new_session": True}),
+    )
+
+    print("\nRunning {} variants of the same command\n".format(len(variants)))
+    winners = []
+    for label, kwargs in variants:
+        try:
+            done = subprocess.run(command, capture_output=True, text=True,
+                                  timeout=config.timeout_seconds, check=False,
+                                  **kwargs)
+        except subprocess.TimeoutExpired:
+            line(FAIL, label, "timed out")
+            continue
+        except (OSError, subprocess.SubprocessError) as exc:
+            line(FAIL, label, "{}: {}".format(type(exc).__name__, exc))
+            continue
+
+        out, err = done.stdout or "", done.stderr or ""
+        got = out.strip() or err.strip()
+        status = PASS if got else FAIL
+        line(status, label, "rc={} stdout={} stderr={}".format(
+            done.returncode, len(out), len(err)))
+        if got:
+            stream = "stdout" if out.strip() else "stderr"
+            print("           {} -> {!r}".format(stream, got[:90]))
+            winners.append((label, stream, kwargs))
+
+    print("\n" + "=" * 72)
+    if not winners:
+        print("No variant produced piped output. llama-cli is writing to the")
+        print("controlling terminal by a route none of these close, so the fix is")
+        print("not a subprocess argument. Next candidates, in order: a different")
+        print("binary in build/bin (llama-simple, llama-run) that is built for")
+        print("non-interactive use, or an output flag this build does provide.")
+        return 1
+
+    print("Piped output achieved by:")
+    for label, stream, kwargs in winners:
+        print("  {:<46} via {}".format(label, stream))
+    print("\nThe narrowest working option is the one to apply to _run_binary.")
+    return 0
+
+
 # ------------------------------------------------------------------- selftest
 
 
@@ -333,6 +410,9 @@ def main(argv=None) -> int:
                         help="check assets and configuration only")
     parser.add_argument("--selftest", action="store_true",
                         help="verify this probe's own logic, no model needed")
+    parser.add_argument("--tty-matrix", action="store_true",
+                        help="run the real command under four stdin/session "
+                             "combinations and report which yields piped output")
     parser.add_argument("--dump-streams", action="store_true",
                         help="run the real llama-cli command with pipes and no "
                              "tty, and print stdout and stderr separately")
@@ -353,6 +433,9 @@ def main(argv=None) -> int:
     if args.binary:
         overrides["binary_path"] = args.binary
     config = AIConfig.from_env(**overrides)
+
+    if args.tty_matrix:
+        return tty_matrix(config)
 
     if args.dump_streams:
         return dump_streams(config)
