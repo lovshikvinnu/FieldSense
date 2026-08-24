@@ -17,7 +17,13 @@ def run_live_hardware_test() -> None:
 
     # 1. Initialize Hardware Sensor Adapter
     print("\n[1/5] Initializing Hardware Adapters...")
-    adapter = SensorAdapterFactory.create_adapter(DataSourceConfig(source="HARDWARE"))
+    adapter = SensorAdapterFactory.create_adapter(DataSourceConfig.from_env(source="HARDWARE"))
+    if hasattr(adapter, "transport") and hasattr(adapter.transport, "is_open") and not adapter.transport.is_open:
+        adapter.initialize()
+    elif hasattr(adapter, "initialized") and not getattr(adapter, "initialized", True):
+        adapter.initialize()
+    else:
+        adapter.initialize()
 
     try:
         # 2. Acquire Live FieldSample

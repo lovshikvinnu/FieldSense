@@ -5,11 +5,11 @@ register addressing, scaling, and the uS/cm -> dS/m conversion live in
 `fieldsense.hardware.soil_adapter` and are NOT reimplemented here. This script
 only opens a port, calls the adapter, and prints what it got.
 
-    python3 "hardware_test/soil sensor/jxbs_test.py" --port /dev/ttyUSB0
+    python3 "hardware_test/soil sensor/jxbs_test.py"
 
-Windows:  --port COM8
-Linux:    --port /dev/ttyUSB0     (ls /dev/ttyUSB*)
-macOS:    --port /dev/cu.usbserial-XXXX
+Windows:  defaults to COM8 (or specify via --port COM8)
+Linux:    defaults to /dev/ttyUSB0 (ls /dev/ttyUSB*)
+macOS:    defaults to /dev/ttyUSB0 (or --port /dev/cu.usbserial-XXXX)
 """
 
 import argparse
@@ -22,8 +22,11 @@ from fieldsense.hardware.soil_adapter import JXBS_REGISTERS, JXBSSoilAdapter  # 
 
 
 def main() -> int:
+    # Auto-detect default serial port based on operating system
+    default_port = "COM8" if sys.platform.startswith("win") else "/dev/ttyUSB0"
+
     parser = argparse.ArgumentParser(description="Read the JXBS 7-in-1 soil probe.")
-    parser.add_argument("--port", default="/dev/ttyUSB0", help="serial device (default: /dev/ttyUSB0)")
+    parser.add_argument("--port", default=default_port, help=f"serial device (default: {default_port})")
     parser.add_argument("--baud", type=int, default=9600)
     parser.add_argument("--slave", type=lambda v: int(v, 0), default=0x01)
     parser.add_argument("--samples", type=int, default=1, help="number of read cycles")

@@ -93,7 +93,7 @@ def collect_samples(
 
     try:
         adapter = SensorAdapterFactory.create_adapter(
-            DataSourceConfig(source=source, sensor_port=sensor_port)
+            DataSourceConfig.from_env(source=source, sensor_port=sensor_port)
         )
         adapter.initialize()
     except Exception as exc:
@@ -120,6 +120,11 @@ def collect_samples(
                 time.sleep(settle_seconds)
 
             try:
+                if hasattr(adapter, "transport") and hasattr(adapter.transport, "is_open") and not adapter.transport.is_open:
+                    adapter.initialize()
+                elif hasattr(adapter, "initialized") and not getattr(adapter, "initialized", True):
+                    adapter.initialize()
+
                 sample = adapter.acquire_sample()
             except Exception as exc:
                 print(f"      [!!] acquisition failed at point {index}: {exc}")
