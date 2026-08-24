@@ -1,34 +1,23 @@
 import os
-import sys
 
-# Import your existing display tools
-from fieldsense.hardware import display_bridge as bridge
+port = '/dev/ttyS0' # Remember to change to /dev/ttyACM0 if needed
 
-html_path = "artifacts/field_test_map.html"
-port = '/dev/ttyS0' # Change to /dev/ttyACM0 if needed
+print(f"1. Generating 153,600 bytes of FieldSense Green (0x07E0)...")
+# RGB565 Green is 0x07E0. 
+# Our STM32 sketch reads MSB first, then LSB.
+# MSB = 0x07, LSB = 0xE0
+green_pixel = bytes([0x07, 0xE0])
+frame_bytes = green_pixel * 76800  # 76,800 pixels = 153,600 bytes
 
-print(f"1. Rendering {html_path} to raw pixels in memory...")
-# Capture the 240x320 frame exactly like your main pipeline does
-width, height, rgb, _ = bridge.capture_or_panel(html_path, 240, 320, settle_ms=1000)
-
-print("2. Converting to RGB565 format...")
-# Convert to 'little' endian since your bridge supports it
-frame_little = bridge.rgb_to_rgb565(rgb, "little")
-
-# Swap bytes (Little Endian to Big Endian) so the STM32 sketch reads it perfectly
-frame_bytes = bytearray(len(frame_little))
-frame_bytes[0::2] = frame_little[1::2] # Move MSB
-frame_bytes[1::2] = frame_little[0::2] # Move LSB
-
-print(f"3. Configuring native Serial Port {port}...")
+print(f"2. Configuring native Serial Port {port}...")
 os.system(f"stty -F {port} 115200 raw -echo")
 
-print(f"4. Blasting {len(frame_bytes)} bytes to STM32...")
+print("3. Blasting frame to STM32...")
 try:
     with open(port, 'wb') as s:
-        s.write(b'\xAA')       # Magic trigger byte for STM32
-        s.write(frame_bytes)   # Push the entire 153,600 byte image
+        s.write(b'\xAA')       # Magic trigger byte to open the window
+        s.write(frame_bytes)   # Push the entire frame
         s.flush()
-    print("Success! Check the physical display.")
+    print("Success! The screen should snap to solid green.")
 except Exception as e:
     print(f"Failed to write to Serial port: {e}")
