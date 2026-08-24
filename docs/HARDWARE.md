@@ -255,7 +255,9 @@ FieldSample
 * **Z-Axis Pressure Filtering:** Noise threshold filter ($p.z < 400 \lor p.z > 4000$) applied to suppress floating noise [`CONFIRMED`].
 
 ### 7.4 Verified SPI Integration & Hardware Defect Analysis
-* **Verified Bus Architecture:** Native Hardware SPI (`&SPI`) on Arduino UNO Q with separate Chip Select lines (`TFT_CS = Pin 10`, `TOUCH_CS = Pin 4`, `TFT_DC = Pin 9`, `TFT_RST = Pin 8`, `TFT_LED = Pin 7`) [`CONFIRMED`].
+* **Verified Bus Architecture:** Native Hardware SPI (`&SPI`) on Arduino UNO Q with separate Chip Select lines (`TFT_CS = Pin 10`, `TOUCH_CS = Pin 4`, `TFT_DC = Pin 9`, `TFT_RST = Pin 8`, `TFT_LED = Pin 6`) [`CONFIRMED`].
+  > [!CAUTION]
+  > **Backlight is Pin 6, not Pin 7.** Pin 7 is `MAX485_RE_DE`, the RS485 direction line. The TFT and soil bench sketches were validated separately and both originally claimed D7; assembled together, holding the backlight on parks the transceiver in transmit and the probe can never answer. All three UNO Q sketches (`frame_receiver`, `link_probe`, `touch_demo`) now pin the backlight to D6 and never touch D7. Tie `LED`/`BLK` straight to 3.3 V if software brightness control is not needed.
 * **Observed Color Matrix Correction:** Corrected via `tft.invertDisplay(false)` for FieldSense dark-mode UI [`CONFIRMED`].
 * **Known Hardware Defect — Mechanical Bezel Pinch:**
   > [!WARNING]
@@ -326,7 +328,7 @@ The Arduino UNO Q has successfully passed ground-level hardware validation for t
 | :--- | :--- | :--- | :--- | :--- |
 | `GPS_TX` / `GPS_RX` | NEO-M8N GPS Module | STM32U585 MCU | `Serial1` (9600 8N1) | `🟢 VERIFIED` (Bridge → Linux) |
 | `USB_RS485` | JXBS 7-in-1 via USB-RS485 | Qualcomm QRB2210 Linux | USB-C Hub (`/dev/ttyUSB0`) | `🟢 VERIFIED` (Linux Modbus, `FIELDSENSE_SOURCE=HARDWARE`) |
-| `MCU_RS485` | JXBS 7-in-1 via MAX485 on the MCU | STM32U585 MCU | `Serial1` (9600 8N1) + Bridge `get_soil_data` | `🟢 VERIFIED` (`FIELDSENSE_SOURCE=BRIDGE`) |
+| `MCU_RS485` | JXBS 7-in-1 via MAX485 on the MCU | STM32U585 MCU | `Serial1` (9600 8N1) + Bridge `get_soil_data` | `🟡 BENCH ONLY — BLOCKED BY UART CONTENTION` (see 9.1) |
 | `TFT_SPI_CS` | ST7789 Display Chip Select | STM32U585 MCU | Pin 10 | `🟢 VERIFIED` (Hardware SPI) |
 | `TFT_DC` | ST7789 Data/Command | STM32U585 MCU | Pin 9 | `🟢 VERIFIED` |
 | `TFT_RST` | ST7789 Reset | STM32U585 MCU | Pin 8 | `🟢 VERIFIED` |
@@ -392,6 +394,53 @@ The Arduino UNO Q has successfully passed ground-level hardware validation for t
 - **Hardware Procurement Status**: `RECEIVED / IN HAND` (Components ordered on 17/08/2026 via Robu and TechieSMS; received in-hand on 21/08/2026).
 - **Physical Component Verification Status**: `COMPLETE` (All individual V1 hardware components and the UNO Q platform have passed component-level validation as of 2026-08-22).
 - **Physical System Integration**: Phase 2 V1 Hardware Integration active. The verified components are now being connected and validated as a complete system.
+
+### 9.1 Shared-Resource Ownership (D7 and `Serial1`)
+
+Three bench sketches were each verified alone, and two board resources ended up
+claimed twice. Neither conflict can appear in a single-component test — both
+only bite once the components share one board, which is precisely when the
+system stops collecting data.
+
+| Resource | Claimed by | Resolution | Status |
+| :--- | :--- | :--- | :--- |
+| **Pin D7** | `MAX485_RE_DE` (soil) vs `TFT_LED` (display) | Backlight moved to **D6**. D7 is RS485 direction control and nothing else. | `🟢 RESOLVED` |
+| **`Serial1` (D0/D1)** | NEO-M8N GPS vs MAX485 soil transceiver | **GPS owns `Serial1`.** The probe moves to the Linux side over USB-RS485. | `🟢 RESOLVED` |
+
+**Why D7 mattered.** `RE` and `DE` are tied, so the pin selects transmit or
+receive for the whole transceiver. Holding it HIGH to light the backlight parks
+the MAX485 in transmit, and the probe's reply is driven over before Linux ever
+sees it. All three UNO Q sketches now pin the backlight to D6 and never touch D7.
+
+**Why `Serial1` mattered.** The UNO Q exposes exactly one hardware UART on the
+headers. GPS needs it continuously for a 1 Hz NMEA stream; Modbus needs it for
+half-duplex request/response. Worse, only one sketch can be flashed at a time,
+and `get_gps_data` and `get_soil_data` lived in different sketches — so
+`FIELDSENSE_SOURCE=BRIDGE` could never serve both endpoints, whatever the wiring.
+
+**The resolution.** The single UART goes to the GPS, which cannot be moved
+without a second dongle. The soil probe moves to the Linux side, where the
+USB-RS485 adapter already provides an independent port:
+
+| Device | Bus | Owner | Source setting |
+| :--- | :--- | :--- | :--- |
+| NEO-M8N GPS | `Serial1` 9600 8N1 | STM32U585 | Bridge `get_gps_data` |
+| JXBS probe | USB-RS485 → `/dev/ttyUSB0` | QRB2210 Linux | `FIELDSENSE_SOURCE=HARDWARE` |
+| ST7789 panel | Hardware SPI + D6 backlight | STM32U585 | `FS\|` value record over Monitor |
+
+Firmware: **`hardware_test/fieldsense_unoq/`** is the single flashable sketch for
+the assembled unit — `dashboard.ino` verbatim plus non-blocking GPS in one
+`loop()`. The GPS read had to become non-blocking to get there: the bench
+sketch's blocking `readStringUntil` waits up to a second, and this loop also
+services the Monitor transport, where one `available()` already costs ~595 ms.
+GPS runs on `Serial1`, a real UART, so servicing it costs microseconds and
+never touches that transport.
+
+> [!NOTE]
+> `FIELDSENSE_SOURCE=BRIDGE` remains valid in code and is still the right path
+> if the probe is ever moved back onto the MCU. It requires firmware that
+> provides `get_soil_data`, which the unified sketch deliberately does not —
+> there is no second header UART to give it.
 
 ---
 

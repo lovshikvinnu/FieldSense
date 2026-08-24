@@ -69,6 +69,7 @@ The audit answers the 16 core architectural questions:
 10. **Are there conflicting pin assignments or architecture decisions?**
     - **Pin Conflict 1 (GPIO 7):** `MAX485_RE_DE` (Soil Sensor sketch) vs `TFT_LED` (TFT sketch).
     - **Interface Conflict 2 (UART Serial1):** GPS (`Serial1`) vs MAX485 (`Serial1`). Both peripherals claim the single physical UART header of the UNO Q.
+    - > **RESOLVED — see `docs/HARDWARE.md` section 9.1.** Backlight moved to D6, leaving D7 to RS485 direction control alone. `Serial1` awarded to the GPS; the soil probe moved to the Linux USB-RS485 port (`FIELDSENSE_SOURCE=HARDWARE`). Unified firmware lives in `hardware_test/fieldsense_unoq/`. This audit entry is kept as the record of how the conflicts were found.
 
 11. **Are there duplicated implementations?**
     - Duplicate Modbus register addresses and scaling constants across Python and C++ files.
