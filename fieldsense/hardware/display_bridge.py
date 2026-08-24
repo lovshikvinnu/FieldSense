@@ -606,10 +606,12 @@ def _await_ack(transport, what: str, timeout: float) -> None:
         raise DisplayBridgeError(
             "MCU did not acknowledge {} within {}s.\n"
             "Is frame_receiver.ino flashed and running?\n"
-            "On the UNO Q the monitor link accepts only ONE client per boot - "
-            "if anything connected to the proxy since the MCU last reset, "
-            "re-flash to reset it. Over TCP --baud is irrelevant; the router "
-            "fixes its own line speed.".format(what, timeout))
+            "Check the panel: it names the chunk that failed and the byte "
+            "count. If it still shows the boot banner the MCU never saw the "
+            "header at all.\n"
+            "Measure the link itself with:  python3 tools/link_probe.py\n"
+            "Over TCP --baud is irrelevant; the router fixes its own line "
+            "speed.".format(what, timeout))
     if reply[0] == NAK:
         raise DisplayBridgeError(
             "MCU rejected {} (NAK). Geometry, protocol version, or CRC "
