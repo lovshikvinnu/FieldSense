@@ -1,6 +1,6 @@
 import os
 
-port = '/dev/ttyS0' # Remember to change to /dev/ttyACM0 if needed
+port = '/dev/ttyGS0' # Remember to change to /dev/ttyACM0 if needed
 
 print(f"1. Generating 153,600 bytes of FieldSense Green (0x07E0)...")
 # RGB565 Green is 0x07E0. 
