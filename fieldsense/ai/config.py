@@ -1,5 +1,6 @@
 """Centralized configuration for the AI explanation layer."""
 
+import os
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
@@ -37,6 +38,73 @@ class AIConfig:
     # HARDWARE_SPEC_REQUIRED
     extra_args: Tuple[str, ...] = ("-no-cnv",)
     methodology_version: str = "0.1"
+
+    @classmethod
+    def from_env(cls, **overrides: object) -> "AIConfig":
+        """Build a configuration from environment variables.
+
+        The default `model_path` is RELATIVE, which is correct when the pipeline
+        is run from a shell in the repository and wrong under systemd, where the
+        service's working directory is not guaranteed and a relative path
+        silently resolves to nothing. A boot unit therefore sets:
+
+            FIELDSENSE_AI_BACKEND=AUTO
+            FIELDSENSE_MODEL_PATH=/opt/fieldsense/models/fieldsense-slm.gguf
+            FIELDSENSE_LLAMA_BIN=llama-cli
+            FIELDSENSE_AI_THREADS=4
+            FIELDSENSE_AI_TIMEOUT=120
+
+        Explicit keyword overrides win over the environment, which wins over
+        the defaults. Malformed numeric values fall back to the default rather
+        than raising: a typo in a unit file must not stop the board from
+        booting, it must only cost the optional narrative.
+        """
+        cfg = cls(
+            backend=os.environ.get("FIELDSENSE_AI_BACKEND", cls.backend).upper(),
+            model_path=os.path.expanduser(
+                os.environ.get("FIELDSENSE_MODEL_PATH", cls.model_path)
+            ),
+            binary_path=os.environ.get("FIELDSENSE_LLAMA_BIN", cls.binary_path),
+            threads=_env_int("FIELDSENSE_AI_THREADS", cls.threads),
+            timeout_seconds=_env_float("FIELDSENSE_AI_TIMEOUT", cls.timeout_seconds),
+            max_output_tokens=_env_int("FIELDSENSE_AI_MAX_TOKENS", cls.max_output_tokens),
+        )
+        if overrides:
+            from dataclasses import replace
+
+            cfg = replace(cfg, **overrides)  # type: ignore[arg-type]
+        return cfg
+
+    def resolved_model_path(self, base_dir: str = "") -> str:
+        """Return an absolute model path, anchored to `base_dir` when relative.
+
+        Args:
+            base_dir: Directory a relative path is measured from. Defaults to
+                the process working directory.
+
+        Returns:
+            An absolute filesystem path. Does not check that the file exists —
+            `LlamaCppAdapter.is_available()` owns that decision.
+        """
+        if os.path.isabs(self.model_path):
+            return self.model_path
+        return os.path.abspath(os.path.join(base_dir or os.getcwd(), self.model_path))
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read an integer environment variable, falling back on anything invalid."""
+    try:
+        return int(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    """Read a float environment variable, falling back on anything invalid."""
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
 
 
 @dataclass(frozen=True)

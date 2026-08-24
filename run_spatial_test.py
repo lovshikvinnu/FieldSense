@@ -4,21 +4,29 @@ Usage:
     python run_spatial_test.py [json_file_path]
 """
 
+import argparse
 import json
 import math
 import os
 import sys
-from datetime import datetime
-from typing import Dict, List, Tuple, Any
+from dataclasses import replace
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
-from fieldsense.domain.models import FieldSample, SampleSource, ValidationState
+from fieldsense.domain.models import FieldSample, FieldSession, SampleSource, ValidationState
 from fieldsense.intelligence.engine import FieldIntelligenceEngine, FieldIntelligenceResult
 from fieldsense.intelligence.validation.engine import ValidationEngine
 from fieldsense.spatial.engine import SpatialEngine, SpatialConfig
 from fieldsense.zones.engine import ZoneDetectionEngine
 from fieldsense.recommendations.engine import RecommendationEngine
 from fieldsense.intelligence.scoring import interpret_score
+from fieldsense.presentation import LocalUIRenderer, UIViewAdapter
+from fieldsense.ai import AIAdapterFactory, build_explanation_context
 
+
+
+# Session label for hardware-sourced runs, shared by the dashboard and the panel.
+FIELD_TEST_NAME = "Hardware Field Test"
 
 def generate_sample_hardware_json(file_path: str) -> None:
     """Generate sample field_test_20260823_171931.json with 5 physical soil samples if missing."""
@@ -67,12 +75,34 @@ def generate_sample_hardware_json(file_path: str) -> None:
         json_entries.append({
             "field_sample": json.dumps(sample.to_dict()),
             "field_intelligence_result": json.dumps(intel_res.to_dict()),
+            "provenance": "SYNTHETIC_FIXTURE",
+            "acquired_at": datetime.now(timezone.utc).isoformat(),
         })
 
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(json_entries, f, indent=2)
 
     print(f"[OK] Created hardware JSON test file: {file_path}")
+
+
+def dataset_provenance(file_path: str) -> str:
+    """Report where a dataset's values came from.
+
+    Returns LIVE_HARDWARE, SIMULATED, SYNTHETIC_FIXTURE, MIXED, or UNSTAMPED.
+    Datasets written before provenance stamping are UNSTAMPED and their origin
+    cannot be established from the file alone.
+    """
+    try:
+        with open(file_path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except Exception:
+        return "UNSTAMPED"
+    if not isinstance(data, list) or not data:
+        return "UNSTAMPED"
+    stamps = {entry.get("provenance", "UNSTAMPED") for entry in data if isinstance(entry, dict)}
+    if len(stamps) == 1:
+        return stamps.pop()
+    return "MIXED"
 
 
 def parse_hardware_json(file_path: str) -> Tuple[List[FieldSample], List[FieldIntelligenceResult]]:
@@ -149,23 +179,204 @@ def latlon_to_local_cartesian(coords: List[Tuple[float, float]]) -> List[Tuple[f
     return local_xy
 
 
-def run_spatial_test(json_path: str = "field_test_20260823_171931.json") -> Dict[str, Any]:
-    """Bridge hardware JSON output to Phase 1 Spatial, Zone, and Recommendation engines."""
+
+def build_dashboard(
+    samples: List[FieldSample],
+    spatial_result: Any,
+    zone_result: Any,
+    rec_result: Any,
+    output_dir: str = "artifacts",
+    html_name: str = "field_test_map.html",
+) -> Tuple[str, Any]:
+    """Render the Field Intelligence Map dashboard from spatial + zone results.
+
+    Feeds the frozen presentation layer: UIViewAdapter reshapes the engine
+    results into a passive UIFieldView, the optional AI layer attaches a
+    guarded plain-language narrative, and LocalUIRenderer emits one
+    self-contained HTML file with no external requests.
+
+    Args:
+        samples: Hardware FieldSamples used for this run.
+        spatial_result: SpatialFieldResult from the spatial engine.
+        zone_result: ZoneDetectionResult from the zone engine.
+        rec_result: RecommendationResult from the recommendation engine.
+        output_dir: Directory for generated artifacts.
+        html_name: Output file name.
+
+    Returns:
+        Tuple of (html_path, ui_view).
+    """
+    session = FieldSession(
+        session_id="FIELD-TEST-{}".format(datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")),
+        created_at=datetime.now(timezone.utc),
+        field_name="Hardware Field Test",
+    )
+    for sample in samples:
+        session.add_sample(sample)
+
+    view = UIViewAdapter().adapt(
+        session, spatial_result, zone_result, rec_result,
+        expected_samples=max(1, len(samples)),
+    )
+
+    # Optional narrative. Absent model weights resolve to deterministic
+    # templates; a failure here must never cost us the dashboard.
+    try:
+        ai_adapter = AIAdapterFactory.create_adapter()
+        try:
+            narrative = ai_adapter.explain(
+                build_explanation_context(session, spatial_result, zone_result, rec_result)
+            )
+            view = replace(view, narrative=narrative)
+        finally:
+            ai_adapter.shutdown()
+    except Exception as exc:  # narrative is presentation text, never load-bearing
+        print("     -> AI narrative unavailable ({}); dashboard renders without it.".format(exc))
+
+    os.makedirs(output_dir, exist_ok=True)
+    html_path = os.path.join(output_dir, html_name)
+    with open(html_path, "w", encoding="utf-8") as handle:
+        handle.write(LocalUIRenderer().render_html(view))
+
+    return html_path, view
+
+
+def push_to_display(
+    html_path: str,
+    output_dir: str = "artifacts",
+    mode: str = "auto",
+    fb_device: Optional[str] = None,
+    rotate: int = 0,
+    png_name: str = "field_test_panel.png",
+) -> Dict[str, Any]:
+    """Render the dashboard to a 240x320 RGB565 frame and flush it to the panel.
+
+    Modes:
+        auto   push only when a framebuffer device exists, otherwise skip fast
+        png    capture the frame and save a PNG, no framebuffer write
+        force  capture and attempt the write even if detection found nothing
+        off    do nothing
+
+    Never raises. A missing panel, browser, or driver degrades to a reported
+    status so the pipeline still completes.
+    """
+    outcome: Dict[str, Any] = {"status": "SKIPPED", "device": None, "frame_png": None, "detail": ""}
+    if mode == "off":
+        outcome["detail"] = "display disabled"
+        return outcome
+
+    from fieldsense.hardware import display_bridge as bridge
+
+    device = bridge.detect_framebuffer(fb_device)
+    candidates = [fb_device] if fb_device else list(bridge.FRAMEBUFFER_CANDIDATES)
+
+    if device is None and mode == "auto":
+        outcome["detail"] = (
+            "no framebuffer found ({}). On the UNO Q load the fbtft driver, then re-run. "
+            "Use --display png to save a frame instead.".format(", ".join(c for c in candidates if c))
+        )
+        return outcome
+
+    # No browser is no longer fatal: the bridge falls back to the stdlib status
+    # panel so a stock board still lights its screen.
+    renderer = "dashboard"
+    try:
+        width, height, rgb, renderer = bridge.capture_or_panel(
+            html_path, 240, 320, settle_ms=1200,
+            summary_path=os.path.join(output_dir, "panel_summary.json"),
+        )
+    except Exception as exc:
+        outcome["status"] = "FAILED"
+        outcome["detail"] = "frame render failed: {}".format(exc)
+        return outcome
+    outcome["renderer"] = renderer
+
+    # Always keep visual proof of the exact frame, panel present or not.
+    try:
+        png_path = os.path.join(output_dir, png_name)
+        with open(png_path, "wb") as handle:
+            handle.write(bridge.encode_png(rgb, width, height))
+        outcome["frame_png"] = png_path
+    except Exception:
+        pass
+
+    if device is None:
+        outcome["status"] = "NO_DEVICE"
+        outcome["detail"] = "frame rendered but no framebuffer to write"
+        return outcome
+
+    try:
+        width, height, rgb = bridge.rotate_rgb(rgb, width, height, rotate)
+        written = bridge.write_framebuffer(
+            bridge.rgb_to_rgb565(rgb, "little"), device, geometry=(width, height)
+        )
+        outcome.update(status="PUSHED", device=device,
+                       detail="{} bytes written ({}x{} RGB565, renderer={})".format(
+                           written, width, height, renderer))
+    except Exception as exc:
+        outcome["status"] = "FAILED"
+        outcome["device"] = device
+        outcome["detail"] = str(exc)
+
+    return outcome
+
+
+def run_spatial_test(
+    json_path: str = "field_test_20260823_171931.json",
+    output_dir: str = "artifacts",
+    render_ui: bool = True,
+    display: str = "auto",
+    fb_device: Optional[str] = None,
+    rotate: int = 0,
+    allow_generate: bool = False,
+) -> Dict[str, Any]:
+    """Bridge hardware JSON to Phase 1 engines, the visual dashboard, and the panel.
+
+    Args:
+        json_path: Hardware telemetry JSON produced by the acquisition run.
+        output_dir: Directory for the generated dashboard and frame.
+        render_ui: Generate the self-contained HTML Field Intelligence Map.
+        display: auto | png | force | off. `auto` pushes to the panel only when
+            a framebuffer device exists, so this stays fast off-target.
+        fb_device: Explicit framebuffer, e.g. /dev/fb1. Defaults to auto-detect.
+        rotate: Clockwise frame rotation in degrees (0, 90, 180, 270).
+        allow_generate: Permit building a synthetic fixture when the dataset is
+            missing. Off by default so real runs never silently fabricate data.
+
+    Returns:
+        Summary dictionary of the run.
+    """
     print("\n================================================================================")
     print("      FIELDSENSE SPATIAL INTEGRATION TEST & HARDWARE BRIDGE (PHASE 1)   ")
     print("================================================================================")
 
-    # Auto-generate JSON file if missing to ensure script is fully runnable out-of-the-box
     if not os.path.exists(json_path):
+        if not allow_generate:
+            raise FileNotFoundError(
+                "Dataset not found: '{}'.\n"
+                "This script will NOT invent data. Capture real samples with:\n"
+                "    python3 -m fieldsense.live_collector --points 5 --out {}\n"
+                "or pass --generate-sample to build a clearly-stamped synthetic "
+                "fixture for a dry run.".format(json_path, json_path)
+            )
         generate_sample_hardware_json(json_path)
 
     # 1. Parse JSON File
-    print(f"\n[1/5] Parsing Hardware JSON Output: '{json_path}'...")
+    print(f"\n[1/7] Parsing Hardware JSON Output: '{json_path}'...")
     samples, intel_results = parse_hardware_json(json_path)
-    print(f"     -> Extracted {len(samples)} valid physical soil samples and intelligence results.")
+    provenance = dataset_provenance(json_path)
+    print(f"     -> Extracted {len(samples)} soil samples and intelligence results.")
+    banner = {
+        "LIVE_HARDWARE":    "     -> PROVENANCE: LIVE_HARDWARE — values came off the physical probe.",
+        "SIMULATED":        "     -> PROVENANCE: SIMULATED — virtual sensor. NOT field data.",
+        "SYNTHETIC_FIXTURE":"     -> PROVENANCE: SYNTHETIC_FIXTURE — generated placeholders. NOT field data.",
+        "MIXED":            "     -> PROVENANCE: MIXED — entries disagree on origin. Inspect before use.",
+        "UNSTAMPED":        "     -> PROVENANCE: UNSTAMPED — origin cannot be established from this file.",
+    }[provenance]
+    print(banner)
 
     # 2. Coordinate Projection (Lat/Lon -> Local 2D Cartesian Grid in meters)
-    print("\n[2/5] Coordinate Projection (Lat/Lon -> Local 2D Cartesian Grid, Point 1 as Origin):")
+    print("\n[2/7] Coordinate Projection (Lat/Lon -> Local 2D Cartesian Grid, Point 1 as Origin):")
     print("--------------------------------------------------------------------------------")
     coords = [(s.latitude, s.longitude) for s in samples]
     local_xy = latlon_to_local_cartesian(coords)
@@ -183,19 +394,19 @@ def run_spatial_test(json_path: str = "field_test_20260823_171931.json") -> Dict
               f"Soil Health: {sh_score:.4f} [{sh_status:8s}] | Moisture: {m_score:.4f} | Nitrogen: {n_score:.4f}")
 
     # 3. Instantiate Phase 1 Spatial Mapping Classes
-    print("\n[3/5] Instantiating Phase 1 Spatial, Zone, and Recommendation Engines...")
+    print("\n[3/7] Instantiating Phase 1 Spatial, Zone, and Recommendation Engines...")
     spatial_engine = SpatialEngine(config=SpatialConfig(grid_spacing_meters=5.0))
     zone_engine = ZoneDetectionEngine()
     rec_engine = RecommendationEngine()
 
     # 4. Processing Phase 1 Engines
-    print("[4/5] Executing Spatial IDW Interpolation, Zone Detection & Recommendations...")
+    print("[4/7] Executing Spatial IDW Interpolation, Zone Detection & Recommendations...")
     spatial_result = spatial_engine.process(intel_results, samples)
     zone_result = zone_engine.process(spatial_result)
     rec_result = rec_engine.process(zone_result)
 
     # 5. Terminal Output Summary
-    print("\n[5/5] End-to-End Pipeline Summary:")
+    print("\n[5/7] End-to-End Pipeline Summary:")
     print("--------------------------------------------------------------------------------")
     print(f"  [Spatial IDW Grid]")
     print(f"    - Field Bounds       : Lat [{spatial_result.bounds.min_latitude:.6f} deg - {spatial_result.bounds.max_latitude:.6f} deg], "
@@ -216,8 +427,63 @@ def run_spatial_test(json_path: str = "field_test_20260823_171931.json") -> Dict
         print(f"    - [{r.recommendation_id}] Zone {r.zone_id} ({p_val}) [{c_val}] : {r.action}")
         print(f"      Reason: {r.reason}")
 
-    print("================================================================================")
-    print(" SUCCESS: End-to-End Pipeline Hardware JSON -> Cartesian -> IDW -> Zones -> Recs")
+    # 6. Visual Field Intelligence Map
+    html_path = None
+    health = None
+    if render_ui:
+        print("\n[6/7] Rendering Field Intelligence Map dashboard...")
+        html_path, ui_view = build_dashboard(
+            samples, spatial_result, zone_result, rec_result, output_dir=output_dir
+        )
+        health = ui_view.health_summary
+        size_kb = os.path.getsize(html_path) / 1024.0
+        print(f"     -> Overall Health : {health.score * 100:.0f}% [{health.status}]")
+        print(f"     -> Dashboard      : {html_path} ({size_kb:.1f} KB, self-contained)")
+        if ui_view.narrative:
+            print(f"     -> Narrative      : {ui_view.narrative.generated_by} "
+                  f"[{ui_view.narrative.generation_status.value}] | "
+                  f"guard blocks: {len(ui_view.narrative.guard_violations)}")
+    else:
+        print("\n[6/7] Dashboard rendering disabled (--no-ui).")
+
+    # 7. Physical 2.8" TFT panel
+    print("\n[7/7] Pushing RGB565 frame to the 2.8\" TFT panel...")
+
+    # Panel summary first, so the browser-free renderer has real numbers to draw
+    # if Chromium is absent on this board. Non-fatal on failure.
+    from fieldsense.hardware.panel_renderer import write_panel_summary
+
+    write_panel_summary({
+        "field_name": FIELD_TEST_NAME,
+        "provenance": provenance,
+        "total_samples": len(samples),
+        "valid_samples": len(samples),
+        "rejected_samples": 0,
+        "coverage_ratio": round(spatial_result.coverage.coverage_ratio, 4),
+        "soil_health_score": round(health.score, 4) if health else None,
+        "soil_health_status": health.status if health else None,
+        "zone_count": len(zone_result.zones),
+        "recommendation_count": len(rec_result.recommendations),
+        "data_source": "HARDWARE" if provenance == "LIVE_HARDWARE" else provenance,
+        "evidence_level": health.evidence_level if health else None,
+        "offline_mode": True,
+        "panel_note": "TEXT PANEL",
+    }, os.path.join(output_dir, "panel_summary.json"))
+    if html_path is None:
+        display_result = {"status": "SKIPPED", "device": None, "frame_png": None,
+                          "detail": "no dashboard rendered"}
+    else:
+        display_result = push_to_display(
+            html_path, output_dir=output_dir, mode=display, fb_device=fb_device, rotate=rotate
+        )
+    marker = {"PUSHED": "[OK]", "NO_DEVICE": "[--]", "SKIPPED": "[--]", "FAILED": "[!!]"}.get(
+        display_result["status"], "[--]")
+    print(f"     {marker} {display_result['status']}: {display_result['detail']}")
+    if display_result.get("frame_png"):
+        print(f"     -> Panel frame    : {display_result['frame_png']} (240x320, exact panel pixels)")
+
+    print("\n================================================================================")
+    print(" SUCCESS: Hardware JSON -> Cartesian -> IDW -> Zones -> Recs -> Dashboard -> Panel")
     print("================================================================================\n")
 
     return {
@@ -226,9 +492,43 @@ def run_spatial_test(json_path: str = "field_test_20260823_171931.json") -> Dict
         "grid_points": len(spatial_result.grid_points),
         "zones": len(zone_result.zones),
         "recommendations": len(rec_result.recommendations),
+        "html_path": html_path,
+        "soil_health": round(health.score, 4) if health else None,
+        "soil_health_status": health.status if health else None,
+        "provenance": provenance,
+        "display_status": display_result["status"],
+        "display_device": display_result["device"],
+        "panel_frame": display_result.get("frame_png"),
     }
 
 
+def main(argv: Optional[List[str]] = None) -> int:
+    """Command line entry point."""
+    parser = argparse.ArgumentParser(
+        description="Bridge hardware telemetry JSON to the FieldSense pipeline, dashboard and panel.")
+    parser.add_argument("json_path", nargs="?", default="field_test_20260823_171931.json",
+                        help="hardware telemetry JSON (generated if missing)")
+    parser.add_argument("--output-dir", default="artifacts", help="where to write the dashboard and frame")
+    parser.add_argument("--no-ui", action="store_true", help="skip dashboard rendering")
+    parser.add_argument("--display", default="auto", choices=("auto", "png", "force", "off"),
+                        help="auto: push only if a framebuffer exists · png: save a frame instead")
+    parser.add_argument("--fb", dest="fb_device", default=None, help="explicit framebuffer, e.g. /dev/fb1")
+    parser.add_argument("--rotate", type=int, default=0, choices=(0, 90, 180, 270))
+    parser.add_argument("--generate-sample", action="store_true",
+                        help="build a stamped synthetic fixture if the dataset is missing")
+    args = parser.parse_args(argv)
+
+    run_spatial_test(
+        args.json_path,
+        output_dir=args.output_dir,
+        render_ui=not args.no_ui,
+        display=args.display,
+        fb_device=args.fb_device,
+        rotate=args.rotate,
+        allow_generate=args.generate_sample,
+    )
+    return 0
+
+
 if __name__ == "__main__":
-    target_json = sys.argv[1] if len(sys.argv) > 1 else "field_test_20260823_171931.json"
-    run_spatial_test(target_json)
+    raise SystemExit(main())

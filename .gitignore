@@ -24,9 +24,9 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Generated dashboard output (rebuild: python3 -m fieldsense.demo)
-artifacts/*.html
-artifacts/*.png
+# Generated dashboard output IS committed on purpose: judges and teammates
+# should be able to open the live UI straight from the repo without running
+# anything. Rebuild any time with:  python3 -m fieldsense.demo
 
 # Local model weights (see docs/AI_DEPLOYMENT.md)
 models/

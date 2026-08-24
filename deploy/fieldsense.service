@@ -1,0 +1,73 @@
+# FieldSense AI — standalone boot service for the Arduino UNO Q.
+#
+# Install with: sudo ./scripts/install_boot_service.sh
+# Or by hand:
+#   sudo cp deploy/fieldsense.service /etc/systemd/system/
+#   sudo systemctl enable --now fieldsense.service
+#   journalctl -u fieldsense -f
+#
+# This unit brings the whole offline stack up on power-on with no computer, no
+# network, and no operator. It replaces the documentation-only snippet that
+# previously lived in docs/AI_DEPLOYMENT.md, which described a service nobody
+# could install because the file did not exist.
+
+[Unit]
+Description=FieldSense AI offline soil intelligence (dashboard + 2.8" SPI panel)
+Documentation=file:/opt/fieldsense/docs/AI_DEPLOYMENT.md
+# No network dependency of any kind. The unit must come up with the radios off.
+After=local-fs.target
+Wants=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+User=fieldsense
+# 'video' to write /dev/fbN, 'dialout' to open the RS485 tty. Without both the
+# service starts and then cannot reach the panel or the probe.
+SupplementaryGroups=video dialout
+
+# WorkingDirectory is load-bearing, not cosmetic: the dashboard path, the panel
+# summary, and the GGUF model path are all repo-relative, so a service started
+# from / would find none of them.
+WorkingDirectory=/opt/fieldsense
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/fieldsense
+
+# Acquisition source. VIRTUAL boots a demonstrable dashboard with no probe
+# attached; switch to HARDWARE (USB-RS485 on Linux) or BRIDGE (probe on the
+# STM32) once the sensors are wired.
+Environment=FIELDSENSE_SOURCE=VIRTUAL
+Environment=FIELDSENSE_SENSOR_PORT=/dev/ttyUSB0
+Environment=FIELDSENSE_POINTS=5
+# A cold-start receiver has no fix for minutes. Requiring one here would mean an
+# unattended boot records nothing at all.
+Environment=FIELDSENSE_REQUIRE_GPS_FIX=0
+
+# Panel geometry. 'auto' picks /dev/fb1 then /dev/fb0.
+Environment=FB_DEVICE=auto
+Environment=ROTATE=0
+
+# Optional local SLM. Absolute paths, because the service has no shell to
+# expand a relative one. Absent weights are normal: the AI factory falls back
+# to the deterministic template backend.
+Environment=FIELDSENSE_AI_BACKEND=AUTO
+Environment=FIELDSENSE_MODEL_PATH=/opt/fieldsense/models/fieldsense-slm.gguf
+Environment=FIELDSENSE_LLAMA_BIN=llama-cli
+
+ExecStart=/opt/fieldsense/scripts/boot_fieldsense.sh
+
+# The panel is the only output a field operator has, so keep retrying rather
+# than leaving a dark screen after one bad boot.
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=600
+
+# Hardening that does not interfere with framebuffer or tty access.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -8,10 +8,10 @@
 
 ### A handheld, fully offline AI soil mapping system that helps farmers understand exactly where their field needs attention — before they leave the field.
 
-**Built by Venkata Neha Priya Juturu & Lovshik Vinnu Dangati**
-*Electronics & Communication Engineering · Mahindra University*
+**Built by Neha Priya & Lovshik Vinnu**
+*Electronics & Communication Engineering*
 
-![Tests](https://img.shields.io/badge/tests-231%20passing-10b981?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-294%20passing-10b981?style=flat-square)
 ![Dependencies](https://img.shields.io/badge/runtime%20dependencies-0-3b82f6?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.10%2B-f59e0b?style=flat-square)
 ![Offline](https://img.shields.io/badge/network-not%20required-8b5cf6?style=flat-square)
@@ -117,7 +117,7 @@ Compact-first. One HTML document serves the 240 × 320 panel and a laptop.
 
 ![FieldSense desktop dashboard](docs/images/ui_dashboard_desktop.png)
 
-Run `python3 -m fieldsense.demo` and open `artifacts/fieldsense_competition_demo.html` — a single self-contained file with zero external requests. The panel images above are captured from that same renderer, so this is exactly what the hardware shows.
+**Open the live dashboard:** [`artifacts/fieldsense_competition_demo.html`](artifacts/fieldsense_competition_demo.html) — committed to the repo, a single self-contained file with zero external requests. Rebuild it any time with `python3 -m fieldsense.demo`. The panel images above are captured from that same renderer, so this is exactly what the hardware shows.
 
 ---
 
@@ -150,6 +150,18 @@ The single most important wiring rule in this build.
 
 `JXBS → USB-RS485 adapter → UNO Q USB host → /dev/ttyUSB0` · `9600 8-N-1` · slave `0x01` · function `0x03`
 
+Alternatively the probe hangs off the **STM32** through a MAX485 breakout, which the bench sketch verified:
+
+| MAX485 pin | UNO Q | Note |
+| :--- | :--- | :--- |
+| VCC | 5 V | This breakout is a 5 V part; do not run it at 3.3 V |
+| GND | GND | Shared with the probe's 12 V pack ground |
+| DI | **TX — Pin 1** (Serial1) | |
+| RO | **RX — Pin 0** (Serial1) | |
+| **DE + RE** (tied) | **D7** | Exclusive to RS485. The STM32 owns this timing because Linux cannot meet the bus turnaround deadline |
+
+`JXBS → MAX485 → STM32 Serial1 → RouterBridge get_soil_data → Linux` · set `FIELDSENSE_SOURCE=BRIDGE`
+
 **📡 NEO-M8N GPS — UART / NMEA 0183**
 
 | Module pin | UNO Q |
@@ -167,12 +179,13 @@ The single most important wiring rule in this build.
 | :--- | :--- | :--- | :--- | :--- |
 | VCC | 3.3 V | | SDI / MOSI | **D11** |
 | GND | GND | | SCK | **D13** |
-| CS | **D10** | | LED / BLK | 3.3 V |
+| CS | **D10** | | LED / BLK | **D6** (or 3.3 V) |
 | RESET | **D8** | | SDO / MISO | **D12** |
 | DC / RS | **D9** | | | |
 
 > ⚠️ **3.3 V logic only.** The power pin tolerates 5 V via an onboard LDO — the **signal** lines do not, and no level shifters are fitted.
 > ⚠️ Controller is **ST7789V**, not ILI9341. These boards are widely mislabelled; an ILI9341 driver will not initialise this panel.
+> ⚠️ **Backlight is D6, not D7.** D7 drives the MAX485's tied `DE`/`RE` line. The two bench sketches were validated separately and both claimed D7; wired together, the backlight would have jammed the RS485 bus. Tie `LED`/`BLK` straight to 3.3 V if you do not need software brightness control.
 
 Full electrical specs, verified register maps and datasheet references → **[docs/HARDWARE.md](docs/HARDWARE.md)**
 
@@ -213,7 +226,7 @@ Python 3.10+. **No runtime dependencies.**
 python3 -m pip install -e ".[dev]"
 ```
 
-**Run the tests** — 231 should pass:
+**Run the tests** — 294 should pass:
 
 ```bash
 python3 -m pytest -q
@@ -243,22 +256,42 @@ The `1 Rejected` is deliberate — the dataset plants one unstable sample so you
 
 Run `./scripts/launch_display.sh probe` first — it reports what your machine can do and changes nothing. Without the panel, `png` writes the exact 240 × 320 frame instead.
 
+If no Chromium-family browser is installed, the bridge draws a browser-free status panel instead of failing, so the screen is never blank. Force it with `--target panel`; require the graphical dashboard with `--no-fallback`.
+
+**Run standalone on the board** — no computer, no network, no operator:
+
+```bash
+sudo ./scripts/install_boot_service.sh
+```
+
+That installs `deploy/fieldsense.service`, which runs `scripts/boot_fieldsense.sh` on every power-on: acquire, validate, score, render, and push a frame to the SPI panel. Preview it with `--dry-run`, use `--refresh` for a continuously updating panel, and switch to live sensors by editing the `Environment=` lines:
+
+```ini
+Environment=FIELDSENSE_SOURCE=HARDWARE    # or BRIDGE (probe on the STM32)
+Environment=FIELDSENSE_SENSOR_PORT=/dev/ttyUSB0
+Environment=FIELDSENSE_REQUIRE_GPS_FIX=0  # a cold-start receiver degrades, never aborts
+```
+
+Details → **[docs/AI_DEPLOYMENT.md](docs/AI_DEPLOYMENT.md)** section D8.
+
 ---
 
 ## Status
 
 | ✅ Complete | ⚠️ Pending hardware |
 | :--- | :--- |
-| Deterministic pipeline · 231 tests | GPS wired to UNO Q (`HW-03`) |
+| Deterministic pipeline · 294 tests | GPS wired to UNO Q (`HW-03`) |
 | Hardware → `FieldSample` adapter layer | Display on QRB2210 SPI (`DSP-01`/`DSP-02`) |
 | AI explanation + `NarrativeGuard` | Touch events reaching the UI (`DSP-05`) |
 | Offline dashboard · 240 × 320 + desktop | On-target timing benchmark (`PF-01`) |
 | Display bridge → RGB565 framebuffer | |
 | Probe → MAX485 → UNO Q, verified end-to-end | |
+| Standalone boot service + browser-free panel | |
 
 **Honest limitation.** The scoring curves and MCDA weights are unvalidated prototype values at `methodology_version = "0.1"`. Every hardware test above can pass while the agronomic interpretation remains unproven — *"the sensor chain works"* and *"the soil advice is correct"* are different claims, and only the first is currently evidenced.
 
 Full register of open items → **[docs/STATUS.md](docs/STATUS.md)**
+Verified submission report → **[docs/OFFICIAL_PROJECT_REPORT.md](docs/OFFICIAL_PROJECT_REPORT.md)**
 
 ---
 

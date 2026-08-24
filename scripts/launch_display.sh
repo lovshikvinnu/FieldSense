@@ -10,7 +10,7 @@
 #   ./scripts/launch_display.sh watch           # refresh the panel every REFRESH_SEC
 #
 # Environment overrides:
-#   FB_DEVICE=/dev/fb1     framebuffer device
+#   FB_DEVICE=auto         framebuffer device (auto detects /dev/fb1 then /dev/fb0)
 #   ROTATE=0               0 | 90 | 180 | 270 (clockwise)
 #   WIDTH=240 HEIGHT=320   panel geometry
 #   BYTEORDER=little       little for /dev/fbN, big for a raw SPI stream
@@ -21,7 +21,10 @@
 set -euo pipefail
 
 TARGET="${1:-auto}"
-FB_DEVICE="${FB_DEVICE:-/dev/fb1}"
+# 'auto' rather than a hardcoded /dev/fb1: on a board where the SPI panel is the
+# only framebuffer it enumerates as /dev/fb0, and the old default wrote to a
+# device that did not exist there.
+FB_DEVICE="${FB_DEVICE:-auto}"
 ROTATE="${ROTATE:-0}"
 WIDTH="${WIDTH:-240}"
 HEIGHT="${HEIGHT:-320}"

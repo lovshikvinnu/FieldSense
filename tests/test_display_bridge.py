@@ -265,7 +265,10 @@ def test_parser_defaults_to_panel_geometry():
     args = build_parser().parse_args([])
     assert args.width == PANEL_WIDTH and args.height == PANEL_HEIGHT
     assert args.target == "auto"
-    assert args.device == "/dev/fb1"
+    # 'auto' rather than a hardcoded /dev/fb1: the panel is fb0 on a board
+    # where it is the only framebuffer, and the old default wrote to a device
+    # that did not exist there.
+    assert args.device == "auto"
     assert args.byteorder == "little"
 
 
@@ -293,8 +296,25 @@ def test_main_probe_exits_zero(capsys):
     assert "display bridge" in capsys.readouterr().out.lower()
 
 
-def test_main_reports_missing_dashboard_without_raising(capsys):
-    code = main(["--target", "png", "--html", "artifacts/does_not_exist.html"])
+def test_main_reports_missing_dashboard_without_raising(capsys, tmp_path):
+    """A missing dashboard degrades to the browser-free panel, not a failure.
+
+    A field unit that cannot rasterise the HTML must still light the screen.
+    """
+    out = tmp_path / "frame.png"
+    code = main(["--target", "png", "--html", "artifacts/does_not_exist.html",
+                 "--out", str(out)])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "renderer=panel" in captured.out
+    assert "does_not_exist.html" in captured.err
+    assert out.exists()
+
+
+def test_no_fallback_restores_strict_failure(capsys):
+    """--no-fallback keeps the old behaviour for bench verification of the UI."""
+    code = main(["--target", "png", "--html", "artifacts/does_not_exist.html",
+                 "--no-fallback"])
     assert code == 1
     assert "fieldsense.demo" in capsys.readouterr().err
 

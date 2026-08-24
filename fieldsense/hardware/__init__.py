@@ -6,6 +6,12 @@ Two layers live here:
     Contract        HardwareSampleAdapter, the single point where physical
                     telemetry becomes a canonical FieldSample
 
+Three physical soil wirings are supported, all producing the same FieldSample:
+
+    StdlibModbusTransport   JXBS -> MAX485 -> USB dongle -> Linux, stdlib only
+    DirectUSBModbusTransport  the same wiring via pyserial (optional extra)
+    BridgeSoilTransport     JXBS -> MAX485 -> STM32 -> RouterBridge -> Linux
+
 Both sides of that boundary are frozen. This package adapts between them and
 never reimplements either. See docs/INTEGRATION_RUNBOOK.md.
 """
@@ -48,6 +54,14 @@ from .hardware_sample_adapter import (
     QualityPolicy,
     derive_measurement_quality,
 )
+from .bridge_soil import (
+    BRIDGE_SOIL_METHOD,
+    BridgeSoilAdapter,
+    BridgeSoilTransport,
+    normalise_bridge_payload,
+    soil_data_to_canonical_json,
+)
+from .serial_modbus import StdlibModbusTransport
 
 __all__ = [
     # Models & Exceptions
@@ -92,4 +106,12 @@ __all__ = [
     "HardwareSampleAdapter",
     "QualityPolicy",
     "derive_measurement_quality",
+    # STM32 RouterBridge soil path
+    "BridgeSoilAdapter",
+    "BridgeSoilTransport",
+    "BRIDGE_SOIL_METHOD",
+    "normalise_bridge_payload",
+    "soil_data_to_canonical_json",
+    # Zero-dependency USB-RS485 path
+    "StdlibModbusTransport",
 ]

@@ -71,7 +71,7 @@ def test_direct_usb_modbus_transport_mocked():
     transport._ser = mock_ser
 
     # Return valid Modbus response 7-bytes for each of the 7 registers
-    # Raw values: pH=689(6.89), M=250(25.0), T=225(22.5), EC=603(603 µS/cm -> 0.6 dS/m), N=43(43), P=60(60), K=120(120)
+    # Raw values: pH=689(6.89), M=250(25.0), T=225(22.5), EC=603(603 uS/cm -> 0.603 dS/m), N=43(43), P=60(60), K=120(120)
     raw_vals = [689, 250, 225, 603, 43, 60, 120]
     responses = []
     for val in raw_vals:
@@ -88,7 +88,8 @@ def test_direct_usb_modbus_transport_mocked():
     assert data["ph"] == 6.89
     assert data["moisture"] == 25.0
     assert data["temperature"] == 22.5
-    assert data["ec"] == 0.6
+    assert data["ec"] == 0.603
+    assert data["ec_raw_us_cm"] == 603.0
     assert data["nitrogen"] == 43.0
     assert data["phosphorus"] == 60.0
     assert data["potassium"] == 120.0
@@ -174,7 +175,7 @@ def test_hardware_sensor_adapter_e2e_integration():
         assert abs(sample.longitude - 78.4245582) < 1e-6
         assert sample.ph == 6.89
         assert sample.nitrogen == 43.0
-        assert sample.ec == 0.6
+        assert sample.ec == 0.603
 
         # Validate against Phase 1 ValidationEngine
         val_engine = ValidationEngine()

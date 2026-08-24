@@ -17,12 +17,19 @@ ST7789V SPI display. This module joins the two on the Linux (QRB2210) side.
           v
     /dev/fbN  (fbtft driver exposes the SPI panel as a framebuffer)
 
-Four targets:
+Five targets:
 
     probe   report what this machine can do, change nothing
     png     write a 240x320 PNG   (works anywhere a browser exists)
     fb      write RGB565 to a framebuffer device   (the panel)
     kiosk   launch a full-screen browser   (needs a display server)
+    panel   draw the status panel WITHOUT a browser   (see panel_renderer)
+
+The `panel` target exists because Chromium is a system asset, not a dependency,
+and a stock UNO Q image does not carry one. Without a browser-free path the
+board booted to a black screen. `fb` and `png` now fall back to `panel`
+automatically when no browser is found, so the display layer degrades instead
+of failing. Pass --no-fallback to require the real dashboard render.
 
 No third-party packages. PNG decoding is implemented here against the
 standard library so the project keeps `dependencies = []`. The browser and
@@ -98,6 +105,37 @@ def list_framebuffers() -> List[str]:
         for name in os.listdir("/dev")
         if name.startswith("fb") and name[2:].isdigit()
     ) if os.path.isdir("/dev") else []
+
+
+# Preference order when no device is named. fb1 first because an fbtft SPI
+# panel usually enumerates behind whatever the SoC already registered, but a
+# board where the panel is the ONLY framebuffer exposes it as fb0.
+FRAMEBUFFER_CANDIDATES = ("/dev/fb1", "/dev/fb0")
+
+
+def detect_framebuffer(explicit: Optional[str] = None) -> Optional[str]:
+    """Return the framebuffer device to write to, or None if there is none.
+
+    Args:
+        explicit: Caller-supplied device, returned as-is when given.
+
+    Returns:
+        First existing device from FRAMEBUFFER_CANDIDATES, then any other
+        /dev/fbN present, otherwise None. Never raises.
+
+    Why this exists: `choose_target('auto')` used to select the `fb` target if
+    EITHER fb1 or fb0 existed, while the write always went to the `--device`
+    default of /dev/fb1. On a board whose panel is fb0 — the common case when
+    the panel is the only framebuffer — auto-detection therefore chose `fb`
+    and then wrote to a device that did not exist.
+    """
+    if explicit:
+        return explicit
+    for candidate in FRAMEBUFFER_CANDIDATES:
+        if os.path.exists(candidate):
+            return candidate
+    remaining = [fb for fb in list_framebuffers() if fb not in FRAMEBUFFER_CANDIDATES]
+    return remaining[0] if remaining else None
 
 
 def framebuffer_info(device: str) -> dict:
@@ -491,6 +529,63 @@ def capture_rgb(
     return crop_rgb(rgb, shot_w, shot_h, width, height)
 
 
+def capture_or_panel(
+    html_path: str,
+    width: int = PANEL_WIDTH,
+    height: int = PANEL_HEIGHT,
+    browser: Optional[str] = None,
+    timeout: float = 60.0,
+    settle_ms: int = 800,
+    allow_fallback: bool = True,
+    summary_path: Optional[str] = None,
+) -> Tuple[int, int, bytes, str]:
+    """Render the dashboard, falling back to the browser-free status panel.
+
+    Args:
+        html_path: Dashboard HTML to rasterise.
+        width: Frame width in pixels.
+        height: Frame height in pixels.
+        browser: Optional explicit browser binary.
+        timeout: Render timeout in seconds.
+        settle_ms: Paint settle budget in milliseconds.
+        allow_fallback: When False, a failed browser render raises instead of
+            degrading, which is what a bench check of the real UI wants.
+        summary_path: Panel summary JSON. Defaults to the pipeline's own.
+
+    Returns:
+        Tuple of (width, height, rgb888, renderer) where renderer is
+        'dashboard' or 'panel'.
+
+    Raises:
+        DisplayBridgeError: Rendering failed and fallback was not allowed.
+    """
+    from . import panel_renderer
+
+    try:
+        rendered_w, rendered_h, rgb = capture_rgb(
+            html_path, width, height, browser, timeout, settle_ms
+        )
+        return rendered_w, rendered_h, rgb, "dashboard"
+    except DisplayBridgeError as exc:
+        if not allow_fallback:
+            raise
+        reason = str(exc).splitlines()[0].rstrip(" :")
+
+    summary = panel_renderer.load_panel_summary(
+        summary_path or panel_renderer.PANEL_SUMMARY_PATH
+    )
+    if summary is None:
+        summary = panel_renderer.placeholder_summary("RUN FIELDSENSE.DEMO")
+    else:
+        summary = dict(summary)
+        summary.setdefault("panel_note", "TEXT PANEL")
+
+    print("display bridge: {} - drawing the browser-free status panel".format(reason),
+          file=sys.stderr)
+    panel_w, panel_h, rgb = panel_renderer.render_summary_panel(summary, width, height)
+    return panel_w, panel_h, rgb, "panel"
+
+
 def build_kiosk_command(
     html_path: str,
     width: int = PANEL_WIDTH,
@@ -534,12 +629,17 @@ def build_kiosk_command(
 # --------------------------------------------------------------- targets
 
 
-def write_framebuffer(payload: bytes, device: str) -> int:
+def write_framebuffer(
+    payload: bytes, device: str, geometry: Optional[Tuple[int, int]] = None
+) -> int:
     """Write a packed pixel buffer to a framebuffer device.
 
     Args:
         payload: Packed RGB565 bytes.
         device: Framebuffer device path.
+        geometry: Optional (width, height) of the frame, checked against the
+            panel's reported geometry so a rotated frame cannot be written
+            transposed.
 
     Returns:
         Number of bytes written.
@@ -556,6 +656,17 @@ def write_framebuffer(payload: bytes, device: str) -> int:
     info = framebuffer_info(device)
     if info["width"] and info["height"] and info["bpp"]:
         expected = info["width"] * info["height"] * (info["bpp"] // 8)
+        # Geometry, not just byte count. A 90 or 270 degree rotation of a
+        # 240x320 frame yields 320x240, which has the SAME byte count and would
+        # pass a size-only check while writing a transposed image to the panel.
+        if geometry is not None and tuple(geometry) != (info["width"], info["height"]):
+            raise DisplayBridgeError(
+                "geometry mismatch: {} is {}x{}, frame is {}x{}.\n"
+                "Byte counts happen to match, so this would display transposed. "
+                "Adjust --rotate / --width / --height.".format(
+                    device, info["width"], info["height"], geometry[0], geometry[1]
+                )
+            )
         if expected != len(payload):
             raise DisplayBridgeError(
                 "size mismatch: {} expects {}x{} at {}bpp = {} bytes, got {} bytes.\n"
@@ -584,13 +695,20 @@ def probe() -> dict:
     Returns:
         Dict describing browser, framebuffers, display server and artifact.
     """
+    from . import panel_renderer
+
     framebuffers = list_framebuffers()
+    browser = find_browser()
     return {
         "platform": sys.platform,
-        "browser": find_browser(),
+        "browser": browser,
         "framebuffers": [framebuffer_info(fb) for fb in framebuffers],
+        "framebuffer_selected": detect_framebuffer(),
         "display_server": os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"),
         "artifact": DEFAULT_HTML if os.path.isfile(DEFAULT_HTML) else None,
+        "panel_summary": panel_renderer.PANEL_SUMMARY_PATH
+        if os.path.isfile(panel_renderer.PANEL_SUMMARY_PATH) else None,
+        "renderer": "dashboard" if browser else "panel (no browser; browser-free fallback)",
     }
 
 
@@ -598,7 +716,7 @@ def choose_target(requested: str) -> str:
     """Resolve the 'auto' target against the current environment."""
     if requested != "auto":
         return requested
-    if any(os.path.exists(fb) for fb in ("/dev/fb1", "/dev/fb0")):
+    if detect_framebuffer() is not None:
         return "fb"
     if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
         return "kiosk"
@@ -615,11 +733,14 @@ def build_parser() -> argparse.ArgumentParser:
         description="Render the FieldSense dashboard onto the 2.8 inch SPI panel.",
     )
     parser.add_argument(
-        "--target", default="auto", choices=("auto", "probe", "png", "fb", "kiosk"),
+        "--target", default="auto", choices=("auto", "probe", "png", "fb", "kiosk", "panel"),
         help="auto picks fb, then kiosk, then png (default: auto)",
     )
     parser.add_argument("--html", default=DEFAULT_HTML, help="dashboard HTML to display")
-    parser.add_argument("--device", default="/dev/fb1", help="framebuffer device for --target fb")
+    parser.add_argument(
+        "--device", default="auto",
+        help="framebuffer device for --target fb; 'auto' detects fb1 then fb0",
+    )
     parser.add_argument("--out", default="artifacts/panel_frame.png", help="output path for --target png")
     parser.add_argument("--width", type=int, default=PANEL_WIDTH, help="viewport width")
     parser.add_argument("--height", type=int, default=PANEL_HEIGHT, help="viewport height")
@@ -634,6 +755,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--browser", default=None, help="explicit browser binary")
     parser.add_argument("--settle-ms", type=int, default=800, help="paint delay before capture")
     parser.add_argument("--timeout", type=float, default=60.0, help="render timeout in seconds")
+    parser.add_argument(
+        "--no-fallback", action="store_true",
+        help="fail instead of drawing the browser-free status panel",
+    )
+    parser.add_argument(
+        "--summary", default=None,
+        help="panel summary JSON for the browser-free renderer",
+    )
     return parser
 
 
@@ -649,14 +778,17 @@ def main(argv: Optional[List[str]] = None) -> int:
             print("FieldSense display bridge - environment probe\n")
             print("  platform        : {}".format(report["platform"]))
             print("  browser         : {}".format(report["browser"] or "NOT FOUND"))
+            print("  renderer        : {}".format(report["renderer"]))
             print("  display server  : {}".format(report["display_server"] or "none"))
             print("  dashboard       : {}".format(report["artifact"] or "NOT BUILT"))
+            print("  panel summary   : {}".format(report["panel_summary"] or "NOT BUILT"))
             if report["framebuffers"]:
                 for fb in report["framebuffers"]:
                     print("  framebuffer     : {} {}x{} @ {}bpp".format(
                         fb["device"], fb["width"], fb["height"], fb["bpp"]))
             else:
                 print("  framebuffer     : none (fbtft driver not loaded)")
+            print("  selected fb     : {}".format(report["framebuffer_selected"] or "none"))
             print("\n  would use target: {}".format(choose_target("auto")))
             return 0
 
@@ -669,25 +801,52 @@ def main(argv: Optional[List[str]] = None) -> int:
             os.execv(command[0], command)  # replace this process; never returns
             return 0
 
-        width, height, rgb = capture_rgb(
-            args.html, args.width, args.height, args.browser, args.timeout, args.settle_ms
-        )
+        if target == "panel":
+            from . import panel_renderer
 
-        if target == "png":
+            summary = panel_renderer.load_panel_summary(
+                args.summary or panel_renderer.PANEL_SUMMARY_PATH
+            ) or panel_renderer.placeholder_summary("RUN FIELDSENSE.DEMO")
+            width, height, rgb = panel_renderer.render_summary_panel(
+                summary, args.width, args.height
+            )
+            renderer = "panel"
+        else:
+            width, height, rgb, renderer = capture_or_panel(
+                args.html, args.width, args.height, args.browser, args.timeout,
+                args.settle_ms, allow_fallback=not args.no_fallback,
+                summary_path=args.summary,
+            )
+
+        device = detect_framebuffer(None if args.device == "auto" else args.device)
+
+        # `panel` says HOW to draw, not WHERE to send it, so it resolves its
+        # destination the same way `auto` does: the framebuffer when one exists,
+        # a PNG otherwise. That keeps it usable on a laptop for verification.
+        if target == "png" or (target == "panel" and device is None):
             out_dir = os.path.dirname(args.out)
             if out_dir:
                 os.makedirs(out_dir, exist_ok=True)
             png = encode_png(rgb, width, height)
             with open(args.out, "wb") as handle:
                 handle.write(png)
-            print("wrote {} ({}x{}, {} bytes)".format(args.out, width, height, len(png)))
+            print("wrote {} ({}x{}, {} bytes, renderer={})".format(
+                args.out, width, height, len(png), renderer))
             return 0
 
-        # target == "fb"
+        # target == "fb" or "panel" with a framebuffer present
+        if device is None:
+            raise DisplayBridgeError(
+                "no framebuffer device found (looked for {}). Is the fbtft driver "
+                "loaded?\nCheck with:  ls /dev/fb*   and   dmesg | grep -i fb".format(
+                    ", ".join(FRAMEBUFFER_CANDIDATES))
+            )
+
         width, height, rgb = rotate_rgb(rgb, width, height, args.rotate)
         payload = rgb_to_rgb565(rgb, args.byteorder)
-        written = write_framebuffer(payload, args.device)
-        print("wrote {} bytes to {} ({}x{} RGB565)".format(written, args.device, width, height))
+        written = write_framebuffer(payload, device, geometry=(width, height))
+        print("wrote {} bytes to {} ({}x{} RGB565, renderer={})".format(
+            written, device, width, height, renderer))
         return 0
 
     except DisplayBridgeError as exc:
