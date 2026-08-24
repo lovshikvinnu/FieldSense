@@ -165,11 +165,18 @@ the thing that has never existed for this project.
 The installation is fine and generation is failing. `generation_status` says
 which:
 
-| Status | Meaning | Do this |
-| :--- | :--- | :--- |
-| `TIMEOUT` | Model slower than `FIELDSENSE_AI_TIMEOUT`. | Raise the timeout, or use a smaller model. On a 0.5B model a timeout means something else is wrong — check for paging. |
-| `FALLBACK_TEMPLATE` | The binary failed or its output was unusable. | Almost always the `-no-cnv` flag. Run the `--help` check from step 1. |
-| `GUARD_REJECTED` | The model produced text the safety guard refused. | See `fieldsense/ai/guard.py`. Report the guard violations the probe prints. |
+**Read the `guard violations` line, not just the status.** `GUARD_REJECTED`
+covers two completely different faults, and the status alone cannot tell them
+apart — a binary that never ran records `GENERATION_FAILED` entries, which count
+as violations, so a broken install reports the same status as unsafe model text.
+Verified by inducing both.
+
+| Status | Violations show | Meaning | Do this |
+| :--- | :--- | :--- | :--- |
+| `TIMEOUT` | — | Model slower than `FIELDSENSE_AI_TIMEOUT`. | Raise the timeout, or use a smaller model. On a 0.5B model a timeout means something else is wrong — check for paging. |
+| `GUARD_REJECTED` | `GENERATION_FAILED[...]:SubprocessError` | **The binary failed. No text was ever produced.** Nothing to do with the guard. | Almost always the `-no-cnv` flag. Run the `--help` check from step 1, then try the binary by hand. |
+| `GUARD_REJECTED` | named content rules | The model produced text the safety guard refused. | See `fieldsense/ai/guard.py`. Report the violations the probe prints. |
+| `FALLBACK_TEMPLATE` | — | Some sections generated, others did not. | A partial failure — usually one slow section hitting the timeout. Check the reported generation time. |
 
 ## Once it passes
 
