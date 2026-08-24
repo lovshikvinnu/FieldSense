@@ -6,6 +6,7 @@ in the offline dashboard.
 """
 
 import os
+import sys
 from dataclasses import replace
 
 import pytest
@@ -390,14 +391,32 @@ def test_factory_describes_active_backend():
 
 def _fake_llama_binary(tmp_path, response, exit_code=0, sleep_seconds=0.0):
     """Create an executable stub standing in for llama-cli."""
-    script = tmp_path / "fake-llama-cli"
-    body = "#!/bin/sh\n"
-    if sleep_seconds:
-        body += f"sleep {sleep_seconds}\n"
-    body += f"cat <<'EOF_RESPONSE'\n{response}\nEOF_RESPONSE\n"
-    body += f"exit {exit_code}\n"
-    script.write_text(body)
-    script.chmod(0o755)
+    runner = tmp_path / "fake_llama_runner.py"
+    runner_code = (
+        "import sys, time\n"
+        f"sleep_sec = {float(sleep_seconds)}\n"
+        f"exit_c = {int(exit_code)}\n"
+        f"resp = {repr(response)}\n"
+        "if sleep_sec > 0:\n"
+        "    time.sleep(sleep_sec)\n"
+        "sys.stdout.write(resp)\n"
+        "sys.exit(exit_c)\n"
+    )
+    runner.write_text(runner_code, encoding="utf-8")
+
+    if sys.platform == "win32":
+        script = tmp_path / "fake-llama-cli.cmd"
+        script.write_text(
+            f'@echo off\n"{sys.executable}" "{runner.resolve()}" %*\n',
+            encoding="utf-8",
+        )
+    else:
+        script = tmp_path / "fake-llama-cli"
+        script.write_text(
+            f'#!/bin/sh\n"{sys.executable}" "{runner.resolve()}" "$@"\n',
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
 
     weights = tmp_path / "model.gguf"
     weights.write_bytes(b"GGUF-stub")

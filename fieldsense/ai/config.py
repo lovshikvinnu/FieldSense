@@ -86,7 +86,7 @@ class AIConfig:
             An absolute filesystem path. Does not check that the file exists —
             `LlamaCppAdapter.is_available()` owns that decision.
         """
-        if os.path.isabs(self.model_path):
+        if os.path.isabs(self.model_path) or self.model_path.startswith("/") or self.model_path.startswith("\\"):
             return self.model_path
         return os.path.abspath(os.path.join(base_dir or os.getcwd(), self.model_path))
 
