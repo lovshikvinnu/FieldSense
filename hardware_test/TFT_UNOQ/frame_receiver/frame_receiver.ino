@@ -101,8 +101,12 @@ static const uint16_t MAX_CHUNK = 4096;
 static const uint32_t LINK_BAUD = 115200;
 
 static const uint32_t MONITOR_READY_MS = 5000;   // bounded wait for the bridge
-static const uint32_t BYTE_TIMEOUT_MS  = 2000;   // gap tolerance mid-transfer
-static const uint32_t FRAME_TIMEOUT_MS = 30000;  // whole-frame ceiling
+// Sized for the RouterBridge RPC path, not a UART. Every read is a mon/read
+// round trip through arduino-router, so per-chunk latency is far higher and
+// far lumpier than a raw serial line. The original 2 s / 30 s pair was written
+// against a UART assumption and aborts a healthy transfer here.
+static const uint32_t BYTE_TIMEOUT_MS  = 8000;    // gap tolerance mid-transfer
+static const uint32_t FRAME_TIMEOUT_MS = 180000;  // whole-frame ceiling
 
 Adafruit_ST7789 tft = Adafruit_ST7789(&SPI, TFT_CS, TFT_DC, TFT_RST);
 
@@ -282,9 +286,11 @@ void loop() {
   Serial.write(ACK);
 
   const uint32_t total = (uint32_t)width * (uint32_t)height * 2UL;
+  const uint32_t expectedChunks = (total + chunk - 1UL) / chunk;
   uint32_t received = 0;
+  uint32_t index = 0;
   uint32_t started = millis();
-  bool aborted = false;
+  const char *why = NULL;   // NULL means the frame completed
 
   tft.startWrite();
   tft.setAddrWindow(0, 0, width, height);
@@ -292,15 +298,16 @@ void loop() {
   while (received < total) {
     uint32_t remaining = total - received;
     uint16_t want = (remaining < (uint32_t)chunk) ? (uint16_t)remaining : chunk;
+    index++;
 
     if (!readExact(chunkBuf, want, BYTE_TIMEOUT_MS)) {
-      aborted = true;
+      why = "payload timeout";
       break;
     }
 
     uint8_t crcBytes[2];
     if (!readExact(crcBytes, 2, BYTE_TIMEOUT_MS)) {
-      aborted = true;
+      why = "crc-byte timeout";
       break;
     }
 
@@ -309,7 +316,7 @@ void loop() {
       // NAK and stop. The address window is already advanced, so resuming
       // mid-frame would tear; the host retries the whole frame instead.
       Serial.write(NAK);
-      aborted = true;
+      why = "CRC mismatch";
       break;
     }
 
@@ -319,14 +326,31 @@ void loop() {
     Serial.write(ACK);
 
     if (millis() - started > FRAME_TIMEOUT_MS) {
-      aborted = true;
+      why = "frame timeout";
       break;
     }
   }
 
   tft.endWrite();
 
-  if (aborted) {
-    statusBanner("Frame aborted - retrying", ST77XX_RED);
+  if (why != NULL) {
+    // The panel is the only console this board has, so the banner has to carry
+    // the whole diagnosis: which chunk died, out of how many, and how. Chunk 1
+    // failing is a different bug from chunk 37 failing, and a CRC mismatch is
+    // a different bug from a timeout - the old single red banner conflated all
+    // four, and each wrong guess costs a reflash to test.
+    char line[64];
+    snprintf(line, sizeof(line), "Abort %s @ %lu/%lu",
+             why, (unsigned long)index, (unsigned long)expectedChunks);
+    statusBanner(line, ST77XX_RED);
+
+    char detail[64];
+    snprintf(detail, sizeof(detail), "%lu of %lu bytes in %lu ms",
+             (unsigned long)received, (unsigned long)total,
+             (unsigned long)(millis() - started));
+    tft.setCursor(8, 48);
+    tft.setTextColor(ST77XX_YELLOW);
+    tft.setTextSize(1);
+    tft.println(detail);
   }
 }
