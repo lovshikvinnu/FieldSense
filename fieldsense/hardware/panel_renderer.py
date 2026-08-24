@@ -393,6 +393,21 @@ PANEL_RECORD_FIELDS = (
 # owns /dev/ttyHS1 itself, so a serial device path will not reach the panel.
 DEFAULT_PANEL_ENDPOINT = "127.0.0.1:7500"
 
+# Seconds to keep the socket open after writing a record, before closing.
+#
+# The MCU pulls; it is never pushed to. monitor.h's _read() opens with
+# `if (!*this) return;` - a mon/connected check - so bytes are fetched only
+# while a client is still connected. fieldsense_unoq.ino polls about once a
+# second: GPS_DRAIN_MS is 400 ms draining the GPS UART, then ~595 ms for one
+# Serial.available() on the RPC transport. A connect-write-close takes
+# single-digit milliseconds, so the send window overlapped the poll under one
+# percent of the time - senders reported success and the panel kept its dashes.
+#
+# 3 s spans roughly three poll cycles. Lives here rather than in either sender
+# so tools/push_panel.py and run_spatial_test.py cannot drift apart, the same
+# reason the record format is shared.
+PANEL_HOLD_SECONDS = 3.0
+
 
 def _clean_record_value(value: Any) -> str:
     """Strip the record's own delimiters out of a value so parsing cannot break."""

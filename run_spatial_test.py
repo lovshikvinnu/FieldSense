@@ -9,6 +9,7 @@ import json
 import math
 import os
 import sys
+import time
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -299,6 +300,20 @@ def push_record_to_mcu(
 
     try:
         transport.write(record)
+        # Hold the socket open before closing, or the record is written and
+        # then thrown away.
+        #
+        # The MCU pulls; it is never pushed to. monitor.h's _read() opens with
+        # `if (!*this) return;` - a mon/connected check - so bytes are fetched
+        # only while a client is still connected. fieldsense_unoq.ino polls
+        # about once a second: GPS_DRAIN_MS is 400 ms draining the GPS UART,
+        # then ~595 ms for one Serial.available() on the RPC transport.
+        # Connect-write-close takes single-digit milliseconds, so the send
+        # window overlapped the poll under one percent of the time - the
+        # pipeline reported PUSHED and the panel kept showing dashes.
+        #
+        # Same fix and same duration as tools/push_panel.py; three poll cycles.
+        time.sleep(panel_renderer.PANEL_HOLD_SECONDS)
         result["status"] = "PUSHED"
         result["detail"] = "PUSHED (MCU value link): {} bytes to {} -> {}".format(
             len(record), target, record.decode("ascii", "replace").strip())

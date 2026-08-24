@@ -276,3 +276,52 @@ def test_default_hold_is_long_enough_for_the_firmware_poll_interval():
     """
     import push_panel
     assert push_panel.HOLD_SECONDS >= 2.0
+
+# ------------------------------------------- pipeline sender socket lifetime
+
+
+def test_pipeline_push_also_holds_the_socket_open(tmp_path):
+    """run_spatial_test.py --display bridge has its OWN transport code.
+
+    Fixing tools/push_panel.py did not fix the pipeline: push_record_to_mcu
+    opens its own socket and used to close it straight after the write, so a
+    full pipeline run reported PUSHED and left the panel on dashes for exactly
+    the same reason the one-shot command did.
+    """
+    import socket as _socket
+    import threading
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from run_spatial_test import push_record_to_mcu
+
+    listener = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    listener.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    host, port = listener.getsockname()
+
+    seen = []
+    thread = threading.Thread(target=_serve_once, args=(listener, seen))
+    thread.start()
+    try:
+        outcome = push_record_to_mcu(
+            summary_path=_write_summary(tmp_path),
+            endpoint="{}:{}".format(host, port),
+        )
+    finally:
+        thread.join(timeout=20)
+        listener.close()
+
+    assert outcome["status"] == "PUSHED", outcome["detail"]
+    payload, lifetime = seen[0]
+    assert payload.startswith(b"FS|")
+    assert lifetime >= 1.0, \
+        "pipeline closed after {:.3f}s - too fast for the MCU poll".format(lifetime)
+
+
+def test_both_senders_share_one_hold_constant():
+    """Two copies of this number would drift, like the record builders did."""
+    import push_panel
+    from fieldsense.hardware.panel_renderer import PANEL_HOLD_SECONDS
+
+    assert push_panel.HOLD_SECONDS is PANEL_HOLD_SECONDS

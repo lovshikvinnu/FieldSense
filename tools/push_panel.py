@@ -37,6 +37,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fieldsense.hardware.panel_renderer import (
+    PANEL_HOLD_SECONDS,
     DEFAULT_PANEL_ENDPOINT,
     PANEL_RECORD_FIELDS,
     build_panel_record,
@@ -53,26 +54,10 @@ DEFAULT_SUMMARY = "artifacts/panel_summary.json"
 FIELD_MAP = PANEL_RECORD_FIELDS
 build_record = build_panel_record
 
-# Seconds to keep the socket open after the last write, so the MCU's polling
-# cycle can consume the record before the connection goes away.
-#
-# WHY A ONE-SHOT PUSH NEEDS THIS AT ALL
-#
-# The MCU pulls; it is never pushed to. In monitor.h, the only thing that
-# fetches bytes from arduino-router is _read(), and it opens with
-# `if (!*this) return;` - a mon/connected check. So a record is collected only
-# if a client is still connected when the firmware next polls.
-#
-# The firmware polls about once per second: fieldsense_unoq.ino spends
-# GPS_DRAIN_MS (400 ms) draining the GPS UART, then pays ~595 ms for one
-# Serial.available() on the RPC transport. Connect-write-close finishes in
-# single-digit milliseconds, so the odds of that window overlapping the poll
-# were under one percent, and `push_panel.py` appeared to do nothing at all
-# while reporting success.
-#
-# 3 s spans roughly three poll cycles, which covers a slow pass without making
-# the command feel like it has hung. Same idea as --hold in link_probe.py.
-HOLD_SECONDS = 3.0
+# Shared with run_spatial_test.py via panel_renderer so the two senders
+# cannot drift. See the note there for why a one-shot push needs it at all:
+# the MCU only fetches while a client is connected, and it polls ~1 s.
+HOLD_SECONDS = PANEL_HOLD_SECONDS
 
 
 def main(argv=None):
