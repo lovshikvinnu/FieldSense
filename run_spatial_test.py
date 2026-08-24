@@ -248,14 +248,22 @@ def push_to_display(
     fb_device: Optional[str] = None,
     rotate: int = 0,
     png_name: str = "field_test_panel.png",
+    mcu_port: Optional[str] = None,
+    mcu_baud: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Render the dashboard to a 240x320 RGB565 frame and flush it to the panel.
 
     Modes:
-        auto   push only when a framebuffer device exists, otherwise skip fast
-        png    capture the frame and save a PNG, no framebuffer write
-        force  capture and attempt the write even if detection found nothing
-        off    do nothing
+        auto    push only when a framebuffer device exists, otherwise skip fast
+        png     capture the frame and save a PNG, no framebuffer write
+        force   capture and attempt the write even if detection found nothing
+        bridge  stream to the STM32 over serial, which drives the SPI panel
+        serial  alias for bridge
+        off     do nothing
+
+    `bridge` is the only mode that reaches the panel on an Arduino UNO Q: the
+    QRB2210 routes no SPI to the external headers, so no /dev/fbN for this
+    panel can exist and `auto`/`force` have nothing real to write to.
 
     Never raises. A missing panel, browser, or driver degrades to a reported
     status so the pipeline still completes.
@@ -270,7 +278,9 @@ def push_to_display(
     device = bridge.detect_framebuffer(fb_device)
     candidates = [fb_device] if fb_device else list(bridge.FRAMEBUFFER_CANDIDATES)
 
-    if device is None and mode == "auto":
+    to_mcu = mode in ("bridge", "serial")
+
+    if device is None and mode == "auto" and not to_mcu:
         outcome["detail"] = (
             "no framebuffer found ({}). On the UNO Q load the fbtft driver, then re-run. "
             "Use --display png to save a frame instead.".format(", ".join(c for c in candidates if c))
@@ -299,6 +309,36 @@ def push_to_display(
         outcome["frame_png"] = png_path
     except Exception:
         pass
+
+    if to_mcu:
+        port = mcu_port or bridge.DEFAULT_MCU_PORT
+        baud = mcu_baud or bridge.DEFAULT_MCU_BAUD
+        try:
+            width, height, rgb = bridge.rotate_rgb(rgb, width, height, rotate)
+            # BIG-endian: ST7789 wire order, so the sketch writes the buffer
+            # straight out with no byte swap. Opposite of the /dev/fbN path.
+            stats = bridge.stream_frame_to_mcu(
+                bridge.rgb_to_rgb565(rgb, "big"), width, height,
+                port=port, baud=baud,
+            )
+            outcome.update(
+                status="PUSHED",
+                device="{} (MCU Bridge)".format(stats["port"]),
+                detail="PUSHED (MCU Bridge): {} bytes in {} chunks at {} baud "
+                       "({}x{} RGB565-BE, renderer={})".format(
+                           stats["bytes"], stats["chunks"], stats["baud"],
+                           width, height, renderer),
+            )
+        except Exception as exc:
+            outcome["status"] = "FAILED"
+            outcome["device"] = "{} (MCU Bridge)".format(port)
+            outcome["detail"] = "MCU Bridge stream failed: {}".format(exc)
+        return outcome
+
+    if mode == "png":
+        outcome["status"] = "NO_DEVICE"
+        outcome["detail"] = "frame saved as PNG (--display png), no framebuffer write"
+        return outcome
 
     if device is None:
         outcome["status"] = "NO_DEVICE"
@@ -329,6 +369,8 @@ def run_spatial_test(
     fb_device: Optional[str] = None,
     rotate: int = 0,
     allow_generate: bool = False,
+    mcu_port: Optional[str] = None,
+    mcu_baud: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Bridge hardware JSON to Phase 1 engines, the visual dashboard, and the panel.
 
@@ -336,12 +378,16 @@ def run_spatial_test(
         json_path: Hardware telemetry JSON produced by the acquisition run.
         output_dir: Directory for the generated dashboard and frame.
         render_ui: Generate the self-contained HTML Field Intelligence Map.
-        display: auto | png | force | off. `auto` pushes to the panel only when
-            a framebuffer device exists, so this stays fast off-target.
+        display: auto | png | force | bridge | serial | off. `auto` pushes to
+            the panel only when a framebuffer device exists, so this stays fast
+            off-target. `bridge` streams to the STM32, the only path that
+            reaches the panel on an Arduino UNO Q.
         fb_device: Explicit framebuffer, e.g. /dev/fb1. Defaults to auto-detect.
         rotate: Clockwise frame rotation in degrees (0, 90, 180, 270).
         allow_generate: Permit building a synthetic fixture when the dataset is
             missing. Off by default so real runs never silently fabricate data.
+        mcu_port: Serial device for `bridge` mode. Defaults to /dev/ttyGS0.
+        mcu_baud: Line speed for `bridge` mode. Must match the sketch.
 
     Returns:
         Summary dictionary of the run.
@@ -474,7 +520,8 @@ def run_spatial_test(
                           "detail": "no dashboard rendered"}
     else:
         display_result = push_to_display(
-            html_path, output_dir=output_dir, mode=display, fb_device=fb_device, rotate=rotate
+            html_path, output_dir=output_dir, mode=display, fb_device=fb_device,
+            rotate=rotate, mcu_port=mcu_port, mcu_baud=mcu_baud
         )
     marker = {"PUSHED": "[OK]", "NO_DEVICE": "[--]", "SKIPPED": "[--]", "FAILED": "[!!]"}.get(
         display_result["status"], "[--]")
@@ -510,8 +557,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="hardware telemetry JSON (generated if missing)")
     parser.add_argument("--output-dir", default="artifacts", help="where to write the dashboard and frame")
     parser.add_argument("--no-ui", action="store_true", help="skip dashboard rendering")
-    parser.add_argument("--display", default="auto", choices=("auto", "png", "force", "off"),
-                        help="auto: push only if a framebuffer exists · png: save a frame instead")
+    parser.add_argument("--display", default="auto",
+                        choices=("auto", "png", "force", "bridge", "serial", "off"),
+                        help="auto: push only if a framebuffer exists · png: save a frame instead · "
+                             "bridge: stream to the STM32 over serial (the only path to the "
+                             "panel on an Arduino UNO Q)")
+    parser.add_argument("--mcu-port", default=None,
+                        help="serial device for --display bridge (default /dev/ttyGS0)")
+    parser.add_argument("--mcu-baud", type=int, default=None,
+                        help="line speed for --display bridge; must match LINK_BAUD in the sketch")
     parser.add_argument("--fb", dest="fb_device", default=None, help="explicit framebuffer, e.g. /dev/fb1")
     parser.add_argument("--rotate", type=int, default=0, choices=(0, 90, 180, 270))
     parser.add_argument("--generate-sample", action="store_true",
@@ -526,6 +580,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         fb_device=args.fb_device,
         rotate=args.rotate,
         allow_generate=args.generate_sample,
+        mcu_port=args.mcu_port,
+        mcu_baud=args.mcu_baud,
     )
     return 0
 

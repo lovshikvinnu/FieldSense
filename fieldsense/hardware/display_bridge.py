@@ -24,6 +24,7 @@ Five targets:
     fb      write RGB565 to a framebuffer device   (the panel)
     kiosk   launch a full-screen browser   (needs a display server)
     panel   draw the status panel WITHOUT a browser   (see panel_renderer)
+    mcu     stream RGB565 to the STM32, which drives the panel over SPI
 
 The `panel` target exists because Chromium is a system asset, not a dependency,
 and a stock UNO Q image does not carry one. Without a browser-free path the
@@ -36,9 +37,12 @@ standard library so the project keeps `dependencies = []`. The browser and
 the fbtft kernel driver are external system assets, exactly like llama.cpp:
 discovered at runtime, absent by default, never imported.
 
-HARDWARE_SPEC_REQUIRED - the panel must be wired to the QRB2210 SPI bus for
-the `fb` target to have anything to write to. Bench verification to date used
-the STM32 MCU. See docs/AI_DEPLOYMENT.md.
+The `fb` target needs the panel wired to the QRB2210 SPI bus. On the Arduino
+UNO Q it is not, and cannot be: the MPU routes no SPI to the external headers -
+D11/D12/D13 and SPI2 land on the STM32U585 only. There is no /dev/fbN for this
+panel on that board and no driver can create one. Use `mcu`, which hands the
+packed frame to the STM32 over serial and lets it push SPI. See
+hardware_test/TFT_UNOQ/sketch_frame_receiver.ino and docs/AI_DEPLOYMENT.md.
 """
 
 import argparse
@@ -425,6 +429,236 @@ def rgb_to_rgb565(rgb: bytes, byteorder: str = "little") -> bytes:
     return bytes(out)
 
 
+# ----------------------------------------------------------- MCU frame bridge
+
+# On the Arduino UNO Q the QRB2210 routes no SPI to the external headers -
+# D11/D12/D13 and SPI2 land on the STM32U585 only. So the panel can never
+# appear as /dev/fbN and `write_framebuffer` has nothing to target. The frame
+# has to cross to the MCU, which owns the SPI bus, and be pushed to the
+# ST7789 there.
+#
+# Wire protocol v1. The receiver is hardware_test/TFT_UNOQ/sketch_frame_receiver.ino
+# and the two MUST change together.
+#
+#   Header, 12 bytes, big-endian:
+#     [0..1]   magic    0xAA 0xBB
+#     [2]      version  0x01
+#     [3]      format   0x01 = RGB565 big-endian
+#     [4..5]   width    uint16
+#     [6..7]   height   uint16
+#     [8..9]   chunk    uint16, payload bytes per chunk, always even
+#     [10..11] crc16    CCITT-FALSE over bytes [0..9]
+#
+#   Then ceil(width*height*2 / chunk) chunks, each: payload + crc16 over that
+#   payload. The MCU answers ACK or NAK per header and per chunk.
+#
+# The ACK is load-bearing. The MCU's serial RX buffer is a few hundred bytes
+# against a 153,600 byte frame, so each chunk blocks on its ACK. Open-loop
+# blasting with a fixed sleep - what the old push_frame.py scratch script did -
+# overruns the buffer and shears the image.
+#
+# RGB565 goes on the wire BIG-endian: that is the order the ST7789 wants, so
+# the MCU hands the buffer to writePixels(bigEndian=true) with no byte swap.
+# This is deliberately the opposite of the /dev/fbN path, which is little.
+
+FRAME_MAGIC = b"\xaa\xbb"
+FRAME_PROTOCOL_VERSION = 0x01
+FRAME_FORMAT_RGB565_BE = 0x01
+FRAME_HEADER_BYTES = 12
+
+ACK = 0x06
+NAK = 0x15
+
+# USB CDC gadget node on the UNO Q. Kept as the default because it is what the
+# board exposes without extra device-tree work.
+DEFAULT_MCU_PORT = "/dev/ttyGS0"
+# Matches LINK_BAUD in the receiver sketch. Raise BOTH together or the link
+# desynchronises: 115200 is ~13 s per frame, 921600 is ~1.7 s.
+DEFAULT_MCU_BAUD = 115200
+# 4 KB keeps the ACK round-trip count to 38 for a full frame and fits the
+# receiver's MAX_CHUNK. Must be even - two bytes per pixel.
+DEFAULT_CHUNK_BYTES = 4096
+
+
+def crc16_ccitt(data: bytes) -> int:
+    """CRC16 CCITT-FALSE: poly 0x1021, init 0xFFFF, no reflection, no xor-out.
+
+    Mirrors crc16_ccitt() in sketch_frame_receiver.ino byte for byte.
+
+    Args:
+        data: Bytes to checksum.
+
+    Returns:
+        The 16-bit checksum.
+    """
+    crc = 0xFFFF
+    for byte in data:
+        crc ^= byte << 8
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+            else:
+                crc = (crc << 1) & 0xFFFF
+    return crc
+
+
+def build_frame_header(width: int, height: int, chunk: int) -> bytes:
+    """Build the 12-byte frame header the receiver sketch expects.
+
+    Args:
+        width: Frame width in pixels.
+        height: Frame height in pixels.
+        chunk: Payload bytes per chunk. Must be even and fit a uint16.
+
+    Returns:
+        The packed header, CRC included.
+
+    Raises:
+        DisplayBridgeError: A field does not fit the wire format.
+    """
+    if not 0 < width <= 0xFFFF or not 0 < height <= 0xFFFF:
+        raise DisplayBridgeError(
+            "frame geometry {}x{} does not fit the uint16 header fields".format(width, height))
+    if chunk <= 0 or chunk > 0xFFFF:
+        raise DisplayBridgeError("chunk size {} must be 1..65535 bytes".format(chunk))
+    if chunk % 2:
+        raise DisplayBridgeError(
+            "chunk size {} must be even - RGB565 is two bytes per pixel".format(chunk))
+
+    body = bytearray(FRAME_MAGIC)
+    body.append(FRAME_PROTOCOL_VERSION)
+    body.append(FRAME_FORMAT_RGB565_BE)
+    body += width.to_bytes(2, "big")
+    body += height.to_bytes(2, "big")
+    body += chunk.to_bytes(2, "big")
+    body += crc16_ccitt(bytes(body)).to_bytes(2, "big")
+    return bytes(body)
+
+
+def iter_frame_chunks(payload: bytes, chunk: int) -> List[bytes]:
+    """Split a packed frame into on-wire chunks, each with its CRC appended.
+
+    Args:
+        payload: Packed RGB565 big-endian frame bytes.
+        chunk: Payload bytes per chunk. The final chunk may be short.
+
+    Returns:
+        List of chunk records, each payload bytes followed by a 2-byte CRC.
+    """
+    records = []
+    for start in range(0, len(payload), chunk):
+        piece = payload[start:start + chunk]
+        records.append(piece + crc16_ccitt(piece).to_bytes(2, "big"))
+    return records
+
+
+def _await_ack(transport, what: str, timeout: float) -> None:
+    """Block until the MCU answers ACK, raising on NAK, timeout, or garbage.
+
+    Args:
+        transport: Open transport exposing read(int) -> bytes.
+        what: Label for the error message, e.g. 'header' or 'chunk 7/38'.
+        timeout: Seconds already configured on the transport, for the message.
+
+    Raises:
+        DisplayBridgeError: NAK, timeout, or an unexpected reply byte.
+    """
+    reply = transport.read(1)
+    if not reply:
+        raise DisplayBridgeError(
+            "MCU did not acknowledge {} within {}s.\n"
+            "Is sketch_frame_receiver.ino flashed and running, and does its "
+            "LINK_BAUD match --baud?".format(what, timeout))
+    if reply[0] == NAK:
+        raise DisplayBridgeError(
+            "MCU rejected {} (NAK). Geometry, protocol version, or CRC "
+            "mismatch - check that the sketch's PANEL_W/PANEL_H and rotation 0 "
+            "match the {}x{} frame.".format(what, PANEL_WIDTH, PANEL_HEIGHT))
+    if reply[0] != ACK:
+        raise DisplayBridgeError(
+            "MCU sent unexpected byte 0x{:02x} for {} (wanted ACK 0x06). The "
+            "link is out of sync; power-cycle the board and retry.".format(reply[0], what))
+
+
+def stream_frame_to_mcu(
+    payload: bytes,
+    width: int,
+    height: int,
+    port: str = DEFAULT_MCU_PORT,
+    baud: int = DEFAULT_MCU_BAUD,
+    chunk: int = DEFAULT_CHUNK_BYTES,
+    timeout: float = 5.0,
+    transport=None,
+) -> dict:
+    """Stream a packed RGB565 frame to the STM32 and onto the ST7789 panel.
+
+    Args:
+        payload: Packed RGB565 BIG-endian bytes, exactly width*height*2 long.
+        width: Frame width in pixels.
+        height: Frame height in pixels.
+        port: Serial device the MCU listens on.
+        baud: Line speed. Must equal LINK_BAUD in the receiver sketch.
+        chunk: Payload bytes per chunk, even, <= the sketch's MAX_CHUNK.
+        timeout: Per-ACK read timeout in seconds.
+        transport: Pre-built transport for testing. When None a SerialTransport
+            is opened against `port` and closed on the way out.
+
+    Returns:
+        Dict with 'bytes', 'chunks', 'port', 'baud', 'chunk_bytes'.
+
+    Raises:
+        DisplayBridgeError: Geometry mismatch, transport failure, or the MCU
+            did not acknowledge.
+    """
+    expected = width * height * 2
+    if len(payload) != expected:
+        raise DisplayBridgeError(
+            "payload is {} bytes but {}x{} RGB565 needs {}. Pack with "
+            "rgb_to_rgb565(rgb, 'big') before streaming.".format(
+                len(payload), width, height, expected))
+
+    header = build_frame_header(width, height, chunk)
+    records = iter_frame_chunks(payload, chunk)
+
+    owned = transport is None
+    if owned:
+        from .transport.serial_port import SerialPortError, SerialTransport
+
+        transport = SerialTransport(port=port, baudrate=baud, timeout=timeout)
+        try:
+            transport.open()
+        except SerialPortError as exc:
+            raise DisplayBridgeError(
+                "cannot reach the MCU on {}: {}\n"
+                "List candidates with:  ls /dev/ttyGS* /dev/ttyACM* /dev/ttyS*".format(port, exc))
+
+    try:
+        transport.write(header)
+        _await_ack(transport, "header", timeout)
+
+        for index, record in enumerate(records, start=1):
+            transport.write(record)
+            _await_ack(transport, "chunk {}/{}".format(index, len(records)), timeout)
+    except DisplayBridgeError:
+        raise
+    except Exception as exc:
+        raise DisplayBridgeError("MCU stream failed on {}: {}".format(port, exc))
+    finally:
+        if owned:
+            try:
+                transport.close()
+            except Exception:
+                pass
+
+    return {
+        "bytes": len(payload),
+        "chunks": len(records),
+        "port": port,
+        "baud": baud,
+        "chunk_bytes": chunk,
+    }
+
+
 # --------------------------------------------------------------- browser
 
 
@@ -733,8 +967,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Render the FieldSense dashboard onto the 2.8 inch SPI panel.",
     )
     parser.add_argument(
-        "--target", default="auto", choices=("auto", "probe", "png", "fb", "kiosk", "panel"),
-        help="auto picks fb, then kiosk, then png (default: auto)",
+        "--target", default="auto",
+        choices=("auto", "probe", "png", "fb", "kiosk", "panel", "mcu"),
+        help="auto picks fb, then kiosk, then png (default: auto). "
+             "mcu streams the frame to the STM32 over serial - the only path "
+             "that reaches the panel on an Arduino UNO Q",
     )
     parser.add_argument("--html", default=DEFAULT_HTML, help="dashboard HTML to display")
     parser.add_argument(
@@ -751,6 +988,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--byteorder", default="little", choices=("little", "big"),
         help="little for /dev/fbN, big for a raw SPI stream",
+    )
+    parser.add_argument(
+        "--port", default=DEFAULT_MCU_PORT,
+        help="serial device the STM32 receiver listens on (--target mcu)",
+    )
+    parser.add_argument(
+        "--baud", type=int, default=DEFAULT_MCU_BAUD,
+        help="line speed for --target mcu; must equal LINK_BAUD in the sketch",
+    )
+    parser.add_argument(
+        "--chunk-bytes", type=int, default=DEFAULT_CHUNK_BYTES,
+        help="payload bytes per chunk for --target mcu; even, <= sketch MAX_CHUNK",
+    )
+    parser.add_argument(
+        "--ack-timeout", type=float, default=5.0,
+        help="seconds to wait for each MCU ACK (--target mcu)",
     )
     parser.add_argument("--browser", default=None, help="explicit browser binary")
     parser.add_argument("--settle-ms", type=int, default=800, help="paint delay before capture")
@@ -817,6 +1070,24 @@ def main(argv: Optional[List[str]] = None) -> int:
                 args.settle_ms, allow_fallback=not args.no_fallback,
                 summary_path=args.summary,
             )
+
+        # The MCU path owns the SPI bus on the UNO Q, so it resolves before any
+        # framebuffer lookup: there is no /dev/fbN for this panel and never
+        # will be. Rotation still applies, and the pack is BIG-endian because
+        # that is ST7789 wire order - the opposite of the /dev/fbN path.
+        if target == "mcu":
+            width, height, rgb = rotate_rgb(rgb, width, height, args.rotate)
+            payload = rgb_to_rgb565(rgb, "big")
+            stats = stream_frame_to_mcu(
+                payload, width, height,
+                port=args.port, baud=args.baud,
+                chunk=args.chunk_bytes, timeout=args.ack_timeout,
+            )
+            print("streamed {} bytes to {} in {} chunks at {} baud "
+                  "({}x{} RGB565-BE, renderer={})".format(
+                      stats["bytes"], stats["port"], stats["chunks"],
+                      stats["baud"], width, height, renderer))
+            return 0
 
         device = detect_framebuffer(None if args.device == "auto" else args.device)
 
