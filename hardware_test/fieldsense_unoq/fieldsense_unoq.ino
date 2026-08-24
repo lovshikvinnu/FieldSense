@@ -278,6 +278,7 @@ static void render() {
 // frames, and dropping a sentence costs a stale position where blocking
 // would cost a sheared image.
 
+#include <stdio.h>    // snprintf, for the GPS diagnostic string
 #include <string.h>   // strncmp, for the sentence-type check below
 
 #define GPS_SERIAL Serial1
@@ -287,6 +288,19 @@ static const size_t   GPS_LINE_MAX = 120;    // longest GGA observed is ~82
 
 static char   gpsLine[GPS_LINE_MAX];
 static size_t gpsLineLen = 0;
+
+// Diagnostics for a receiver that never produces a fix. Linux cannot observe
+// Serial1 - it is physically on the MCU - so without these counters a silent
+// GPS and a GPS whose sentences are all being rejected look identical from
+// the host. They ride along on the NO_FIX string, which parse_gps_telemetry()
+// short-circuits on parts[0], so extra trailing fields are ignored by the
+// contract and cost nothing.
+static uint32_t gpsBytes     = 0;   // raw bytes seen on the UART
+static uint32_t gpsLines     = 0;   // complete newline-terminated lines
+static uint32_t gpsChecksumOk = 0;  // lines whose NMEA checksum validated
+static uint32_t gpsGgaSeen   = 0;   // GGA sentences handed to parseGGA
+static bool     gpsEverParsed = false;
+static char     gpsLastLine[48];    // first 47 chars of the most recent line
 
 // The wire contract with the host. Fixed by parse_gps_telemetry() in
 // fieldsense/hardware/gps/bridge_gps.py:
@@ -378,17 +392,56 @@ static void parseGGA(const char *s, size_t len) {
 
 // Drain whatever Serial1 has buffered without ever waiting for more. Safe to
 // call from anywhere in loop(), including between frame chunks.
+// Rebuild the NO_FIX payload with live counters, so `arduino-app-cli app logs`
+// shows where the pipeline breaks without another reflash:
+//   rx=0                  nothing on the wire at all - wiring, power, or a
+//                         second driver fighting the GPS on D0
+//   rx>0 lines=0          bytes arriving but no newlines - wrong baud
+//   lines>0 csum=0        sentences arriving but corrupt - baud or contention
+//   csum>0 gga=0          valid NMEA, but no GGA - receiver configured off
+static void publishNoFix() {
+  char buf[160];
+  snprintf(buf, sizeof(buf),
+           "NO_FIX,0.0,0.0,Sats:0,HDOP:99.9,rx=%lu,lines=%lu,csum=%lu,gga=%lu,last=%s",
+           (unsigned long)gpsBytes, (unsigned long)gpsLines,
+           (unsigned long)gpsChecksumOk, (unsigned long)gpsGgaSeen,
+           gpsLastLine);
+  latest_gps_csv = String(buf);
+}
+
 static void serviceGPS() {
   while (GPS_SERIAL.available() > 0) {
     char c = (char)GPS_SERIAL.read();
+    gpsBytes++;
 
     if (c == '\n' || c == '\r') {
       if (gpsLineLen > 0) {
         gpsLine[gpsLineLen] = '\0';
-        if (nmeaChecksumValid(gpsLine, gpsLineLen) &&
-            (strncmp(gpsLine, "$GNGGA", 6) == 0 ||
-             strncmp(gpsLine, "$GPGGA", 6) == 0)) {
-          parseGGA(gpsLine, gpsLineLen);
+        gpsLines++;
+
+        // Keep a sanitised echo of the last line. Commas would split the CSV
+        // the host parses, so they become ';'.
+        size_t copy = gpsLineLen < sizeof(gpsLastLine) - 1
+                        ? gpsLineLen : sizeof(gpsLastLine) - 1;
+        for (size_t i = 0; i < copy; i++) {
+          char ch = gpsLine[i];
+          gpsLastLine[i] = (ch == ',') ? ';' : ch;
+        }
+        gpsLastLine[copy] = '\0';
+
+        if (nmeaChecksumValid(gpsLine, gpsLineLen)) {
+          gpsChecksumOk++;
+          if (strncmp(gpsLine, "$GNGGA", 6) == 0 ||
+              strncmp(gpsLine, "$GPGGA", 6) == 0) {
+            gpsGgaSeen++;
+            gpsEverParsed = true;
+            parseGGA(gpsLine, gpsLineLen);
+            gpsLineLen = 0;
+            continue;
+          }
+        }
+        if (!gpsEverParsed) {
+          publishNoFix();
         }
         gpsLineLen = 0;
       }
