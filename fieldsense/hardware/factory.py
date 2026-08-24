@@ -55,6 +55,8 @@ class DataSourceConfig:
     bridge_endpoint: str = "get_gps_data"         # GPS Bridge method
     soil_endpoint: str = "get_soil_data"          # soil Bridge method
     require_gps_fix: bool = False
+    gps_gateway_host: Optional[str] = None
+    gps_gateway_port: Optional[int] = None
     """Whether a missing GPS fix aborts acquisition.
 
     False by default for hardware sources. A receiver needs minutes for its
@@ -71,6 +73,9 @@ class DataSourceConfig:
         the dataclass defaults. Lets a systemd unit steer acquisition with
         `Environment=` lines instead of a code change.
         """
+        raw_gps_port = os.environ.get("FIELDSENSE_GPS_GATEWAY_PORT")
+        gps_port = int(raw_gps_port) if raw_gps_port is not None and raw_gps_port.strip() else cls.gps_gateway_port
+
         cfg = cls(
             source=os.environ.get("FIELDSENSE_SOURCE", cls.source).upper(),
             sensor_port=os.environ.get("FIELDSENSE_SENSOR_PORT", cls.sensor_port),
@@ -79,6 +84,8 @@ class DataSourceConfig:
             bridge_endpoint=os.environ.get("FIELDSENSE_GPS_METHOD", cls.bridge_endpoint),
             soil_endpoint=os.environ.get("FIELDSENSE_SOIL_METHOD", cls.soil_endpoint),
             require_gps_fix=_env_flag("FIELDSENSE_REQUIRE_GPS_FIX", cls.require_gps_fix),
+            gps_gateway_host=os.environ.get("FIELDSENSE_GPS_GATEWAY_HOST", cls.gps_gateway_host),
+            gps_gateway_port=gps_port,
         )
         if overrides:
             from dataclasses import replace
@@ -109,7 +116,7 @@ class SensorAdapterFactory:
                 loudly beats silently falling back to simulated data on a
                 deployed unit, which would fabricate a field dataset.
         """
-        cfg = config or DataSourceConfig()
+        cfg = config or DataSourceConfig.from_env()
         source = cfg.source.upper()
 
         if source == "VIRTUAL":
@@ -122,7 +129,11 @@ class SensorAdapterFactory:
                 )
             )
 
-        gps_adapter = BridgeGPSAdapter(bridge_endpoint=cfg.bridge_endpoint)
+        gps_adapter = BridgeGPSAdapter(
+            host=cfg.gps_gateway_host,
+            port=cfg.gps_gateway_port,
+            bridge_endpoint=cfg.bridge_endpoint,
+        )
 
         if source == "BRIDGE":
             # Probe hangs off the STM32; Linux never opens a serial device.

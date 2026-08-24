@@ -143,6 +143,54 @@ def test_bridge_gps_adapter_no_fix():
         assert gps_pos.longitude == 0.0
 
 
+def test_bridge_gps_adapter_env_configuration(monkeypatch):
+    """Test BridgeGPSAdapter configures host and port from environment variables."""
+    monkeypatch.setenv("FIELDSENSE_GPS_GATEWAY_HOST", "172.22.0.2")
+    monkeypatch.setenv("FIELDSENSE_GPS_GATEWAY_PORT", "9876")
+
+    adapter = BridgeGPSAdapter()
+    assert adapter.host == "172.22.0.2"
+    assert adapter.port == 9876
+
+
+def test_bridge_gps_adapter_default_fallback(monkeypatch):
+    """Test BridgeGPSAdapter falls back to 127.0.0.1:9876 when env vars are unset."""
+    monkeypatch.delenv("FIELDSENSE_GPS_GATEWAY_HOST", raising=False)
+    monkeypatch.delenv("FIELDSENSE_GPS_GATEWAY_PORT", raising=False)
+
+    adapter = BridgeGPSAdapter()
+    assert adapter.host == "127.0.0.1"
+    assert adapter.port == 9876
+
+
+def test_bridge_gps_adapter_explicit_override(monkeypatch):
+    """Test explicit constructor arguments override environment variables."""
+    monkeypatch.setenv("FIELDSENSE_GPS_GATEWAY_HOST", "172.22.0.2")
+    monkeypatch.setenv("FIELDSENSE_GPS_GATEWAY_PORT", "9876")
+
+    adapter = BridgeGPSAdapter(host="10.0.0.5", port=1234)
+    assert adapter.host == "10.0.0.5"
+    assert adapter.port == 1234
+
+
+def test_factory_gps_gateway_env_pass_through(monkeypatch):
+    """Test SensorAdapterFactory resolves GPS gateway host and port from environment."""
+    monkeypatch.setenv("FIELDSENSE_SOURCE", "HARDWARE")
+    monkeypatch.setenv("FIELDSENSE_GPS_GATEWAY_HOST", "172.22.0.2")
+    monkeypatch.setenv("FIELDSENSE_GPS_GATEWAY_PORT", "9876")
+
+    from fieldsense.hardware.factory import DataSourceConfig, SensorAdapterFactory
+
+    cfg = DataSourceConfig.from_env()
+    assert cfg.gps_gateway_host == "172.22.0.2"
+    assert cfg.gps_gateway_port == 9876
+
+    adapter = SensorAdapterFactory.create_adapter()
+    assert hasattr(adapter, "gps_adapter")
+    assert adapter.gps_adapter.host == "172.22.0.2"
+    assert adapter.gps_adapter.port == 9876
+
+
 def test_hardware_sensor_adapter_e2e_integration():
     """Test HardwareSensorAdapter with mocked adapters produces valid FieldSample."""
     transport = DirectUSBModbusTransport(port="COM_MOCK")

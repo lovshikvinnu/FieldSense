@@ -15,6 +15,7 @@ here. `arduino.app_utils` exists only on the UNO Q, so `Bridge` is resolved
 lazily and stays None elsewhere — tests patch this module-level symbol.
 """
 
+import os
 import socket
 from typing import Any, Optional
 
@@ -107,8 +108,8 @@ class BridgeGPSAdapter(GPSAdapter):
 
     def __init__(
         self,
-        host: str = "127.0.0.1",
-        port: int = 9876,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
         timeout: float = 1.0,
         method: str = "get_gps_data",
         bridge_endpoint: Optional[str] = None,
@@ -117,11 +118,21 @@ class BridgeGPSAdapter(GPSAdapter):
 
         Args:
             host: TCP gateway host, used only when RouterBridge is unavailable.
+                Defaults to environment variable FIELDSENSE_GPS_GATEWAY_HOST or "127.0.0.1".
             port: TCP gateway port.
+                Defaults to environment variable FIELDSENSE_GPS_GATEWAY_PORT or 9876.
             timeout: Socket timeout in seconds.
             method: RouterBridge method name to call.
             bridge_endpoint: Alias for `method`, used by SensorAdapterFactory.
         """
+        if host is None:
+            host = os.environ.get("FIELDSENSE_GPS_GATEWAY_HOST", "127.0.0.1")
+        if port is None:
+            raw_port = os.environ.get("FIELDSENSE_GPS_GATEWAY_PORT")
+            port = int(raw_port) if raw_port is not None and raw_port.strip() else 9876
+        else:
+            port = int(port)
+
         self.host = host
         self.port = port
         self.timeout = timeout
