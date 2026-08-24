@@ -67,17 +67,19 @@ going further:
 
 ### Check one flag while you are here
 
-`AIConfig.extra_args` defaults to `("-no-cnv",)`, and that flag name has changed
-across llama.cpp releases. If this build does not accept it, every generation
-fails and silently degrades to templates — which looks like "the model does not
-work" when the real problem is one argument.
+`AIConfig.extra_args` defaults to `("--single-turn",)`, verified against
+llama.cpp 0.2.0-dev build 10615 on this board. The name has moved before — it
+was `-no-cnv`, which that build does not have — so check it again on any newly
+built binary. If the flag is wrong, every generation fails and silently degrades
+to templates, which looks like "the model does not work" when the real problem
+is one argument.
 
 ```bash
-~/llama.cpp/build/bin/llama-cli --help | grep -i "no-cnv\|conversation"
+~/llama.cpp/build/bin/llama-cli --help | grep -i "single-turn\|conversation"
 ```
 
-If `-no-cnv` is absent, report what the help does show. It is a one-line
-configuration change, not a code change.
+If `--single-turn` is absent, report what the help does show. It is a one-line
+change to `AIConfig.extra_args`, not an architecture change.
 
 ## 2. Get the weights
 
@@ -198,7 +200,7 @@ Verified by inducing both.
 | Status | Violations show | Meaning | Do this |
 | :--- | :--- | :--- | :--- |
 | `TIMEOUT` | — | Model slower than `FIELDSENSE_AI_TIMEOUT`. | Raise the timeout, or use a smaller model. On a 0.5B model a timeout means something else is wrong — check for paging. |
-| `GUARD_REJECTED` | `GENERATION_FAILED[...]:SubprocessError` | **The binary failed. No text was ever produced.** Nothing to do with the guard. | Almost always the `-no-cnv` flag. Run the `--help` check from step 1, then try the binary by hand. |
+| `GUARD_REJECTED` | `GENERATION_FAILED[...]:SubprocessError` | **The binary failed. No text was ever produced.** Nothing to do with the guard. | Almost always a rejected flag. Run the `--help` check from step 1, then try the binary by hand. |
 | `GUARD_REJECTED` | named content rules | The model produced text the safety guard refused. | See `fieldsense/ai/guard.py`. Report the violations the probe prints. |
 | `FALLBACK_TEMPLATE` | — | Some sections generated, others did not. | A partial failure — usually one slow section hitting the timeout. Check the reported generation time. |
 

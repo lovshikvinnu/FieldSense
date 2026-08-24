@@ -157,7 +157,7 @@ determinism, and benchmark tests remain valid. See
 
 | ID | Description | Current Assumption | Required Decision | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| `AI-01` | `llama-cli` flag compatibility | `--no-display-prompt`, `-no-cnv` | Verify against installed llama.cpp release | `HARDWARE_SPEC_REQUIRED` |
+| `AI-01` | `llama-cli` flag compatibility | `--no-display-prompt`, `--single-turn` | `VERIFIED 2026-08-25` against llama.cpp 0.2.0-dev build 10615 (f280b2698) on the UNO Q. That build has no `-no-cnv`. | `RESOLVED` |
 | `AI-02` | Model selection for 4 GB UNO Q | Qwen2.5-0.5B / TinyLlama-1.1B class | Benchmark on QRB2210 Debian | `PENDING_HARDWARE` |
 | `AI-03` | On-target tokens/sec | Estimated from bandwidth bound | Measure physically | `UNO_Q_PHYSICAL_BENCHMARK` |
 | `AI-04` | Prompt phrasing per model family | Generic instruct-style prompt | Tune per selected model chat template | `PROTOTYPE_ONLY` |

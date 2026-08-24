@@ -150,7 +150,7 @@ llama-cli \
   --temp 0.0 \
   --seed 42 \
   --no-display-prompt \
-  -no-cnv
+  --single-turn
 ```
 
 `--temp 0.0` with a fixed seed makes generation greedy and repeatable — a
