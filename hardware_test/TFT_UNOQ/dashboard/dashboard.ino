@@ -285,10 +285,22 @@ void setup() {
   tft.setRotation(0);
   tft.invertDisplay(false);
 
+  // PAINT BEFORE THE LINK. tft.init() wakes the panel and lights the
+  // backlight but leaves display RAM uninitialised, which reads as a blank
+  // white screen. Bridge.begin() and Monitor.begin() both talk to the router
+  // over RPC - the same path measured at ~595 ms per call, which can stall or
+  // wedge outright. Anything drawn after them is not drawn at all when they
+  // hang, and the only symptom is a white panel that says nothing.
+  //
+  // So the dashboard goes up first, reading "waiting for data...", and the
+  // link is brought up underneath it. A white screen now means the SPI or
+  // display init failed, which is a genuinely different fault.
+  renderChrome();
+  renderValues();
+
   Bridge.begin();
   Monitor.begin(115200);
 
-  renderChrome();
   renderValues();
 }
 
