@@ -20,6 +20,7 @@ AINarrative.generation_status, never raised.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -33,6 +34,21 @@ from .models import AINarrative, ExplanationContext, NarrativeStatus, ZoneContex
 from .prompt import build_field_summary_prompt, build_retry_suffix, build_zone_prompt
 
 _END_MARKERS = ("[end of text]", "</s>", "<|im_end|>", "<|endoftext|>", "<|eot_id|>")
+
+# llama-cli writes its own furniture to the same stream as the generation. Left
+# in, it is judged as though the model had written it. Measured on the UNO Q
+# against build 10615: the timing line's token rates reached the guard as
+# UNSUPPORTED_NUMBER:15.9 and :8.3 - numbers about llama.cpp, not about soil -
+# and the spinner added several hundred characters toward LENGTH_EXCEEDED before
+# the model had said anything.
+#
+# Each pattern matches llama.cpp's output specifically, never anything shaped
+# like prose, so a narrative is not silently edited on its way to the guard.
+_LLAMA_NOISE = (
+    re.compile(r"\[\s*Prompt:.*?t/s.*?\]", re.IGNORECASE | re.DOTALL),
+    re.compile(r"^Loading model\.\.\..*$", re.MULTILINE),
+    re.compile(r"^Exiting\.\.\.\s*$", re.MULTILINE),
+)
 
 
 class LlamaCppAdapter(LocalLLMAdapter):
@@ -278,8 +294,22 @@ class LlamaCppAdapter(LocalLLMAdapter):
 
     @staticmethod
     def _clean_output(raw: str) -> str:
-        """Normalize model stdout into a single plain paragraph."""
-        text = (raw or "").strip()
+        """Normalize model stdout into a single plain paragraph.
+
+        Removes llama.cpp's own output before anything is judged, so the guard's
+        verdict is about the model rather than about the tool that ran it. See
+        `_LLAMA_NOISE` for what that furniture is and why it matters.
+        """
+        text = raw or ""
+        for pattern in _LLAMA_NOISE:
+            text = pattern.sub(" ", text)
+
+        # The spinner is drawn with backspaces, which survive the line match
+        # above when they trail other output. Newline and tab are kept so the
+        # whitespace collapse below still sees paragraph structure.
+        text = "".join(ch for ch in text if ch >= " " or ch in "\n\t")
+
+        text = text.strip()
         for marker in _END_MARKERS:
             text = text.replace(marker, " ")
         return " ".join(text.split())

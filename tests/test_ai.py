@@ -616,7 +616,6 @@ def test_clean_output_keeps_plain_model_text_untouched():
     assert cleaned == _MODEL_TEXT
 
 
-@pytest.mark.xfail(strict=True, reason="_clean_output does not yet strip llama.cpp furniture")
 def test_clean_output_strips_the_llama_cpp_timing_line():
     """The timing line's token rates reach the guard as invented measurements.
 
@@ -631,7 +630,6 @@ def test_clean_output_strips_the_llama_cpp_timing_line():
     assert "Exiting" not in cleaned
 
 
-@pytest.mark.xfail(strict=True, reason="_clean_output does not yet strip llama.cpp furniture")
 def test_clean_output_strips_the_loading_spinner():
     """The progress spinner is backspace control characters, not narrative.
 
@@ -645,7 +643,6 @@ def test_clean_output_strips_the_loading_spinner():
     assert not any(ord(c) < 32 and c not in "\n\t" for c in cleaned)
 
 
-@pytest.mark.xfail(strict=True, reason="_clean_output does not yet strip llama.cpp furniture")
 def test_clean_output_recovers_exactly_the_model_text_from_a_real_capture():
     """End to end on the shape the board actually produced.
 
