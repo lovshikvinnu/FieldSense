@@ -254,6 +254,60 @@ def run_inference(config: AIConfig) -> dict:
             "status": status, "violations": violations}
 
 
+def dump_streams(config: AIConfig) -> int:
+    """Run the real command with pipes and no tty, and show both streams.
+
+    This exists because a hand-run command in a terminal is not the same
+    experiment. llama-cli checks for a tty and renders a chat UI when it finds
+    one, so shell redirection can leave both captured files empty while text
+    still reaches the screen. `subprocess.run(capture_output=True)` gives it no
+    tty, which is what FieldSense actually does - so this is the only test whose
+    answer applies to `_run_binary`.
+    """
+    from fieldsense.ai.llama_cpp import LlamaCppAdapter
+
+    adapter = LlamaCppAdapter(config=config)
+    command = adapter._build_command("Summarise in one sentence: soil health is poor.")
+
+    print("Command FieldSense would run\n")
+    print("  " + " ".join(repr(a) if " " in a else a for a in command))
+    print("\nRunning with pipes and no controlling terminal...\n")
+
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True,
+                                   timeout=config.timeout_seconds, check=False)
+    except subprocess.TimeoutExpired:
+        line(FAIL, "run", "timed out after {}s".format(config.timeout_seconds))
+        return 1
+    except (OSError, subprocess.SubprocessError) as exc:
+        line(FAIL, "run", "{}: {}".format(type(exc).__name__, exc))
+        return 1
+
+    out, err = completed.stdout or "", completed.stderr or ""
+    line(INFO, "exit code", str(completed.returncode))
+    line(INFO, "stdout length", "{} chars".format(len(out)))
+    line(INFO, "stderr length", "{} chars".format(len(err)))
+
+    print("\n--- STDOUT (what _run_binary reads) ---")
+    print(out if out.strip() else "(empty)")
+    print("\n--- STDERR (currently discarded) ---")
+    print(err if err.strip() else "(empty)")
+
+    print("\n" + "=" * 72)
+    if out.strip():
+        print("Generation is on STDOUT. _run_binary is reading the right stream,")
+        print("so an EMPTY_NARRATIVE has some other cause - check _clean_output.")
+    elif err.strip():
+        print("Generation is on STDERR. _run_binary reads stdout only, which is")
+        print("why the guard saw an empty string. Note what else shares that")
+        print("stream - load logs and the timing line - before merging it.")
+    else:
+        print("BOTH streams are empty with no tty attached. The text is not")
+        print("being written to either pipe, so reading stderr would not help.")
+        print("The flags are producing no piped output at all.")
+    return 0
+
+
 # ------------------------------------------------------------------- selftest
 
 
@@ -279,6 +333,9 @@ def main(argv=None) -> int:
                         help="check assets and configuration only")
     parser.add_argument("--selftest", action="store_true",
                         help="verify this probe's own logic, no model needed")
+    parser.add_argument("--dump-streams", action="store_true",
+                        help="run the real llama-cli command with pipes and no "
+                             "tty, and print stdout and stderr separately")
     parser.add_argument("--backend", default=None,
                         help="override the backend: AUTO, MOCK, LLAMA_CPP")
     parser.add_argument("--model", default=None, help="override the GGUF path")
@@ -296,6 +353,9 @@ def main(argv=None) -> int:
     if args.binary:
         overrides["binary_path"] = args.binary
     config = AIConfig.from_env(**overrides)
+
+    if args.dump_streams:
+        return dump_streams(config)
 
     print("FieldSense SLM probe")
     print("=" * 72)
