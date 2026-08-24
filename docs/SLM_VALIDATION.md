@@ -87,12 +87,36 @@ by memory bandwidth: 0.5B gives roughly 10 tokens/sec and a ~15 s summary, while
 Phi-3-mini at 2.3 GB drops to ~1.7 tokens/sec and ~90 s. Prove the path works at
 the fast end first, then size up if you want better text.
 
+### Check disk before downloading
+
+The weights are ~0.40 GB and the llama.cpp build tree is larger again. A
+half-finished download leaves a file that passes a casual glance and fails at
+load time, so confirm the room exists first.
+
+```bash
+df -h ~ && du -sh ~/llama.cpp 2>/dev/null
+```
+
+Want at least 2 GB free on the home filesystem.
+
+### Download
+
 ```bash
 mkdir -p ~/FieldSense/FieldSense/models
 ```
 
-Download `qwen2.5-0.5b-instruct-q4_k_m.gguf` from Hugging Face into that
-`models/` directory. The folder is gitignored, so weights never enter the repo.
+```bash
+curl -L --fail --progress-bar -o ~/FieldSense/FieldSense/models/qwen2.5-0.5b-instruct-q4_k_m.gguf https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
+```
+
+`--fail` matters: without it curl happily writes an HTML error page to the
+`.gguf` filename, which then fails the magic-byte check below for a confusing
+reason. If it 404s, the quantisation filename has changed — list what the repo
+actually offers at
+<https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/tree/main> and use the
+`q4_k_m` entry.
+
+The `models/` folder is gitignored, so weights never enter the repo.
 
 Sanity-check the download — a truncated file still looks plausible until
 llama.cpp rejects it:
