@@ -257,6 +257,18 @@ class LlamaCppAdapter(LocalLLMAdapter):
             text=True,
             timeout=self.config.timeout_seconds,
             check=False,
+            # Detach the controlling terminal. llama-cli opens /dev/tty directly
+            # and renders its chat UI there, so with a terminal present it exits
+            # 0 having written nothing to either pipe - and the guard reports
+            # EMPTY_NARRATIVE on text that generated perfectly well.
+            #
+            # Measured on the UNO Q against llama.cpp 0.2.0-dev build 10615,
+            # running the real command four ways: inherited stdin gave 0 bytes
+            # on both pipes, stdin=DEVNULL also gave 0 - stdin is not what it
+            # consults - and start_new_session gave 1055 bytes on stdout.
+            # setsid() removes the controlling terminal, the /dev/tty open
+            # fails, and generation falls back to stdout.
+            start_new_session=True,
         )
         if completed.returncode != 0:
             raise subprocess.SubprocessError(

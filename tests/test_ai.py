@@ -6,6 +6,7 @@ in the offline dashboard.
 """
 
 import os
+import subprocess
 import sys
 from dataclasses import replace
 
@@ -594,6 +595,34 @@ def test_llama_command_suppresses_conversation_mode(tmp_path):
     assert "--single-turn" in command
     assert "-no-cnv" not in command, (
         "the target build does not accept -no-cnv; see AIConfig.extra_args")
+
+
+def test_llama_detaches_the_controlling_terminal(tmp_path, monkeypatch):
+    """llama-cli must run without a controlling terminal.
+
+    It opens /dev/tty directly and renders a chat UI there. With a terminal
+    present it exits 0 having written nothing to stdout or stderr, and the guard
+    then reports EMPTY_NARRATIVE for text the model generated correctly.
+
+    Measured on the UNO Q against llama.cpp 0.2.0-dev build 10615: inherited
+    stdin gave 0 bytes on both pipes, stdin=DEVNULL gave 0 as well - stdin is
+    not what it consults - and start_new_session gave 1055 bytes on stdout.
+
+    Asserted on the call rather than through a pty, so it is deterministic and
+    does not depend on whether the test runner happens to own a terminal.
+    """
+    seen = {}
+    real_run = subprocess.run
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", spy)
+    LlamaCppAdapter(_llama_config(tmp_path, "ok"))._run_binary("PROMPT")
+
+    assert seen.get("start_new_session") is True, (
+        "without setsid llama-cli writes to /dev/tty and both pipes come back empty")
 
 
 def test_llama_extra_args_are_appended_verbatim(tmp_path):
