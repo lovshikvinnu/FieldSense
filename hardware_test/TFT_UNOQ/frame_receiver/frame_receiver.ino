@@ -79,7 +79,24 @@
 
 static const uint8_t  PROTO_MAGIC_0 = 0xAA;
 static const uint8_t  PROTO_MAGIC_1 = 0xBB;
-static const uint8_t  PROTO_VERSION = 0x01;
+// v1: MCU ACKs the header and every chunk. Correct on a real UART, and what
+//     MockSTM32 in tests/test_mcu_frame_bridge.py exercises.
+// v2: MCU stays silent until the whole frame has arrived, then sends ONE
+//     status byte. Required on the UNO Q.
+//
+// WHY v2 EXISTS. Serial here is Arduino_RouterBridge's Monitor. Reads are
+// bridge->call(MON_READ_METHOD) and writes are bridge->call(MON_WRITE_METHOD)
+// on the SAME RPC channel. Writing mid-frame breaks the next read, and
+// monitor.h swallows the failure - the `_connected = false` line in _read()'s
+// error path is commented out, so a failed mon/read stores nothing, reports
+// nothing, and available() returns 0 forever. The observed symptom was the
+// header ACKing normally and then chunk 1 reporting 0 of 153600 bytes, with
+// chunk size making no difference at 4096, 3840 or 256.
+//
+// Per-chunk ACKs bought nothing here anyway: the MCU pulls its own data, so
+// backpressure is inherent and the host cannot overrun it.
+static const uint8_t  PROTO_VERSION      = 0x01;
+static const uint8_t  PROTO_VERSION_STREAM = 0x02;
 static const uint8_t  FORMAT_RGB565_BE = 0x01;
 
 static const uint8_t  ACK = 0x06;
@@ -271,7 +288,9 @@ void loop() {
   // Reject rather than draw garbage. Same reasoning as the geometry guard in
   // write_framebuffer() on the host: a transposed or half-size frame is worse
   // than a refusal, because it looks like a working display.
-  bool ok = version == PROTO_VERSION
+  const bool streaming = (version == PROTO_VERSION_STREAM);
+
+  bool ok = (version == PROTO_VERSION || streaming)
          && format  == FORMAT_RGB565_BE
          && width   == tft.width()
          && height  == tft.height()
@@ -284,11 +303,19 @@ void loop() {
          // setAddrWindow() cannot express. width*2 bytes per row.
          && (chunk % ((uint32_t)width * 2UL)) == 0;
   if (!ok) {
-    Serial.write(NAK);
+    // Even a rejection is a write, so under v2 it has to wait until the host
+    // stops sending. Report on the panel and let the host's read time out.
+    if (!streaming) {
+      Serial.write(NAK);
+    } else {
+      statusBanner("Header rejected", ST77XX_RED);
+    }
     return;
   }
 
-  Serial.write(ACK);
+  if (!streaming) {
+    Serial.write(ACK);
+  }
 
   const uint32_t total = (uint32_t)width * (uint32_t)height * 2UL;
   const uint32_t rowBytes = (uint32_t)width * 2UL;
@@ -332,9 +359,12 @@ void loop() {
 
     uint16_t expect = (uint16_t)(crcBytes[0] << 8 | crcBytes[1]);
     if (crc16_ccitt(chunkBuf, want) != expect) {
-      // NAK and stop. Rows already on glass stay; the host retries the whole
-      // frame rather than resuming mid-stream.
-      Serial.write(NAK);
+      // Rows already on glass stay; the host retries the whole frame rather
+      // than resuming mid-stream. Under v2 the NAK waits for the end, because
+      // writing now would break the reads still to come.
+      if (!streaming) {
+        Serial.write(NAK);
+      }
       why = "CRC mismatch";
       break;
     }
@@ -349,7 +379,9 @@ void loop() {
     tft.endWrite();
 
     received += want;
-    Serial.write(ACK);
+    if (!streaming) {
+      Serial.write(ACK);
+    }
 
     if (millis() - started > FRAME_TIMEOUT_MS) {
       why = "frame timeout";
@@ -357,7 +389,18 @@ void loop() {
     }
   }
 
-  if (why != NULL) {
+  // v2's single status byte. Safe here: the host has stopped sending, so
+  // breaking the read channel no longer costs anything.
+  if (streaming) {
+    Serial.write(why == NULL ? ACK : NAK);
+  }
+
+  if (why == NULL) {
+    // Nothing is drawn over the frame on success - the picture IS the status.
+    return;
+  }
+
+  {
     // The panel is the only console this board has, so the banner has to carry
     // the whole diagnosis: which chunk died, out of how many, and how. Chunk 1
     // failing is a different bug from chunk 37 failing, and a CRC mismatch is

@@ -21,6 +21,8 @@ import pytest
 
 from fieldsense.hardware.display_bridge import (
     ACK,
+    FRAME_PROTOCOL_STREAM,
+    FRAME_PROTOCOL_VERSION,
     DEFAULT_CHUNK_BYTES,
     DEFAULT_MCU_BAUD,
     DEFAULT_MCU_PORT,
@@ -94,6 +96,10 @@ class MockSTM32:
         self.total = 0
         self.nak_reason = None
         self.closed = False
+        # v2: stay silent until the frame lands, then one status byte. Mirrors
+        # the sketch, where writing mid-frame breaks the RouterBridge read
+        # channel. See the protocol note in display_bridge.py.
+        self.streaming = False
 
     # ---------------------------------------------------- transport surface
 
@@ -135,8 +141,10 @@ class MockSTM32:
                 height = int.from_bytes(header[6:8], "big")
                 self.chunk = int.from_bytes(header[8:10], "big")
 
+                self.streaming = header[2] == FRAME_PROTOCOL_STREAM
+
                 acceptable = (
-                    header[2] == FRAME_PROTOCOL_VERSION
+                    header[2] in (FRAME_PROTOCOL_VERSION, FRAME_PROTOCOL_STREAM)
                     and header[3] == FRAME_FORMAT_RGB565_BE
                     and width == self.panel_w
                     and height == self.panel_h
@@ -152,11 +160,14 @@ class MockSTM32:
                     continue
 
                 self.total = width * height * 2
-                self.replies.append(ACK)
+                if not self.streaming:
+                    self.replies.append(ACK)
                 self.state = "chunks"
 
             if self.state == "chunks":
                 if len(self.pixels) >= self.total:
+                    if self.streaming:
+                        self.replies.append(ACK)   # the one status byte
                     self.state = "done"
                     return
                 want = min(self.chunk, self.total - len(self.pixels))
@@ -169,12 +180,16 @@ class MockSTM32:
                     self._nak("chunk crc")
                     continue
                 self.pixels += body
-                self.replies.append(ACK)
+                if not self.streaming:
+                    self.replies.append(ACK)
                 continue
 
             return
 
     def _nak(self, reason: str) -> None:
+        # Under v2 the host is still sending, so the MCU cannot answer yet: it
+        # records the fault and reports it once the frame ends. Writing now
+        # would break the reads still to come.
         self.replies.append(NAK)
         self.nak_reason = reason
         self.state = "sync"
@@ -305,8 +320,10 @@ def test_little_endian_payload_would_be_wrong_so_big_endian_is_asserted():
 def test_geometry_nak_from_a_rotated_sketch_surfaces_as_an_error():
     """A sketch left on setRotation(1) reports 320x240 and must NAK the header."""
     rotated = MockSTM32(panel_w=320, panel_h=240)
+    # v1: the NAK is attributable to the header, because the host waits for one.
     with pytest.raises(DisplayBridgeError, match="rejected header"):
-        stream_frame_to_mcu(gradient_frame(), PANEL_W, PANEL_H, transport=rotated)
+        stream_frame_to_mcu(gradient_frame(), PANEL_W, PANEL_H, transport=rotated,
+                            version=FRAME_PROTOCOL_VERSION)
     assert rotated.nak_reason == "geometry or protocol"
 
 
@@ -327,7 +344,8 @@ def test_chunk_not_row_aligned_is_refused_before_the_wire():
 def test_chunk_larger_than_sketch_buffer_is_naked():
     small = MockSTM32(max_chunk=1024)
     with pytest.raises(DisplayBridgeError, match="rejected header"):
-        stream_frame_to_mcu(gradient_frame(), PANEL_W, PANEL_H, chunk=4800, transport=small)
+        stream_frame_to_mcu(gradient_frame(), PANEL_W, PANEL_H, chunk=4800, transport=small,
+                            version=FRAME_PROTOCOL_VERSION)
 
 
 def test_silent_mcu_reports_a_missing_ack_rather_than_hanging():
@@ -358,7 +376,8 @@ def test_corrupted_chunk_is_caught_by_crc_not_drawn():
 
     flipper = BitFlipper()
     with pytest.raises(DisplayBridgeError, match="rejected chunk"):
-        stream_frame_to_mcu(gradient_frame(), PANEL_W, PANEL_H, transport=flipper)
+        stream_frame_to_mcu(gradient_frame(), PANEL_W, PANEL_H, transport=flipper,
+                            version=FRAME_PROTOCOL_VERSION)
     assert flipper.nak_reason == "chunk crc"
 
 
@@ -387,6 +406,45 @@ def test_mcu_defaults_match_the_sketch_constants():
     # chunk; see the deadlock note in frame_receiver.ino.
     assert args.chunk_bytes == DEFAULT_CHUNK_BYTES == 3840
     assert DEFAULT_CHUNK_BYTES % (240 * 2) == 0
+
+
+def test_streaming_protocol_sends_no_acks_until_the_frame_completes():
+    """v2 must not read anything mid-frame - that is the whole point of it.
+
+    On the UNO Q a mid-frame write breaks the MCU's own read channel, so the
+    host must stay silent-listening until the last chunk is out.
+    """
+    payload = gradient_frame()
+    mcu = MockSTM32()
+
+    reads = []
+    original_read = mcu.read
+
+    def counting_read(length=1):
+        reads.append(len(mcu.pixels))
+        return original_read(length)
+
+    mcu.read = counting_read
+    stats = stream_frame_to_mcu(payload, PANEL_W, PANEL_H, transport=mcu,
+                                version=FRAME_PROTOCOL_STREAM)
+
+    assert bytes(mcu.pixels) == payload
+    assert stats["protocol"] == FRAME_PROTOCOL_STREAM
+    # Exactly one read, and only after every pixel had arrived.
+    assert len(reads) == 1
+    assert reads[0] == len(payload)
+
+
+def test_streaming_protocol_is_the_default():
+    """The UNO Q is the deployment target, so v2 is what you get unasked."""
+    args = build_parser().parse_args([])
+    assert args.protocol == FRAME_PROTOCOL_STREAM == 2
+
+
+def test_streaming_header_declares_version_two():
+    header = build_frame_header(240, 320, 3840, FRAME_PROTOCOL_STREAM)
+    assert header[2] == 2
+    assert crc16_ccitt(header[:10]) == int.from_bytes(header[10:12], "big")
 
 
 # ------------------------------------------------------- transport selection

@@ -450,12 +450,28 @@ def rgb_to_rgb565(rgb: bytes, byteorder: str = "little") -> bytes:
 #     [10..11] crc16    CCITT-FALSE over bytes [0..9]
 #
 #   Then ceil(width*height*2 / chunk) chunks, each: payload + crc16 over that
-#   payload. The MCU answers ACK or NAK per header and per chunk.
+#   payload.
 #
-# The ACK is load-bearing. The MCU's serial RX buffer is a few hundred bytes
-# against a 153,600 byte frame, so each chunk blocks on its ACK. Open-loop
-# blasting with a fixed sleep - what the old push_frame.py scratch script did -
-# overruns the buffer and shears the image.
+# TWO VERSIONS, and the difference is the ACK policy.
+#
+#   v1  MCU answers ACK/NAK per header and per chunk. Correct over a real
+#       UART, where the MCU's RX buffer is a few hundred bytes against a
+#       153,600 byte frame and the ACK is the only backpressure there is.
+#       Open-loop blasting with a fixed sleep - what the old push_frame.py
+#       scratch script did - overruns that buffer and shears the image.
+#
+#   v2  MCU stays silent until the whole frame lands, then sends ONE status
+#       byte. Required on the UNO Q, where Serial is Arduino_RouterBridge's
+#       Monitor: reads are bridge->call(MON_READ_METHOD) and writes are
+#       bridge->call(MON_WRITE_METHOD) on the SAME RPC channel, so an ACK
+#       mid-frame breaks the next read. monitor.h then hides it - the
+#       `_connected = false` line in _read()'s error path is commented out, so
+#       a failed mon/read stores nothing, raises nothing, and available()
+#       returns 0 forever. Measured: header ACKs, then chunk 1 reports 0 of
+#       153600 bytes, identically at 4096, 3840 and 256 byte chunks.
+#
+#       Losing the ACK costs no safety here: the MCU pulls its own data over
+#       RPC, so it cannot be overrun by a host that sends too fast.
 #
 # RGB565 goes on the wire BIG-endian: that is the order the ST7789 wants, so
 # the MCU hands the buffer to writePixels(bigEndian=true) with no byte swap.
@@ -463,6 +479,7 @@ def rgb_to_rgb565(rgb: bytes, byteorder: str = "little") -> bytes:
 
 FRAME_MAGIC = b"\xaa\xbb"
 FRAME_PROTOCOL_VERSION = 0x01
+FRAME_PROTOCOL_STREAM = 0x02
 FRAME_FORMAT_RGB565_BE = 0x01
 FRAME_HEADER_BYTES = 12
 
@@ -508,13 +525,16 @@ def crc16_ccitt(data: bytes) -> int:
     return crc
 
 
-def build_frame_header(width: int, height: int, chunk: int) -> bytes:
+def build_frame_header(width: int, height: int, chunk: int,
+                      version: int = FRAME_PROTOCOL_VERSION) -> bytes:
     """Build the 12-byte frame header the receiver sketch expects.
 
     Args:
         width: Frame width in pixels.
         height: Frame height in pixels.
         chunk: Payload bytes per chunk. Must be even and fit a uint16.
+        version: FRAME_PROTOCOL_VERSION for per-chunk ACKs, or
+            FRAME_PROTOCOL_STREAM for one status byte at the end.
 
     Returns:
         The packed header, CRC included.
@@ -532,7 +552,7 @@ def build_frame_header(width: int, height: int, chunk: int) -> bytes:
             "chunk size {} must be even - RGB565 is two bytes per pixel".format(chunk))
 
     body = bytearray(FRAME_MAGIC)
-    body.append(FRAME_PROTOCOL_VERSION)
+    body.append(version)
     body.append(FRAME_FORMAT_RGB565_BE)
     body += width.to_bytes(2, "big")
     body += height.to_bytes(2, "big")
@@ -556,6 +576,18 @@ def iter_frame_chunks(payload: bytes, chunk: int) -> List[bytes]:
         piece = payload[start:start + chunk]
         records.append(piece + crc16_ccitt(piece).to_bytes(2, "big"))
     return records
+
+
+def _stream_deadline(frame_bytes: int) -> float:
+    """Seconds to allow for a whole open-loop frame plus the MCU's reply.
+
+    The router's own serial link runs at 115200 with MsgPack framing over it,
+    so budget roughly double the raw line time and add a floor for short
+    frames. Generous on purpose: giving up early looks exactly like a hang,
+    and on this board recovering costs a re-flash.
+    """
+    line_seconds = (frame_bytes * 10.0) / 115200.0
+    return max(30.0, line_seconds * 2.0 + 15.0)
 
 
 def _await_ack(transport, what: str, timeout: float) -> None:
@@ -598,6 +630,7 @@ def stream_frame_to_mcu(
     chunk: int = DEFAULT_CHUNK_BYTES,
     timeout: float = 5.0,
     transport=None,
+    version: int = FRAME_PROTOCOL_STREAM,
 ) -> dict:
     """Stream a packed RGB565 frame to the STM32 and onto the ST7789 panel.
 
@@ -610,8 +643,13 @@ def stream_frame_to_mcu(
         baud: Line speed. Must equal LINK_BAUD in the receiver sketch.
         chunk: Payload bytes per chunk, even, <= the sketch's MAX_CHUNK.
         timeout: Per-ACK read timeout in seconds.
-        transport: Pre-built transport for testing. When None a SerialTransport
-            is opened against `port` and closed on the way out.
+        transport: Pre-built transport for testing. When None a transport is
+            opened against `port` and closed on the way out.
+        version: FRAME_PROTOCOL_STREAM (default) sends the whole frame
+            open-loop and reads one status byte at the end - required on the
+            UNO Q, where an ACK mid-frame breaks the MCU's next read.
+            FRAME_PROTOCOL_VERSION keeps the per-chunk ACK handshake, which is
+            what a real UART needs.
 
     Returns:
         Dict with 'bytes', 'chunks', 'port', 'baud', 'chunk_bytes'.
@@ -636,8 +674,9 @@ def stream_frame_to_mcu(
             "Try {}.".format(row_bytes, width, chunk,
                              max(row_bytes, (chunk // row_bytes) * row_bytes)))
 
-    header = build_frame_header(width, height, chunk)
+    header = build_frame_header(width, height, chunk, version)
     records = iter_frame_chunks(payload, chunk)
+    streaming = version == FRAME_PROTOCOL_STREAM
 
     owned = transport is None
     if owned:
@@ -667,11 +706,20 @@ def stream_frame_to_mcu(
 
     try:
         transport.write(header)
-        _await_ack(transport, "header", timeout)
+        if not streaming:
+            _await_ack(transport, "header", timeout)
 
         for index, record in enumerate(records, start=1):
             transport.write(record)
-            _await_ack(transport, "chunk {}/{}".format(index, len(records)), timeout)
+            if not streaming:
+                _await_ack(transport, "chunk {}/{}".format(index, len(records)), timeout)
+
+        if streaming:
+            # One status byte for the whole frame. The MCU cannot answer sooner
+            # without breaking its own read channel, so this waits out the
+            # entire transfer - hence a deadline scaled to the frame, not the
+            # per-ACK timeout.
+            _await_ack(transport, "frame", max(timeout, _stream_deadline(len(payload))))
     except DisplayBridgeError:
         raise
     except Exception as exc:
@@ -689,6 +737,7 @@ def stream_frame_to_mcu(
         "port": port,
         "baud": baud,
         "chunk_bytes": chunk,
+        "protocol": version,
     }
 
 
@@ -1037,6 +1086,12 @@ def build_parser() -> argparse.ArgumentParser:
              "width*2 (whole rows) and <= the sketch's MAX_CHUNK of 4096",
     )
     parser.add_argument(
+        "--protocol", type=int, default=FRAME_PROTOCOL_STREAM, choices=(1, 2),
+        help="MCU frame protocol: 2 streams the frame and reads one status "
+             "byte at the end (required on the UNO Q); 1 keeps the per-chunk "
+             "ACK handshake, which a real UART needs for backpressure",
+    )
+    parser.add_argument(
         "--ack-timeout", type=float, default=5.0,
         help="seconds to wait for each MCU ACK (--target mcu)",
     )
@@ -1117,11 +1172,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                 payload, width, height,
                 port=args.port, baud=args.baud,
                 chunk=args.chunk_bytes, timeout=args.ack_timeout,
+                version=args.protocol,
             )
-            print("streamed {} bytes to {} in {} chunks at {} baud "
-                  "({}x{} RGB565-BE, renderer={})".format(
+            print("streamed {} bytes to {} in {} chunks (protocol v{}, "
+                  "{}x{} RGB565-BE, renderer={})".format(
                       stats["bytes"], stats["port"], stats["chunks"],
-                      stats["baud"], width, height, renderer))
+                      stats["protocol"], width, height, renderer))
             return 0
 
         device = detect_framebuffer(None if args.device == "auto" else args.device)
