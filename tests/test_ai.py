@@ -597,6 +597,67 @@ def test_llama_command_suppresses_conversation_mode(tmp_path):
         "the target build does not accept -no-cnv; see AIConfig.extra_args")
 
 
+# llama.cpp furniture observed on the UNO Q, build 10615, once setsid let its
+# output reach a pipe. The spinner is literal backspaces; the stats line is what
+# the terminal renders as "[ Prompt: 15.9 t/s | Generation: 8.3 t/s ]".
+_LLAMA_SPINNER = "Loading model... " + "|\b-\b\\\b|\b/\b" * 40
+_LLAMA_STATS = "\n\n[ Prompt: 15.9 t/s | Generation: 8.3 t/s ]\n\nExiting...\n"
+_MODEL_TEXT = (
+    "The field shows markedly low moisture across the single management zone, "
+    "with nitrogen availability also constrained. Irrigation timing should be "
+    "reviewed before any nutrient intervention is considered."
+)
+
+
+def test_clean_output_keeps_plain_model_text_untouched():
+    """The baseline: without furniture, this text is already clean and allowed."""
+    cleaned = LlamaCppAdapter._clean_output(_MODEL_TEXT)
+
+    assert cleaned == _MODEL_TEXT
+
+
+@pytest.mark.xfail(strict=True, reason="_clean_output does not yet strip llama.cpp furniture")
+def test_clean_output_strips_the_llama_cpp_timing_line():
+    """The timing line's token rates reach the guard as invented measurements.
+
+    Observed on the UNO Q: UNSUPPORTED_NUMBER[field_summary]:15.9 and :8.3, which
+    are llama.cpp's prompt and generation rates - not anything the model claimed
+    about the field. The guard was right; it was reading llama.cpp's own output.
+    """
+    cleaned = LlamaCppAdapter._clean_output(_MODEL_TEXT + _LLAMA_STATS)
+
+    assert "15.9" not in cleaned and "8.3" not in cleaned
+    assert "t/s" not in cleaned
+    assert "Exiting" not in cleaned
+
+
+@pytest.mark.xfail(strict=True, reason="_clean_output does not yet strip llama.cpp furniture")
+def test_clean_output_strips_the_loading_spinner():
+    """The progress spinner is backspace control characters, not narrative.
+
+    It arrived once setsid let generation reach a pipe, and it inflates every
+    section toward LENGTH_EXCEEDED before the model has said anything.
+    """
+    cleaned = LlamaCppAdapter._clean_output(_LLAMA_SPINNER + "\n" + _MODEL_TEXT)
+
+    assert "Loading model" not in cleaned
+    assert "\b" not in cleaned
+    assert not any(ord(c) < 32 and c not in "\n\t" for c in cleaned)
+
+
+@pytest.mark.xfail(strict=True, reason="_clean_output does not yet strip llama.cpp furniture")
+def test_clean_output_recovers_exactly_the_model_text_from_a_real_capture():
+    """End to end on the shape the board actually produced.
+
+    Spinner, then generation, then the timing line. What survives must be the
+    model's sentences and nothing else - this is the contract that makes the
+    guard's verdict about the model rather than about llama.cpp.
+    """
+    raw = _LLAMA_SPINNER + "\n" + _MODEL_TEXT + _LLAMA_STATS
+
+    assert LlamaCppAdapter._clean_output(raw) == _MODEL_TEXT
+
+
 def test_llama_detaches_the_controlling_terminal(tmp_path, monkeypatch):
     """llama-cli must run without a controlling terminal.
 
