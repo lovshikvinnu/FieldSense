@@ -285,6 +285,7 @@ static void render() {
 
 static const uint32_t GPS_BAUD     = 9600;   // NEO-M8N factory default, 8N1
 static const size_t   GPS_LINE_MAX = 120;    // longest GGA observed is ~82
+static const uint32_t GPS_DRAIN_MS  = 400;   // tight-poll window per loop pass
 
 static char   gpsLine[GPS_LINE_MAX];
 static size_t gpsLineLen = 0;
@@ -300,6 +301,8 @@ static uint32_t gpsLines     = 0;   // complete newline-terminated lines
 static uint32_t gpsChecksumOk = 0;  // lines whose NMEA checksum validated
 static uint32_t gpsGgaSeen   = 0;   // GGA sentences handed to parseGGA
 static bool     gpsEverParsed = false;
+static bool     gpsDiscarding = false;  // dropping through to the next newline
+static uint32_t gpsOverflows  = 0;      // merged/overlong lines discarded
 static char     gpsLastLine[48];    // first 47 chars of the most recent line
 
 // The wire contract with the host. Fixed by parse_gps_telemetry() in
@@ -402,10 +405,10 @@ static void parseGGA(const char *s, size_t len) {
 static void publishNoFix() {
   char buf[160];
   snprintf(buf, sizeof(buf),
-           "NO_FIX,0.0,0.0,Sats:0,HDOP:99.9,rx=%lu,lines=%lu,csum=%lu,gga=%lu,last=%s",
+           "NO_FIX,0.0,0.0,Sats:0,HDOP:99.9,rx=%lu,lines=%lu,csum=%lu,gga=%lu,ovf=%lu,last=%s",
            (unsigned long)gpsBytes, (unsigned long)gpsLines,
            (unsigned long)gpsChecksumOk, (unsigned long)gpsGgaSeen,
-           gpsLastLine);
+           (unsigned long)gpsOverflows, gpsLastLine);
   latest_gps_csv = String(buf);
 }
 
@@ -459,6 +462,7 @@ static void serviceGPS() {
     gpsBytes++;
 
     if (c == '\n' || c == '\r') {
+      gpsDiscarding = false;
       if (gpsLineLen > 0) {
         gpsLine[gpsLineLen] = '\0';
         gpsLines++;
@@ -502,10 +506,18 @@ static void serviceGPS() {
       continue;
     }
 
+    if (gpsDiscarding) {
+      continue;  // mid-overflow: throw bytes away until the next newline
+    }
     if (gpsLineLen < GPS_LINE_MAX - 1) {
       gpsLine[gpsLineLen++] = c;
     } else {
-      gpsLineLen = 0;  // overlong garbage; resync on the next newline
+      // Two sentences merged because a newline was lost. Resetting the length
+      // and carrying on would hand parseGGA the tail of one sentence as if it
+      // were a whole one; discard through to the next newline instead.
+      gpsLineLen = 0;
+      gpsDiscarding = true;
+      gpsOverflows++;
     }
   }
 }
@@ -544,10 +556,23 @@ void setup() {
 }
 
 void loop() {
-  // GPS first, and unconditionally. This touches Serial1 only, never the
-  // expensive Monitor transport below, so it costs microseconds and keeps the
-  // fix current even while no dashboard record is arriving.
-  serviceGPS();
+  // Drain Serial1 continuously for a while BEFORE paying for one Monitor
+  // available().
+  //
+  // A single serviceGPS() per pass is not enough and the hardware said so:
+  // rx=1518 with lines=2, because Serial.available() costs ~595 ms and the
+  // receive buffer cannot hold that much GPS traffic. Bytes vanished, newlines
+  // among them, sentences merged, and every checksum failed.
+  //
+  // Polling every 2 ms admits only a byte or two between reads, so the buffer
+  // never approaches full. The cost is panel latency, which is free here: the
+  // dashboard repaints on new data or once a second, whichever comes first,
+  // and a record is ~76 bytes that can wait 400 ms.
+  uint32_t drainUntil = millis() + GPS_DRAIN_MS;
+  while ((int32_t)(millis() - drainUntil) < 0) {
+    serviceGPS();
+    delay(2);
+  }
 
   // available() costs ~595 ms on this transport, so one call per pass and take
   // everything it offers. Never poll it in a tight inner loop.
