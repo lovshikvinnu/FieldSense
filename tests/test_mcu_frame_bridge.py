@@ -10,8 +10,12 @@ by calling the production helpers, so agreement between the two is real
 evidence and not a tautology. If you change the protocol on one side, these
 tests fail until you change the other.
 
-All hardware-free: no serial device is opened.
+All hardware-free: no serial device is opened. The TCP transport tests bind a
+loopback listener on an ephemeral port and talk to themselves - no board, no
+arduino-router, no fixed port to collide with.
 """
+
+import time
 
 import pytest
 
@@ -32,6 +36,11 @@ from fieldsense.hardware.display_bridge import (
     iter_frame_chunks,
     rgb_to_rgb565,
     stream_frame_to_mcu,
+)
+from fieldsense.hardware.transport.tcp_socket import (
+    TcpTransport,
+    TcpTransportError,
+    parse_endpoint,
 )
 
 PANEL_W, PANEL_H = 240, 320
@@ -350,6 +359,108 @@ def test_mcu_target_and_options_are_exposed():
 
 def test_mcu_defaults_match_the_sketch_constants():
     args = build_parser().parse_args([])
-    assert args.port == DEFAULT_MCU_PORT == "/dev/ttyGS0"
+    # The UNO Q monitor proxy, not a device node: the STM32 has no serial node
+    # on this board. Verified on hardware - the sketch ACKs a frame header sent
+    # to this endpoint.
+    assert args.port == DEFAULT_MCU_PORT == "127.0.0.1:7500"
     assert args.baud == DEFAULT_MCU_BAUD == 115200
     assert args.chunk_bytes == DEFAULT_CHUNK_BYTES == 4096
+
+
+# ------------------------------------------------------- transport selection
+
+
+def test_parse_endpoint_splits_host_and_port():
+    assert parse_endpoint("127.0.0.1:7500") == ("127.0.0.1", 7500)
+    assert parse_endpoint("localhost:7500") == ("localhost", 7500)
+
+
+def test_parse_endpoint_rejects_device_paths():
+    """A device node must never be read as a hostname."""
+    assert parse_endpoint("/dev/ttyGS0") is None
+    assert parse_endpoint("/dev/ttyACM0") is None
+    # Even a path that contains a colon stays a path.
+    assert parse_endpoint("/dev/weird:name") is None
+
+
+def test_parse_endpoint_rejects_malformed_endpoints():
+    assert parse_endpoint("") is None
+    assert parse_endpoint("nocolon") is None
+    assert parse_endpoint(":7500") is None        # no host
+    assert parse_endpoint("host:") is None        # no port
+    assert parse_endpoint("host:notaport") is None
+
+
+def test_tcp_transport_moves_bytes_and_reassembles_split_reads():
+    """read(n) must return n bytes even when TCP delivers them in pieces."""
+    import socket as _socket
+    import threading
+
+    listener = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    listener.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    host, port = listener.getsockname()
+
+    received = []
+
+    def serve():
+        conn, _ = listener.accept()
+        received.append(conn.recv(5))
+        # Deliberately dribble the reply so a single recv() cannot satisfy it.
+        conn.sendall(b"AB")
+        time.sleep(0.05)
+        conn.sendall(b"CD")
+        conn.close()
+
+    thread = threading.Thread(target=serve)
+    thread.start()
+    try:
+        with TcpTransport(host=host, port=port, timeout=2.0) as transport:
+            transport.write(b"hello")
+            assert transport.read(4) == b"ABCD"
+    finally:
+        thread.join(timeout=3)
+        listener.close()
+
+    assert received == [b"hello"]
+
+
+def test_tcp_transport_read_returns_short_on_timeout():
+    """A silent peer yields whatever arrived, not an exception - matching serial."""
+    import socket as _socket
+    import threading
+
+    listener = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    listener.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    host, port = listener.getsockname()
+
+    held = []
+
+    def serve():
+        conn, _ = listener.accept()
+        conn.sendall(b"Z")
+        held.append(conn)   # keep it open and say nothing more
+
+    thread = threading.Thread(target=serve)
+    thread.start()
+    try:
+        with TcpTransport(host=host, port=port, timeout=0.3) as transport:
+            assert transport.read(4) == b"Z"
+    finally:
+        thread.join(timeout=3)
+        for conn in held:
+            conn.close()
+        listener.close()
+
+
+def test_tcp_transport_reports_a_dead_listener():
+    listener = __import__("socket").socket()
+    listener.bind(("127.0.0.1", 0))
+    host, port = listener.getsockname()
+    listener.close()   # nothing is listening now
+
+    with pytest.raises(TcpTransportError):
+        TcpTransport(host=host, port=port, timeout=1.0).open()
