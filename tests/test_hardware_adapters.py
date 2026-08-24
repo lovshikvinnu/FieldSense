@@ -191,6 +191,38 @@ def test_factory_gps_gateway_env_pass_through(monkeypatch):
     assert adapter.gps_adapter.port == 9876
 
 
+def test_data_source_config_from_env_no_overrides_uses_env(monkeypatch):
+    """from_env() with no overrides uses environment variables."""
+    monkeypatch.setenv("FIELDSENSE_SOURCE", "BRIDGE")
+    monkeypatch.setenv("FIELDSENSE_SENSOR_PORT", "/dev/ttyUSB2")
+
+    from fieldsense.hardware.factory import DataSourceConfig
+
+    cfg = DataSourceConfig.from_env()
+    assert cfg.source == "BRIDGE"
+    assert cfg.sensor_port == "/dev/ttyUSB2"
+
+
+def test_data_source_config_from_env_explicit_source_overrides_env(monkeypatch):
+    """from_env(source="HARDWARE") overrides FIELDSENSE_SOURCE=VIRTUAL."""
+    monkeypatch.setenv("FIELDSENSE_SOURCE", "VIRTUAL")
+
+    from fieldsense.hardware.factory import DataSourceConfig
+
+    cfg = DataSourceConfig.from_env(source="HARDWARE")
+    assert cfg.source == "HARDWARE"
+
+
+def test_data_source_config_from_env_explicit_port_overrides_env(monkeypatch):
+    """from_env(sensor_port="/dev/ttyUSB0") overrides FIELDSENSE_SENSOR_PORT."""
+    monkeypatch.setenv("FIELDSENSE_SENSOR_PORT", "/dev/ttyUSB99")
+
+    from fieldsense.hardware.factory import DataSourceConfig
+
+    cfg = DataSourceConfig.from_env(sensor_port="/dev/ttyUSB0")
+    assert cfg.sensor_port == "/dev/ttyUSB0"
+
+
 def test_hardware_sensor_adapter_e2e_integration():
     """Test HardwareSensorAdapter with mocked adapters produces valid FieldSample."""
     transport = DirectUSBModbusTransport(port="COM_MOCK")

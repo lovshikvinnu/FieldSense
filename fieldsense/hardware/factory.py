@@ -73,24 +73,56 @@ class DataSourceConfig:
         the dataclass defaults. Lets a systemd unit steer acquisition with
         `Environment=` lines instead of a code change.
         """
-        raw_gps_port = os.environ.get("FIELDSENSE_GPS_GATEWAY_PORT")
-        gps_port = int(raw_gps_port) if raw_gps_port is not None and raw_gps_port.strip() else cls.gps_gateway_port
+        def _resolve(field_name: str, env_name: str, default: Any, converter: Optional[Any] = None) -> Any:
+            if field_name in overrides and overrides[field_name] is not None:
+                raw_val = overrides[field_name]
+            elif env_name in os.environ:
+                raw_val = os.environ[env_name]
+            else:
+                raw_val = default
+
+            if converter is not None and raw_val is not None:
+                return converter(raw_val)
+            return raw_val
+
+        if "require_gps_fix" in overrides and overrides["require_gps_fix"] is not None:
+            raw_fix = overrides["require_gps_fix"]
+            if isinstance(raw_fix, str):
+                fix_val = raw_fix.strip().lower() in ("1", "true", "yes", "on")
+            else:
+                fix_val = bool(raw_fix)
+        else:
+            fix_val = _env_flag("FIELDSENSE_REQUIRE_GPS_FIX", cls.require_gps_fix)
+
+        if "gps_gateway_port" in overrides and overrides["gps_gateway_port"] is not None:
+            port_val = int(overrides["gps_gateway_port"])  # type: ignore[arg-type]
+        elif "FIELDSENSE_GPS_GATEWAY_PORT" in os.environ and os.environ["FIELDSENSE_GPS_GATEWAY_PORT"].strip():
+            port_val = int(os.environ["FIELDSENSE_GPS_GATEWAY_PORT"])
+        else:
+            port_val = cls.gps_gateway_port
 
         cfg = cls(
-            source=os.environ.get("FIELDSENSE_SOURCE", cls.source).upper(),
-            sensor_port=os.environ.get("FIELDSENSE_SENSOR_PORT", cls.sensor_port),
-            sensor_baudrate=int(os.environ.get("FIELDSENSE_SENSOR_BAUD", cls.sensor_baudrate)),
-            sensor_slave_id=int(os.environ.get("FIELDSENSE_SENSOR_SLAVE", cls.sensor_slave_id)),
-            bridge_endpoint=os.environ.get("FIELDSENSE_GPS_METHOD", cls.bridge_endpoint),
-            soil_endpoint=os.environ.get("FIELDSENSE_SOIL_METHOD", cls.soil_endpoint),
-            require_gps_fix=_env_flag("FIELDSENSE_REQUIRE_GPS_FIX", cls.require_gps_fix),
-            gps_gateway_host=os.environ.get("FIELDSENSE_GPS_GATEWAY_HOST", cls.gps_gateway_host),
-            gps_gateway_port=gps_port,
+            source=_resolve("source", "FIELDSENSE_SOURCE", cls.source, lambda s: str(s).upper()),
+            sensor_port=_resolve("sensor_port", "FIELDSENSE_SENSOR_PORT", cls.sensor_port, str),
+            sensor_baudrate=_resolve("sensor_baudrate", "FIELDSENSE_SENSOR_BAUD", cls.sensor_baudrate, int),
+            sensor_slave_id=_resolve("sensor_slave_id", "FIELDSENSE_SENSOR_SLAVE", cls.sensor_slave_id, int),
+            bridge_endpoint=_resolve("bridge_endpoint", "FIELDSENSE_GPS_METHOD", cls.bridge_endpoint, str),
+            soil_endpoint=_resolve("soil_endpoint", "FIELDSENSE_SOIL_METHOD", cls.soil_endpoint, str),
+            require_gps_fix=fix_val,
+            gps_gateway_host=_resolve("gps_gateway_host", "FIELDSENSE_GPS_GATEWAY_HOST", cls.gps_gateway_host, str),
+            gps_gateway_port=port_val,
         )
-        if overrides:
+
+        known_fields = {
+            "source", "sensor_port", "sensor_baudrate", "sensor_slave_id",
+            "bridge_endpoint", "soil_endpoint", "require_gps_fix",
+            "gps_gateway_host", "gps_gateway_port"
+        }
+        extra_overrides = {k: v for k, v in overrides.items() if k not in known_fields and v is not None}
+        if extra_overrides:
             from dataclasses import replace
 
-            cfg = replace(cfg, **overrides)  # type: ignore[arg-type]
+            cfg = replace(cfg, **extra_overrides)  # type: ignore[arg-type]
         return cfg
 
 
