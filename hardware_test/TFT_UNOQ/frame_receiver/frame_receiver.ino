@@ -76,8 +76,11 @@ static const uint8_t  NAK = 0x15;
 static const uint16_t PANEL_W = 240;
 static const uint16_t PANEL_H = 320;
 
-// Must be >= the host's --chunk-bytes. 4 KB is nothing against the U585's
-// 786 KB SRAM and keeps the ACK round-trip count down to 38 for a full frame.
+// Must be >= the host's --chunk-bytes, and keeps the ACK round-trip count
+// down to 38 for a full frame. 4 KB is cheap here but not free: Zephyr gives
+// this build 256 KB of RAM, not the U585's full 786 KB, and the measured
+// build already uses 40968 bytes of it. Check the compile output before
+// raising this - MAX_CHUNK is a static buffer and comes straight off that.
 static const uint16_t MAX_CHUNK = 4096;
 
 // Raise both this and --baud together, or the link desynchronises. 115200 is

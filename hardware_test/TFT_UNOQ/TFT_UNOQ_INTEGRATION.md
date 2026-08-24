@@ -149,6 +149,64 @@ Build/integration continued
 
 Clearly mark this as a development-environment workaround rather than a hardware modification.
 
+## 3a. Frame receiver build — verified 2026-08-24
+
+`frame_receiver/frame_receiver.ino` builds clean for `arduino:zephyr:unoq` at
+platform 0.90.0:
+
+```text
+Sketch uses 97424 bytes (12%) of program storage space. Maximum is 786432 bytes.
+Global variables use 40968 bytes (15%) of dynamic memory, leaving 221176 bytes
+for local variables. Maximum is 262144 bytes.
+```
+
+Three environment facts had to be settled first. All three are environment
+setup, not sketch bugs, and all three will recur on a fresh board image.
+
+**One sketch per directory.** `arduino-cli` merges every `.ino` in a sketch
+folder into a single translation unit, and requires the folder name to match
+the main file. `sketch.ino` and `sketch_frame_receiver.ino` as siblings could
+therefore never build: the frame receiver compile pulled in the touch demo's
+`XPT2046_Touchscreen.h` include and its duplicate `setup()`/`loop()`. Hence
+`frame_receiver/` and `touch_demo/`.
+
+**Arduino_RouterBridge is required, not optional.** On the UNO Q the STM32's
+`Serial` is not a UART — it is an RPC transport to the QRB2210 Linux side. The
+platform ships a stub `Arduino_RouterBridge.h` that hard-`#error`s until the
+real library is installed:
+
+```bash
+arduino-cli lib install "Arduino_RouterBridge"
+```
+
+This pulls Arduino_RPClite, MsgPack, ArxContainer, ArxTypeTraits and DebugLog.
+A "Multiple libraries were found for Arduino_RouterBridge.h" note in the build
+output is expected and harmless — it means the real library won over the stub.
+
+**Pin the display library to 1.10.4.** Version 1.11.0 added
+`Adafruit_ST7796S.{h,cpp}`, which names constructor parameters `MOSI`, `SCLK`
+and `RST`. The UNO Q variant header does `#define MOSI 0`, so those parameters
+expand to `int8_t 0` and the file will not parse. The frame receiver never uses
+ST7796S, but `arduino-cli` compiles every `.cpp` in a library regardless of what
+the sketch includes, so it breaks the build anyway:
+
+```bash
+arduino-cli lib install "Adafruit ST7735 and ST7789 Library"@1.10.4
+```
+
+Note that the `#undef MOSI/MISO/SCK` guard at the top of `touch_demo.ino`
+does **not** help here, and section 3 above should not be read as implying it
+does. That guard only fixes collisions inside the sketch's own translation
+unit. `Adafruit_ST7796S.cpp` is compiled separately and never sees it — the
+only fixes are removing the file or not installing the version that ships it.
+
+Re-check after any `lib install`, which can silently pull 1.11.0 back in as a
+dependency. This must print nothing:
+
+```bash
+ls ~/Arduino/libraries/Adafruit_ST7735_and_ST7789_Library/ | grep -i 7796
+```
+
 ---
 
 # 4. PHYSICAL LAYER AUDIT
