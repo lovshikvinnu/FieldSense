@@ -469,9 +469,12 @@ FRAME_HEADER_BYTES = 12
 ACK = 0x06
 NAK = 0x15
 
-# USB CDC gadget node on the UNO Q. Kept as the default because it is what the
-# board exposes without extra device-tree work.
-DEFAULT_MCU_PORT = "/dev/ttyGS0"
+# The UNO Q monitor proxy, NOT a device node. On this board `Serial` in the
+# sketch is Arduino_RouterBridge's Monitor stream over MsgPack-RPC, and the
+# arduino-router daemon re-exposes it as a loopback TCP listener. There is no
+# /dev/ttyGS0 here; /dev/ttyHS1 exists but the daemon owns it exclusively.
+# A device path still works and selects SerialTransport - see parse_endpoint.
+DEFAULT_MCU_PORT = "127.0.0.1:7500"
 # Matches LINK_BAUD in the receiver sketch. Raise BOTH together or the link
 # desynchronises: 115200 is ~13 s per frame, 921600 is ~1.7 s.
 DEFAULT_MCU_BAUD = 115200
@@ -596,7 +599,8 @@ def stream_frame_to_mcu(
         payload: Packed RGB565 BIG-endian bytes, exactly width*height*2 long.
         width: Frame width in pixels.
         height: Frame height in pixels.
-        port: Serial device the MCU listens on.
+        port: Where the MCU listens - either 'host:port' for the UNO Q
+            monitor proxy, or a serial device node.
         baud: Line speed. Must equal LINK_BAUD in the receiver sketch.
         chunk: Payload bytes per chunk, even, <= the sketch's MAX_CHUNK.
         timeout: Per-ACK read timeout in seconds.
@@ -622,15 +626,29 @@ def stream_frame_to_mcu(
 
     owned = transport is None
     if owned:
-        from .transport.serial_port import SerialPortError, SerialTransport
+        # One flag, two transports. 'host:port' is the UNO Q monitor proxy;
+        # anything else is a device node. The protocol below does not change.
+        from .transport.tcp_socket import TcpTransport, TcpTransportError, parse_endpoint
 
-        transport = SerialTransport(port=port, baudrate=baud, timeout=timeout)
-        try:
-            transport.open()
-        except SerialPortError as exc:
-            raise DisplayBridgeError(
-                "cannot reach the MCU on {}: {}\n"
-                "List candidates with:  ls /dev/ttyGS* /dev/ttyACM* /dev/ttyS*".format(port, exc))
+        endpoint = parse_endpoint(port)
+        if endpoint is not None:
+            transport = TcpTransport(host=endpoint[0], port=endpoint[1], timeout=timeout)
+            try:
+                transport.open()
+            except TcpTransportError as exc:
+                raise DisplayBridgeError("cannot reach the MCU at {}: {}".format(port, exc))
+        else:
+            from .transport.serial_port import SerialPortError, SerialTransport
+
+            transport = SerialTransport(port=port, baudrate=baud, timeout=timeout)
+            try:
+                transport.open()
+            except SerialPortError as exc:
+                raise DisplayBridgeError(
+                    "cannot reach the MCU on {}: {}\n"
+                    "On the UNO Q there is no serial node for the STM32 - use the "
+                    "monitor proxy instead:  --port 127.0.0.1:7500\n"
+                    "Otherwise list candidates with:  ls /dev/ttyACM* /dev/ttyS*".format(port, exc))
 
     try:
         transport.write(header)
@@ -991,7 +1009,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--port", default=DEFAULT_MCU_PORT,
-        help="serial device the STM32 receiver listens on (--target mcu)",
+        help="where the STM32 receiver listens (--target mcu): 'host:port' for "
+             "the UNO Q monitor proxy, or a device node for a real UART",
     )
     parser.add_argument(
         "--baud", type=int, default=DEFAULT_MCU_BAUD,

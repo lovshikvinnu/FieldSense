@@ -743,10 +743,16 @@ def test_offline_pipeline_makes_no_network_calls():
             if name.endswith(".py"):
                 source_files.append(os.path.join(folder, name))
 
-    # Sockets are legitimate in exactly three places, all loopback-only:
-    # the two STM32 bridge gateways, and the optional local preview server.
-    # Nothing may open an outbound connection.
-    allowed_sockets = {"bridge_gps.py", "bridge_soil.py", "renderer.py"}
+    # Sockets are legitimate in exactly four places, all loopback by default:
+    # the two STM32 bridge gateways, the optional local preview server, and the
+    # UNO Q display transport, which reaches the STM32 through arduino-router's
+    # monitor proxy on 127.0.0.1:7500 because the board exposes no serial node
+    # for it. Nothing may open an outbound connection on its own.
+    #
+    # tcp_socket.py is the one that could, if a caller passes a non-loopback
+    # --port. That is explicit operator action, not something the offline
+    # pipeline does by itself, and the default keeps it on loopback.
+    allowed_sockets = {"bridge_gps.py", "bridge_soil.py", "renderer.py", "tcp_socket.py"}
     for path in source_files:
         body = open(path, encoding="utf-8").read()
         name = os.path.basename(path)
