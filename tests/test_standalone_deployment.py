@@ -707,7 +707,12 @@ def test_pipeline_writes_the_panel_summary_the_fallback_reads(tmp_path):
     os.chdir(tmp_path)
     try:
         summary = run_demo(output_path=str(output), enable_narrative=False)
-        written = panel_renderer.load_panel_summary(panel_renderer.PANEL_SUMMARY_PATH)
+        # Read back the path run_demo reports, not the module constant. The
+        # summary is written beside the dashboard it describes, so a caller that
+        # redirects output_path moves both together - which is what stops a test
+        # run from rewriting the committed artifacts/panel_summary.json. With
+        # the default output_path the two are the same file.
+        written = panel_renderer.load_panel_summary(summary["panel_summary_path"])
     finally:
         os.chdir(cwd)
 

@@ -41,7 +41,12 @@ def test_run_spatial_test_e2e(tmp_path):
     assert len(samples) == 5
     assert len(intel_results) == 5
 
-    summary = run_spatial_test(json_file)
+    # output_dir matters: the default is the real artifacts/ directory, and
+    # field_test_map.html is tracked on purpose so it can be opened straight
+    # from the repo. Writing there from a test rewrites its session id on every
+    # run, so the working tree goes dirty for a file nobody edited - and two
+    # machines running the suite conflict on it.
+    summary = run_spatial_test(json_file, output_dir=str(tmp_path), display="off")
 
     assert summary["samples"] == 5
     assert len(summary["local_xy"]) == 5

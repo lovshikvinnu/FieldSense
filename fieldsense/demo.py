@@ -119,7 +119,14 @@ def run_demo(
     # renderer that works with no Chromium installed, and that renderer reads
     # these numbers rather than recomputing them, so the panel can never
     # disagree with the dashboard. Failure to write it is non-fatal.
-    summary["panel_summary_path"] = write_panel_summary(summary)
+    # Beside the dashboard it describes, not at the module default. Writing to
+    # the fixed artifacts/ path regardless of output_path meant any caller that
+    # redirected the HTML - every test does - still rewrote the committed
+    # summary, dirtying a tracked file nobody edited.
+    summary["panel_summary_path"] = write_panel_summary(
+        summary,
+        os.path.join(os.path.dirname(output_path) or ".", "panel_summary.json"),
+    )
 
     # Print clean terminal report
     print("\n==================================================")
