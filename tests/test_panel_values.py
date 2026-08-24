@@ -91,3 +91,79 @@ def test_empty_summary_still_produces_a_valid_record():
 def test_newlines_in_values_cannot_split_one_record_into_two():
     record = build_record({"field_name": "line\nbreak"})
     assert record.count(b"\n") == 1
+
+
+# ------------------------------------------------- the pipeline's bridge mode
+
+def test_run_spatial_test_shares_one_record_builder():
+    """Two copies of the key map would drift the moment one side gained a field."""
+    from fieldsense.hardware.panel_renderer import build_panel_record
+
+    assert build_record is build_panel_record
+
+
+def test_bridge_mode_sends_the_record_over_the_link(tmp_path):
+    """--display bridge must put the FS| record on the wire, not an RGB565 frame."""
+    import json
+    import socket
+    import threading
+
+    from run_spatial_test import push_record_to_mcu
+
+    summary_path = tmp_path / "panel_summary.json"
+    summary_path.write_text(json.dumps(SUMMARY), encoding="utf-8")
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    received = []
+
+    def accept_once():
+        conn, _ = server.accept()
+        received.append(conn.recv(4096))
+        conn.close()
+
+    thread = threading.Thread(target=accept_once, daemon=True)
+    thread.start()
+
+    result = push_record_to_mcu(
+        str(summary_path), endpoint="127.0.0.1:{}".format(server.getsockname()[1]))
+    thread.join(timeout=5)
+    server.close()
+
+    assert result["status"] == "PUSHED"
+    assert received and received[0] == build_record(SUMMARY)
+    # 76-ish bytes, not 153,600. The frame path is what made this mode useless.
+    assert len(received[0]) < 200
+
+
+def test_bridge_mode_rejects_a_serial_device_path(tmp_path):
+    """A tty can never reach the panel: arduino-router owns the device itself."""
+    from run_spatial_test import push_record_to_mcu
+
+    result = push_record_to_mcu(str(tmp_path / "absent.json"), endpoint="/dev/ttyGS0")
+    assert result["status"] == "FAILED"
+    assert "host:port" in result["detail"]
+
+
+def test_bridge_mode_never_raises_when_the_link_is_down(tmp_path):
+    """A dead panel link must degrade to a reported status, not kill the run."""
+    import json
+
+    from run_spatial_test import push_record_to_mcu
+
+    summary_path = tmp_path / "panel_summary.json"
+    summary_path.write_text(json.dumps(SUMMARY), encoding="utf-8")
+
+    result = push_record_to_mcu(str(summary_path), endpoint="127.0.0.1:1")
+    assert result["status"] == "FAILED"
+    assert "panel link" in result["detail"]
+
+
+def test_bridge_mode_reports_a_missing_summary(tmp_path):
+    from run_spatial_test import push_record_to_mcu
+
+    result = push_record_to_mcu(str(tmp_path / "nope.json"), endpoint="127.0.0.1:7500")
+    assert result["status"] == "FAILED"
+    assert "panel summary" in result["detail"]

@@ -363,3 +363,58 @@ def panel_lines(summary: Dict[str, Any]) -> List[str]:
         "ZONES {}".format(summary.get("zone_count", "--")),
         "ACTIONS {}".format(summary.get("recommendation_count", "--")),
     ]
+
+
+# --------------------------------------------------------------- value record
+
+# The compact record the MCU-rendered dashboard consumes, shared by
+# `tools/push_panel.py` and `run_spatial_test.py --display bridge` so the two
+# cannot drift apart. Pixel streaming to this panel is not viable: Serial on the
+# UNO Q is Arduino_RouterBridge's Monitor, one available() costs ~595 ms, and a
+# 153,600-byte frame would take three minutes. The MCU draws the dashboard; the
+# host sends it these numbers.
+#
+# Keys stay single-character because at ~860 B/s every byte is real time on the
+# wire. The sketch ignores keys it does not know, so this tuple can grow without
+# a reflash. Its parser lives in hardware_test/TFT_UNOQ/dashboard/dashboard.ino.
+PANEL_RECORD_FIELDS = (
+    ("f", "field_name"),
+    ("s", "soil_health_status"),
+    ("h", "soil_health_score"),
+    ("n", "total_samples"),
+    ("v", "valid_samples"),
+    ("r", "rejected_samples"),
+    ("z", "zone_count"),
+    ("c", "recommendation_count"),
+    ("e", "evidence_level"),
+)
+
+# arduino-router re-exposes the MCU Monitor stream here. Not a tty: the daemon
+# owns /dev/ttyHS1 itself, so a serial device path will not reach the panel.
+DEFAULT_PANEL_ENDPOINT = "127.0.0.1:7500"
+
+
+def _clean_record_value(value: Any) -> str:
+    """Strip the record's own delimiters out of a value so parsing cannot break."""
+    text = str(value)
+    return text.replace("|", "/").replace("=", "-").replace("\n", " ").strip()
+
+
+def build_panel_record(summary: Dict[str, Any]) -> bytes:
+    """Render a panel summary as one newline-terminated `FS|` record.
+
+    Absent keys are simply omitted rather than sent empty: the sketch keeps the
+    last value it was given for anything a record does not mention, so a partial
+    summary degrades to a partially stale panel instead of a blanked one.
+    """
+    parts = ["FS"]
+    for key, source in PANEL_RECORD_FIELDS:
+        if source not in summary:
+            continue
+        value = summary[source]
+        if isinstance(value, float):
+            value = "{:.2f}".format(value)
+        parts.append("{}={}".format(key, _clean_record_value(value)))
+    if "offline_mode" in summary:
+        parts.append("o={}".format(1 if summary["offline_mode"] else 0))
+    return ("|".join(parts) + "\n").encode("ascii", "replace")

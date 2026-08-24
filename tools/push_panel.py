@@ -31,51 +31,29 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from fieldsense.hardware.panel_renderer import (
+    DEFAULT_PANEL_ENDPOINT,
+    PANEL_RECORD_FIELDS,
+    build_panel_record,
+)
 from fieldsense.hardware.transport.tcp_socket import TcpTransport, TcpTransportError
 
 DEFAULT_SUMMARY = "artifacts/panel_summary.json"
 
-# Keep keys single-character: at 860 B/s every byte is real time on the wire.
-# Unknown keys are ignored by the sketch, so this can grow without a reflash.
-FIELD_MAP = (
-    ("f", "field_name"),
-    ("s", "soil_health_status"),
-    ("h", "soil_health_score"),
-    ("n", "total_samples"),
-    ("v", "valid_samples"),
-    ("r", "rejected_samples"),
-    ("z", "zone_count"),
-    ("c", "recommendation_count"),
-    ("e", "evidence_level"),
-)
-
-
-def _clean(value):
-    """Strip the record's delimiters out of a value so parsing cannot break."""
-    text = str(value)
-    return text.replace("|", "/").replace("=", "-").replace("\n", " ").strip()
-
-
-def build_record(summary: dict) -> bytes:
-    """Render a summary dict as one newline-terminated FS| record."""
-    parts = ["FS"]
-    for key, source in FIELD_MAP:
-        if source not in summary:
-            continue
-        value = summary[source]
-        if isinstance(value, float):
-            value = "{:.2f}".format(value)
-        parts.append("{}={}".format(key, _clean(value)))
-    if "offline_mode" in summary:
-        parts.append("o={}".format(1 if summary["offline_mode"] else 0))
-    return ("|".join(parts) + "\n").encode("ascii", "replace")
+# The record format lives in fieldsense/hardware/panel_renderer.py, not here.
+# `run_spatial_test.py --display bridge` sends the same record at the end of a
+# pipeline run, and two copies of the key map would drift the moment one side
+# gained a field. Re-exported under the old names so existing callers and
+# tests/test_panel_values.py keep working.
+FIELD_MAP = PANEL_RECORD_FIELDS
+build_record = build_panel_record
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--summary", default=DEFAULT_SUMMARY,
                         help="panel summary JSON to read")
-    parser.add_argument("--port", default="127.0.0.1:7500",
+    parser.add_argument("--port", default=DEFAULT_PANEL_ENDPOINT,
                         help="monitor proxy endpoint, host:port")
     parser.add_argument("--watch", action="store_true",
                         help="keep pushing until interrupted")

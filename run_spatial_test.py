@@ -241,6 +241,75 @@ def build_dashboard(
     return html_path, view
 
 
+def push_record_to_mcu(
+    summary_path: str,
+    endpoint: Optional[str] = None,
+    outcome: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Send one `FS|` value record to the MCU-rendered dashboard.
+
+    Args:
+        summary_path: panel_summary.json, written earlier in this run.
+        endpoint: 'host:port' for the router's monitor proxy. A serial device
+            path is rejected rather than silently ignored - arduino-router owns
+            /dev/ttyHS1 itself, so a tty here would never reach the panel.
+        outcome: dict to update in place, so the caller's other fields survive.
+
+    Never raises.
+    """
+    from fieldsense.hardware import panel_renderer
+    from fieldsense.hardware.transport.tcp_socket import TcpTransport, TcpTransportError
+
+    result = outcome if outcome is not None else {
+        "status": "SKIPPED", "device": None, "frame_png": None, "detail": ""}
+
+    target = endpoint or panel_renderer.DEFAULT_PANEL_ENDPOINT
+    if ":" not in target:
+        result["status"] = "FAILED"
+        result["detail"] = (
+            "--mcu-port must be host:port for the value link, got {!r}. The panel "
+            "is reached through arduino-router's monitor proxy (default {}), not a "
+            "tty - the daemon holds the serial device itself.".format(
+                target, panel_renderer.DEFAULT_PANEL_ENDPOINT)
+        )
+        return result
+
+    try:
+        with open(summary_path, encoding="utf-8") as handle:
+            summary = json.load(handle)
+    except (OSError, ValueError) as exc:
+        result["status"] = "FAILED"
+        result["detail"] = "no usable panel summary at {}: {}".format(summary_path, exc)
+        return result
+
+    record = panel_renderer.build_panel_record(summary)
+    host, _, port_text = target.rpartition(":")
+    result["device"] = "{} (MCU value link)".format(target)
+
+    try:
+        transport = TcpTransport(host=host, port=int(port_text), timeout=10.0)
+        transport.open()
+    except (TcpTransportError, ValueError) as exc:
+        result["status"] = "FAILED"
+        result["detail"] = (
+            "cannot reach the panel link at {}: {}\n"
+            "Is the App Lab app running, and dashboard.ino flashed?".format(target, exc)
+        )
+        return result
+
+    try:
+        transport.write(record)
+        result["status"] = "PUSHED"
+        result["detail"] = "PUSHED (MCU value link): {} bytes to {} -> {}".format(
+            len(record), target, record.decode("ascii", "replace").strip())
+    except TcpTransportError as exc:
+        result["status"] = "FAILED"
+        result["detail"] = "value record send failed: {}".format(exc)
+    finally:
+        transport.close()
+    return result
+
+
 def push_to_display(
     html_path: str,
     output_dir: str = "artifacts",
@@ -251,22 +320,36 @@ def push_to_display(
     mcu_port: Optional[str] = None,
     mcu_baud: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Render the dashboard to a 240x320 RGB565 frame and flush it to the panel.
+    """Render the dashboard frame, and drive the physical panel.
 
     Modes:
-        auto    push only when a framebuffer device exists, otherwise skip fast
+        auto    write to a framebuffer device if one exists, otherwise skip
         png     capture the frame and save a PNG, no framebuffer write
         force   capture and attempt the write even if detection found nothing
-        bridge  stream to the STM32 over serial, which drives the SPI panel
+        bridge  send the compact value record to the MCU over the router bridge
         serial  alias for bridge
         off     do nothing
 
     `bridge` is the only mode that reaches the panel on an Arduino UNO Q: the
-    QRB2210 routes no SPI to the external headers, so no /dev/fbN for this
-    panel can exist and `auto`/`force` have nothing real to write to.
+    QRB2210 routes no SPI to the external headers, so no /dev/fbN for this panel
+    can exist and `auto`/`force` have nothing real to write to.
 
-    Never raises. A missing panel, browser, or driver degrades to a reported
-    status so the pipeline still completes.
+    WHAT `bridge` SENDS, AND WHY IT IS NOT PIXELS
+    ---------------------------------------------
+    It used to stream a 240x320 RGB565 frame - 153,600 bytes - to
+    frame_receiver.ino. That cannot work here and the measurement, not a hunch,
+    says so: Serial on the UNO Q is Arduino_RouterBridge's Monitor, every
+    available() is an RPC round trip costing ~595 ms, and link_probe.ino clocked
+    1.68 calls/second over 247 seconds. About 860 B/s, so one frame is a three
+    minute transfer. Every run burned ~42 s waiting for an ACK that could not
+    arrive, reported FAILED, and still printed SUCCESS underneath.
+
+    So the MCU draws the dashboard itself and this sends it the numbers: one
+    ~76-byte `FS|` record, under a second even at the measured rate. The frame is
+    still rendered locally for the PNG artifact - that costs the MCU nothing.
+
+    Never raises. A missing panel, browser, or link degrades to a reported status
+    so the pipeline still completes.
     """
     outcome: Dict[str, Any] = {"status": "SKIPPED", "device": None, "frame_png": None, "detail": ""}
     if mode == "off":
@@ -311,29 +394,11 @@ def push_to_display(
         pass
 
     if to_mcu:
-        port = mcu_port or bridge.DEFAULT_MCU_PORT
-        baud = mcu_baud or bridge.DEFAULT_MCU_BAUD
-        try:
-            width, height, rgb = bridge.rotate_rgb(rgb, width, height, rotate)
-            # BIG-endian: ST7789 wire order, so the sketch writes the buffer
-            # straight out with no byte swap. Opposite of the /dev/fbN path.
-            stats = bridge.stream_frame_to_mcu(
-                bridge.rgb_to_rgb565(rgb, "big"), width, height,
-                port=port, baud=baud,
-            )
-            outcome.update(
-                status="PUSHED",
-                device="{} (MCU Bridge)".format(stats["port"]),
-                detail="PUSHED (MCU Bridge): {} bytes in {} chunks at {} baud "
-                       "({}x{} RGB565-BE, renderer={})".format(
-                           stats["bytes"], stats["chunks"], stats["baud"],
-                           width, height, renderer),
-            )
-        except Exception as exc:
-            outcome["status"] = "FAILED"
-            outcome["device"] = "{} (MCU Bridge)".format(port)
-            outcome["detail"] = "MCU Bridge stream failed: {}".format(exc)
-        return outcome
+        return push_record_to_mcu(
+            summary_path=os.path.join(output_dir, "panel_summary.json"),
+            endpoint=mcu_port,
+            outcome=outcome,
+        )
 
     if mode == "png":
         outcome["status"] = "NO_DEVICE"
@@ -386,8 +451,11 @@ def run_spatial_test(
         rotate: Clockwise frame rotation in degrees (0, 90, 180, 270).
         allow_generate: Permit building a synthetic fixture when the dataset is
             missing. Off by default so real runs never silently fabricate data.
-        mcu_port: Serial device for `bridge` mode. Defaults to /dev/ttyGS0.
-        mcu_baud: Line speed for `bridge` mode. Must match the sketch.
+        mcu_port: `host:port` of the router monitor proxy for `bridge` mode.
+            Defaults to 127.0.0.1:7500.
+        mcu_baud: Retained for the CLI's shape and ignored by `bridge` mode. The
+            value link rides arduino-router over TCP, which fixes its own line
+            speed; there is no baud for the host to choose.
 
     Returns:
         Summary dictionary of the run.
@@ -493,7 +561,9 @@ def run_spatial_test(
         print("\n[6/7] Dashboard rendering disabled (--no-ui).")
 
     # 7. Physical 2.8" TFT panel
-    print("\n[7/7] Pushing RGB565 frame to the 2.8\" TFT panel...")
+    panel_action = ("Sending the value record to" if display in ("bridge", "serial")
+                    else "Pushing RGB565 frame to")
+    print("\n[7/7] {} the 2.8\" TFT panel...".format(panel_action))
 
     # Panel summary first, so the browser-free renderer has real numbers to draw
     # if Chromium is absent on this board. Non-fatal on failure.
@@ -560,12 +630,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--display", default="auto",
                         choices=("auto", "png", "force", "bridge", "serial", "off"),
                         help="auto: push only if a framebuffer exists · png: save a frame instead · "
-                             "bridge: stream to the STM32 over serial (the only path to the "
-                             "panel on an Arduino UNO Q)")
+                             "bridge: send the compact value record to the MCU (the only path "
+                             "to the panel on an Arduino UNO Q)")
     parser.add_argument("--mcu-port", default=None,
-                        help="serial device for --display bridge (default /dev/ttyGS0)")
+                        help="host:port of the router monitor proxy for --display bridge "
+                             "(default 127.0.0.1:7500). Not a tty: arduino-router owns the "
+                             "serial device itself")
     parser.add_argument("--mcu-baud", type=int, default=None,
-                        help="line speed for --display bridge; must match LINK_BAUD in the sketch")
+                        help="ignored: the value link rides arduino-router over TCP, which "
+                             "fixes its own line speed. Kept so older invocations still parse")
     parser.add_argument("--fb", dest="fb_device", default=None, help="explicit framebuffer, e.g. /dev/fb1")
     parser.add_argument("--rotate", type=int, default=0, choices=(0, 90, 180, 270))
     parser.add_argument("--generate-sample", action="store_true",
