@@ -38,6 +38,7 @@ def run_v1_pipeline(
     interactive: bool = True,
     output_dir: str = "artifacts",
     display: str = "auto",
+    mcu_port: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Execute complete FieldSense V1 pipeline: Live hardware collection -> Spatial intelligence.
 
@@ -48,7 +49,14 @@ def run_v1_pipeline(
         simulate: If True, use virtual sensor (stamped SIMULATED).
         interactive: If True, wait for Enter between probe insertions.
         output_dir: Output directory for generated artifacts.
-        display: Display mode for 2.8" TFT panel (auto | png | force | off).
+        display: Display mode for the 2.8" TFT panel
+            (auto | png | force | bridge | serial | off). `bridge` is the only
+            mode that reaches the panel on an Arduino UNO Q: the QRB2210 routes
+            no SPI to the external headers, so no framebuffer device for this
+            panel can exist and `auto` finds nothing to write to.
+        mcu_port: `host:port` of the router monitor proxy for `bridge` mode.
+            Defaults to 127.0.0.1:7500. Not a tty - arduino-router owns the
+            serial device itself.
 
     Returns:
         Summary dictionary containing collection and spatial metrics.
@@ -78,6 +86,7 @@ def run_v1_pipeline(
         output_dir=output_dir,
         display=display,
         allow_generate=False,
+        mcu_port=mcu_port,
     )
 
     result = {
@@ -148,8 +157,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--display",
         default="auto",
-        choices=("auto", "png", "force", "off"),
-        help="TFT display push mode (default auto)",
+        choices=("auto", "png", "force", "bridge", "serial", "off"),
+        help="TFT display push mode (default auto). Use 'bridge' on an Arduino "
+             "UNO Q - it is the only mode that reaches the panel there, and "
+             "'auto' silently finds no framebuffer to write to",
+    )
+    parser.add_argument(
+        "--mcu-port",
+        default=None,
+        help="host:port of the router monitor proxy for --display bridge "
+             "(default 127.0.0.1:7500)",
     )
     args = parser.parse_args(argv)
 
@@ -162,6 +179,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             interactive=not args.no_interactive,
             output_dir=args.output_dir,
             display=args.display,
+            mcu_port=args.mcu_port,
         )
         return 0
     except (CollectionError, Exception) as exc:
