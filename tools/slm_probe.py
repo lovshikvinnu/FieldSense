@@ -212,24 +212,46 @@ def run_inference(config: AIConfig) -> dict:
 
     wall_ms = round((time.perf_counter() - started) * 1000.0, 1)
     status = getattr(narrative.generation_status, "value", str(narrative.generation_status))
-    real = bool(narrative.is_ai_generated) and narrative.generated_by != TEMPLATE_VERSION
+    violations = [str(v) for v in (narrative.guard_violations or [])]
+
+    # Two separate facts, and conflating them cost a real diagnosis once.
+    #
+    #   executed  the GGUF actually ran. generated_by carries the model
+    #             filename whenever the LlamaCpp path was taken, and an
+    #             execution failure would have recorded GENERATION_FAILED or
+    #             TIMEOUT instead of a guard violation.
+    #   accepted  the text it produced survived the guard and reached the
+    #             narrative.
+    #
+    # A model can execute perfectly and still be rejected downstream - wrong
+    # output stream, wrong format, a guard rule it trips. Reporting that as
+    # "no real inference" hides the most useful thing the run established.
+    took_model_path = narrative.generated_by != TEMPLATE_VERSION
+    failed_to_run = any(v.startswith(("GENERATION_FAILED", "TIMEOUT")) for v in violations)
+    executed = took_model_path and not failed_to_run
+    accepted = bool(narrative.is_ai_generated) and took_model_path
 
     line(INFO, "generated_by", narrative.generated_by)
     line(INFO, "generation_status", status)
     line(INFO, "wall clock", "{} ms".format(wall_ms))
     line(INFO, "reported generation time", "{} ms".format(narrative.generation_time_ms))
-    if narrative.guard_violations:
-        line(WARN, "guard violations", ", ".join(str(v) for v in narrative.guard_violations))
+    if violations:
+        line(WARN, "guard violations", ", ".join(violations))
 
-    line(PASS if real else FAIL, "real model inference",
-         "yes" if real else "NO - this narrative came from templates")
+    line(PASS if executed else FAIL, "model executed",
+         "yes - {} ran".format(narrative.generated_by) if executed
+         else "NO - no model process produced output")
+    line(PASS if accepted else FAIL, "output accepted",
+         "yes" if accepted else "NO - generated text was rejected downstream")
+    real = executed and accepted
 
     summary = (narrative.field_summary or "").strip().replace("\n", " ")
     print("\n  first 200 characters of the summary:")
     print("    {}".format(summary[:200] or "(empty)"))
 
-    return {"ran": True, "real": real, "wall_ms": wall_ms,
-            "generated_by": narrative.generated_by, "status": status}
+    return {"ran": True, "real": real, "executed": executed, "accepted": accepted,
+            "wall_ms": wall_ms, "generated_by": narrative.generated_by,
+            "status": status, "violations": violations}
 
 
 # ------------------------------------------------------------------- selftest
@@ -318,6 +340,18 @@ def main(argv=None) -> int:
         print("  wall clock: {} ms".format(result["wall_ms"]))
         print("\nThis is the evidence to record for SLM validation.")
         return 0
+
+    if result.get("executed"):
+        print("VERDICT: the model RAN, but its output was rejected.")
+        print("  model     : {}".format(result["generated_by"]))
+        print("  status    : {}".format(result["status"]))
+        print("  wall clock: {} ms".format(result["wall_ms"]))
+        print("\nOn-board execution IS proven - the GGUF loaded and generated.")
+        print("What failed is downstream acceptance, which is a different problem")
+        print("from a missing or broken model. EMPTY_NARRATIVE means the adapter")
+        print("received no text: check that llama-cli writes generation to stdout,")
+        print("since _run_binary reads stdout and discards stderr.")
+        return 1
 
     print("VERDICT: NO real inference. The narrative came from templates.")
     print("Assets are present, so the failure is at generation, not installation.")
