@@ -409,6 +409,50 @@ static void publishNoFix() {
   latest_gps_csv = String(buf);
 }
 
+// Send one PUBX sentence with a computed checksum.
+//
+// WHY THE RECEIVER MUST BE QUIETENED
+//
+// A NEO-M8N ships talking GGA, GLL, GSA, GSV, RMC and VTG - roughly 960 bytes
+// every second at 9600 baud. This loop drains the UART about 1.7 times a
+// second, because Serial.available() on the Monitor transport costs ~595 ms a
+// call. The receive buffer is a few dozen bytes and cannot bridge that gap, so
+// characters vanish from the middle of sentences and EVERY checksum fails.
+// Measured on hardware: rx=275, lines=4, csum=0.
+//
+// Dropping every sentence but GGA takes the load to ~70 bytes per second,
+// which one buffer-full comfortably holds between drains. GGA alone carries
+// fix, latitude, longitude, satellites and HDOP - everything parseGGA reads.
+//
+// These settings live in RAM on the receiver, so they are re-sent every boot.
+static void sendPubx(const char *body) {
+  uint8_t sum = 0;
+  for (const char *p = body; *p; p++) {
+    sum ^= (uint8_t)*p;
+  }
+  char frame[48];
+  snprintf(frame, sizeof(frame), "$%s*%02X\r\n", body, sum);
+  GPS_SERIAL.print(frame);
+  GPS_SERIAL.flush();
+}
+
+static void quietenGPS() {
+  static const char *OFF[] = {
+    "PUBX,40,GLL,0,0,0,0,0,0",
+    "PUBX,40,GSA,0,0,0,0,0,0",
+    "PUBX,40,GSV,0,0,0,0,0,0",
+    "PUBX,40,RMC,0,0,0,0,0,0",
+    "PUBX,40,VTG,0,0,0,0,0,0",
+    "PUBX,40,ZDA,0,0,0,0,0,0",
+  };
+  for (size_t i = 0; i < sizeof(OFF) / sizeof(OFF[0]); i++) {
+    sendPubx(OFF[i]);
+    delay(20);
+  }
+  sendPubx("PUBX,40,GGA,1,1,1,1,0,0");   // GGA on, every fix
+  delay(20);
+}
+
 static void serviceGPS() {
   while (GPS_SERIAL.available() > 0) {
     char c = (char)GPS_SERIAL.read();
@@ -425,7 +469,17 @@ static void serviceGPS() {
                         ? gpsLineLen : sizeof(gpsLastLine) - 1;
         for (size_t i = 0; i < copy; i++) {
           char ch = gpsLine[i];
-          gpsLastLine[i] = (ch == ',') ? ';' : ch;
+          // Printable ASCII only. A dropped-character line carries arbitrary
+          // bytes, and one 0x9b travelling up the Bridge breaks its UTF-8
+          // decode and kills the RPC channel for every method, not just this
+          // one. Commas become ';' so they cannot split the host's CSV.
+          if (ch == ',') {
+            gpsLastLine[i] = ';';
+          } else if (ch >= 0x20 && ch <= 0x7E) {
+            gpsLastLine[i] = ch;
+          } else {
+            gpsLastLine[i] = '.';
+          }
         }
         gpsLastLine[copy] = '\0';
 
@@ -482,6 +536,8 @@ void setup() {
   // Serial1 is a real UART and is entirely independent of Serial, which on
   // this board is the RouterBridge Monitor - the two never contend.
   GPS_SERIAL.begin(GPS_BAUD);
+  delay(100);      // let the UART settle before configuring the receiver
+  quietenGPS();
   Bridge.provide("get_gps_data", get_gps_data);
 
   render();
@@ -500,6 +556,11 @@ void loop() {
     int c = Serial.read();
     if (c < 0) break;
     avail--;
+
+    // Drain Serial1 between panel bytes as well. Cheap - it touches a real
+    // UART, not the RPC transport - and it narrows the window in which the
+    // receive buffer can overflow.
+    serviceGPS();
 
     if (c == '\n' || c == '\r') {
       if (lineLen > 0) {
