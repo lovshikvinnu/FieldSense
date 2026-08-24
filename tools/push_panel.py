@@ -19,6 +19,11 @@ that a flaky link still gets it across.
     python3 tools/push_panel.py --watch --interval 5  # keep it updating
     python3 tools/push_panel.py --dry-run             # print, send nothing
 
+The plain one-shot form is the supported way to update the panel. It holds the
+socket open for HOLD_SECONDS after writing, because the MCU pulls on its own
+~1 s cycle and collects nothing once the client has gone - see the note on
+HOLD_SECONDS. No flags are needed for a normal push.
+
 Reads nothing back. The sketch never replies, deliberately: a write from the
 MCU breaks its own read channel on this transport.
 """
@@ -48,6 +53,27 @@ DEFAULT_SUMMARY = "artifacts/panel_summary.json"
 FIELD_MAP = PANEL_RECORD_FIELDS
 build_record = build_panel_record
 
+# Seconds to keep the socket open after the last write, so the MCU's polling
+# cycle can consume the record before the connection goes away.
+#
+# WHY A ONE-SHOT PUSH NEEDS THIS AT ALL
+#
+# The MCU pulls; it is never pushed to. In monitor.h, the only thing that
+# fetches bytes from arduino-router is _read(), and it opens with
+# `if (!*this) return;` - a mon/connected check. So a record is collected only
+# if a client is still connected when the firmware next polls.
+#
+# The firmware polls about once per second: fieldsense_unoq.ino spends
+# GPS_DRAIN_MS (400 ms) draining the GPS UART, then pays ~595 ms for one
+# Serial.available() on the RPC transport. Connect-write-close finishes in
+# single-digit milliseconds, so the odds of that window overlapping the poll
+# were under one percent, and `push_panel.py` appeared to do nothing at all
+# while reporting success.
+#
+# 3 s spans roughly three poll cycles, which covers a slow pass without making
+# the command feel like it has hung. Same idea as --hold in link_probe.py.
+HOLD_SECONDS = 3.0
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
@@ -59,6 +85,10 @@ def main(argv=None):
                         help="keep pushing until interrupted")
     parser.add_argument("--interval", type=float, default=5.0,
                         help="seconds between pushes with --watch")
+    parser.add_argument("--hold", type=float, default=HOLD_SECONDS,
+                        help="seconds to keep the socket open after the last "
+                             "write so the MCU's ~1 s poll can consume the "
+                             "record; 0 closes immediately")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the record and exit without connecting")
     args = parser.parse_args(argv)
@@ -104,6 +134,12 @@ def main(argv=None):
             print("pushed #{} ({} bytes)".format(pushes, len(record)))
 
             if not args.watch:
+                # Hold before closing. The MCU only fetches while a client is
+                # connected, so closing straight after the write loses the
+                # record - see HOLD_SECONDS.
+                if args.hold > 0:
+                    print("holding {}s for the MCU poll cycle...".format(args.hold))
+                    time.sleep(args.hold)
                 break
             time.sleep(args.interval)
     except KeyboardInterrupt:

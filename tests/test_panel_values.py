@@ -13,8 +13,10 @@ side, these fail until you change the other.
 Hardware-free: nothing opens a socket.
 """
 
+import json
 import os
 import sys
+import time
 
 import pytest
 
@@ -167,3 +169,110 @@ def test_bridge_mode_reports_a_missing_summary(tmp_path):
     result = push_record_to_mcu(str(tmp_path / "nope.json"), endpoint="127.0.0.1:7500")
     assert result["status"] == "FAILED"
     assert "panel summary" in result["detail"]
+
+# ------------------------------------------------- one-shot socket lifetime
+
+
+def _serve_once(listener, seen):
+    """Accept one connection, record the record and how long the peer stayed."""
+    conn, _ = listener.accept()
+    opened = time.monotonic()
+    conn.settimeout(10.0)
+    payload = b""
+    try:
+        while True:
+            chunk = conn.recv(256)
+            if not chunk:
+                break            # peer closed
+            payload += chunk
+    except OSError:
+        pass
+    seen.append((payload, time.monotonic() - opened))
+    conn.close()
+
+
+def _write_summary(tmp_path):
+    """A minimal summary on disk - these tests must not need a pipeline run."""
+    path = tmp_path / "panel_summary.json"
+    path.write_text(json.dumps(SUMMARY), encoding="utf-8")
+    return str(path)
+
+
+def _run_push(summary_path, endpoint, extra=None):
+    import push_panel
+    argv = ["--summary", summary_path, "--port", endpoint]
+    return push_panel.main(argv + (extra or []))
+
+
+def test_one_shot_push_holds_the_socket_for_the_mcu_poll_cycle(tmp_path):
+    """The default push must outlive the MCU's ~1 s poll, with no flags.
+
+    The MCU pulls: monitor.h's _read() returns immediately unless a client is
+    connected, and fieldsense_unoq.ino polls only about once a second (400 ms
+    GPS drain plus ~595 ms for one Serial.available()). A connect-write-close
+    finishes in milliseconds, so the record was almost never collected - the
+    command reported success and the panel kept showing dashes.
+    """
+    import socket as _socket
+    import threading
+
+    listener = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    listener.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    host, port = listener.getsockname()
+
+    seen = []
+    thread = threading.Thread(target=_serve_once, args=(listener, seen))
+    thread.start()
+    try:
+        # Short hold keeps the test fast; the mechanism is what is under test.
+        rc = _run_push(_write_summary(tmp_path),
+                       "{}:{}".format(host, port), ["--hold", "1.0"])
+    finally:
+        thread.join(timeout=15)
+        listener.close()
+
+    assert rc == 0
+    assert len(seen) == 1
+    payload, lifetime = seen[0]
+    assert payload.startswith(b"FS|"), "record never arrived"
+    assert payload.endswith(b"\n")
+    assert lifetime >= 1.0, \
+        "socket closed after {:.3f}s - too fast for the MCU poll".format(lifetime)
+
+
+def test_hold_zero_restores_the_old_close_immediately_behaviour(tmp_path):
+    """An explicit --hold 0 must still be available for scripted use."""
+    import socket as _socket
+    import threading
+
+    listener = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    listener.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    host, port = listener.getsockname()
+
+    seen = []
+    thread = threading.Thread(target=_serve_once, args=(listener, seen))
+    thread.start()
+    try:
+        rc = _run_push(_write_summary(tmp_path),
+                       "{}:{}".format(host, port), ["--hold", "0"])
+    finally:
+        thread.join(timeout=15)
+        listener.close()
+
+    assert rc == 0
+    assert seen[0][0].startswith(b"FS|")
+    assert seen[0][1] < 1.0
+
+
+def test_default_hold_is_long_enough_for_the_firmware_poll_interval():
+    """Pin the default against the firmware timing it exists to cover.
+
+    fieldsense_unoq.ino: GPS_DRAIN_MS (400 ms) + ~595 ms per Serial.available()
+    is about one second per pass. The default must span several passes.
+    """
+    import push_panel
+    assert push_panel.HOLD_SECONDS >= 2.0
