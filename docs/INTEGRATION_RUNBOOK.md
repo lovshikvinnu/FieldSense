@@ -22,7 +22,7 @@ them. `FieldSample` is the sole boundary contract.
 ```bash
 cd ~/FieldSense
 python3 -m pip install -e ".[dev]"
-python3 -m pytest -q          # expect: 231 passed
+python3 -m pytest -q          # expect: 294 passed
 ```
 
 A green suite before touching hardware means every later failure is electrical
@@ -315,7 +315,7 @@ python3 -m fieldsense.hardware.display_bridge --target png
 
 | Step | Command | Pass criterion |
 | :--- | :--- | :--- |
-| 0 | `python3 -m pytest -q` | 231 passed |
+| 0 | `PYTHONPATH=. python3 -m pytest -q` | 294 passed |
 | 1a | `python3 "hardware_test/soil sensor/jxbs_test.py" --port /dev/ttyUSB0` | 7/7 parameters, moisture responds |
 | 1b | `python3 hardware_test/GPS/test_gps.py --port /dev/ttyUSB0` | decimal fix, sats ≥ 5, hdop ≤ 2 |
 | 2 | contract snippet above | `VALID`, quality ≥ 0.70 |

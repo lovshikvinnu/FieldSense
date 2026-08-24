@@ -291,6 +291,7 @@ Details → **[docs/AI_DEPLOYMENT.md](docs/AI_DEPLOYMENT.md)** section D8.
 **Honest limitation.** The scoring curves and MCDA weights are unvalidated prototype values at `methodology_version = "0.1"`. Every hardware test above can pass while the agronomic interpretation remains unproven — *"the sensor chain works"* and *"the soil advice is correct"* are different claims, and only the first is currently evidenced.
 
 Full register of open items → **[docs/STATUS.md](docs/STATUS.md)**
+Verified submission report → **[docs/OFFICIAL_PROJECT_REPORT.md](docs/OFFICIAL_PROJECT_REPORT.md)**
 
 ---
 
