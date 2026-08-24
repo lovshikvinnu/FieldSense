@@ -56,6 +56,18 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>
 
+// On the UNO Q, Serial is NOT a UART. Arduino_RouterBridge aliases Serial to
+// Monitor, a BridgeMonitor Stream that rides the MsgPack-RPC transport owned
+// by BridgeClass (see monitor.h:193 and bridge.h:199). Linux side, the
+// arduino-router daemon holds /dev/ttyHS1 and re-exposes this stream as a TCP
+// listener on 127.0.0.1:7500 - that is the socket the host streams frames to,
+// NOT a /dev/tty* device.
+//
+// Consequence: Serial.begin() alone is inert. Without Bridge.begin() first the
+// Monitor has no transport underneath it, every write is silently discarded,
+// and the host sees a socket that connects and then never answers.
+#include <Arduino_RouterBridge.h>
+
 // ----------------------------------------------------------------- pins
 
 #define TFT_CS    10
@@ -76,8 +88,11 @@ static const uint8_t  NAK = 0x15;
 static const uint16_t PANEL_W = 240;
 static const uint16_t PANEL_H = 320;
 
-// Must be >= the host's --chunk-bytes. 4 KB is nothing against the U585's
-// 786 KB SRAM and keeps the ACK round-trip count down to 38 for a full frame.
+// Must be >= the host's --chunk-bytes, and keeps the ACK round-trip count
+// down to 38 for a full frame. 4 KB is cheap here but not free: Zephyr gives
+// this build 256 KB of RAM, not the U585's full 786 KB, and the measured
+// build already uses 40968 bytes of it. Check the compile output before
+// raising this - MAX_CHUNK is a static buffer and comes straight off that.
 static const uint16_t MAX_CHUNK = 4096;
 
 // Raise both this and --baud together, or the link desynchronises. 115200 is
@@ -85,6 +100,7 @@ static const uint16_t MAX_CHUNK = 4096;
 // confirm a clean frame, then raise both sides.
 static const uint32_t LINK_BAUD = 115200;
 
+static const uint32_t MONITOR_READY_MS = 5000;   // bounded wait for the bridge
 static const uint32_t BYTE_TIMEOUT_MS  = 2000;   // gap tolerance mid-transfer
 static const uint32_t FRAME_TIMEOUT_MS = 30000;  // whole-frame ceiling
 
@@ -170,8 +186,10 @@ static void statusBanner(const char *line, uint16_t colour) {
 // ----------------------------------------------------------------- lifecycle
 
 void setup() {
-  Serial.begin(LINK_BAUD);
-
+  // Panel first, deliberately. There is no serial console to debug from on
+  // this board - the link we are about to bring up IS the console. Bringing
+  // the display up before the bridge means the glass can report how the
+  // bridge went, which is the only diagnostic available if it fails.
   pinMode(TFT_LED, OUTPUT);
   digitalWrite(TFT_LED, HIGH);
 
@@ -185,7 +203,36 @@ void setup() {
   tft.setRotation(0);
   tft.invertDisplay(false);
 
-  statusBanner("Waiting for frame on serial...", ST77XX_GREEN);
+  statusBanner("Starting bridge...", ST77XX_YELLOW);
+
+  // Explicit, though Monitor::begin() would start the bridge itself if it is
+  // not already up (monitor.h: `if (!bridge_started) bridge->begin()`). Kept
+  // because it separates "the RPC transport is dead" from "no host is
+  // attached to the monitor proxy" - two failures that otherwise look
+  // identical from the panel.
+  if (!Bridge.begin()) {
+    statusBanner("Bridge.begin() FAILED", ST77XX_RED);
+    return;  // loop() will find no bytes; the panel says why.
+  }
+
+  // Serial is an alias of Monitor on this board. Note begin() returns whether
+  // a monitor CLIENT is attached, not whether setup succeeded - so a false
+  // here at boot is normal and must not be treated as fatal.
+  Monitor.begin(LINK_BAUD);
+
+  // Bounded, unlike the library example's `while (!Monitor)`. That spins
+  // forever when no host is attached to the monitor proxy, which would leave
+  // a blank panel and no way to tell a bridge fault from an idle host.
+  uint32_t started = millis();
+  while (!Monitor && millis() - started < MONITOR_READY_MS) {
+    delay(10);
+  }
+
+  if (Monitor) {
+    statusBanner("Waiting for frame on 127.0.0.1:7500", ST77XX_GREEN);
+  } else {
+    statusBanner("Monitor not ready - host attached?", ST77XX_RED);
+  }
 }
 
 void loop() {

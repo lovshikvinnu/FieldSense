@@ -42,7 +42,7 @@ UNO Q it is not, and cannot be: the MPU routes no SPI to the external headers -
 D11/D12/D13 and SPI2 land on the STM32U585 only. There is no /dev/fbN for this
 panel on that board and no driver can create one. Use `mcu`, which hands the
 packed frame to the STM32 over serial and lets it push SPI. See
-hardware_test/TFT_UNOQ/sketch_frame_receiver.ino and docs/AI_DEPLOYMENT.md.
+hardware_test/TFT_UNOQ/frame_receiver/frame_receiver.ino and docs/AI_DEPLOYMENT.md.
 """
 
 import argparse
@@ -437,7 +437,7 @@ def rgb_to_rgb565(rgb: bytes, byteorder: str = "little") -> bytes:
 # has to cross to the MCU, which owns the SPI bus, and be pushed to the
 # ST7789 there.
 #
-# Wire protocol v1. The receiver is hardware_test/TFT_UNOQ/sketch_frame_receiver.ino
+# Wire protocol v1. The receiver is hardware_test/TFT_UNOQ/frame_receiver/frame_receiver.ino
 # and the two MUST change together.
 #
 #   Header, 12 bytes, big-endian:
@@ -483,7 +483,7 @@ DEFAULT_CHUNK_BYTES = 4096
 def crc16_ccitt(data: bytes) -> int:
     """CRC16 CCITT-FALSE: poly 0x1021, init 0xFFFF, no reflection, no xor-out.
 
-    Mirrors crc16_ccitt() in sketch_frame_receiver.ino byte for byte.
+    Mirrors crc16_ccitt() in frame_receiver.ino byte for byte.
 
     Args:
         data: Bytes to checksum.
@@ -567,7 +567,7 @@ def _await_ack(transport, what: str, timeout: float) -> None:
     if not reply:
         raise DisplayBridgeError(
             "MCU did not acknowledge {} within {}s.\n"
-            "Is sketch_frame_receiver.ino flashed and running, and does its "
+            "Is frame_receiver.ino flashed and running, and does its "
             "LINK_BAUD match --baud?".format(what, timeout))
     if reply[0] == NAK:
         raise DisplayBridgeError(
