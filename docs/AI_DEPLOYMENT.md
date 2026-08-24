@@ -62,6 +62,12 @@ Estimates derive from the memory-bandwidth bound
 (`tokens/sec ~= usable bandwidth / model bytes`) at an assumed ~4 GB/s achieved.
 `UNO_Q_PHYSICAL_BENCHMARK = PENDING_HARDWARE`; measure on the target board.
 
+**Measured 2026-08-25 on the UNO Q** (`tools/slm_probe.py`, idle board with the
+App Lab GPS gateway running): **2.8 GB available**. That makes Qwen2.5-0.5B a
+7x headroom choice and TinyLlama-1.1B a 4x one, while Phi-3-mini at 2.3 GB has
+only 1.2x - it would load and then page, so its throughput estimate above is
+optimistic for this board. Tokens/sec remains unmeasured.
+
 ### 2.3 Point the configuration at them
 
 ```python
