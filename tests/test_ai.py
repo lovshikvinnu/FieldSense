@@ -573,3 +573,36 @@ def test_llama_command_includes_determinism_flags(tmp_path):
     assert "--temp" in command and "0.0" in command
     assert "--seed" in command and "42" in command
     assert "--no-display-prompt" in command
+
+
+def test_llama_command_suppresses_conversation_mode(tmp_path):
+    """The single-turn flag must be the one the target binary actually accepts.
+
+    Pinned to a measurement, not a guess. llama.cpp on the UNO Q reports
+    0.2.0-dev (build 10615, commit f280b2698, aarch64) and offers
+    `-st, --single-turn`; it does NOT have the `-no-cnv` this default used to
+    carry. An unrecognised flag here is expensive to diagnose, because
+    llama-cli fails, the adapter records GENERATION_FAILED, and the run
+    degrades to templates while still reporting a complete narrative.
+
+    If a future llama.cpp renames this again, verify with
+    `llama-cli --help | grep -i single-turn` and change AIConfig.extra_args,
+    not this test's intent.
+    """
+    command = LlamaCppAdapter(_llama_config(tmp_path, "ok"))._build_command("PROMPT")
+
+    assert "--single-turn" in command
+    assert "-no-cnv" not in command, (
+        "the target build does not accept -no-cnv; see AIConfig.extra_args")
+
+
+def test_llama_extra_args_are_appended_verbatim(tmp_path):
+    """Whatever a deployment configures reaches the binary unchanged.
+
+    The flag is configuration precisely so a board with a different llama.cpp
+    can be corrected without a code change.
+    """
+    config = _llama_config(tmp_path, "ok", extra_args=("-st", "--flash-attn"))
+    command = LlamaCppAdapter(config)._build_command("PROMPT")
+
+    assert command[-2:] == ["-st", "--flash-attn"]

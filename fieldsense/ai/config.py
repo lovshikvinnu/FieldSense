@@ -34,9 +34,21 @@ class AIConfig:
     generate_zone_narratives: bool = True
     max_zone_generations: int = 8                # caps total wall-clock on slow hardware
     # Additional llama-cli flags. Kept in configuration because flag names vary
-    # between llama.cpp releases; verify against the installed binary.
-    # HARDWARE_SPEC_REQUIRED
-    extra_args: Tuple[str, ...] = ("-no-cnv",)
+    # between llama.cpp releases, which is not hypothetical: this default was
+    # `-no-cnv` until the flag was verified against the binary actually built
+    # for the board, which does not have it.
+    #
+    # VERIFIED 2026-08-25 on the UNO Q against llama.cpp 0.2.0-dev
+    # (build 10615, commit f280b2698, Linux aarch64): that build offers
+    # `-st, --single-turn`. The long form is used here because a config value
+    # is read far more often than it is typed.
+    #
+    # Suppressing conversation mode is not cosmetic. Without it llama-cli waits
+    # for interactive turns, so a subprocess with no tty produces nothing, the
+    # adapter records GENERATION_FAILED and degrades to templates - a silent
+    # fallback that looks like a working pipeline. Re-verify this flag against
+    # any newly built binary: `llama-cli --help | grep -i single-turn`.
+    extra_args: Tuple[str, ...] = ("--single-turn",)
     methodology_version: str = "0.1"
 
     @classmethod
