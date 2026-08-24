@@ -385,9 +385,28 @@ static void parseGGA(const char *s, size_t len) {
   // rather than forwarding the empty coordinate fields: the host would read
   // 0.0,0.0 as a real position in the Gulf of Guinea.
   if (fix.length() == 0 || fix == "0" || lat.length() == 0 || lon.length() == 0) {
-    latest_gps_csv = "NO_FIX,0.0,0.0,Sats:" + sats + ",HDOP:" + hdop;
+    // Keep the counters visible while there is no fix. Parsing health and
+    // satellite lock are separate things: the first is verifiable indoors in
+    // seconds, the second needs sky and can take minutes. Dropping the counters
+    // the moment a sentence parsed would remove the only evidence that the
+    // firmware works, exactly when someone is trying to confirm it - they would
+    // wait for csum>0 and never see it, because success had erased it.
+    //
+    // Real Sats/HDOP here instead of the cold-start 0/99.9 is itself the proof:
+    // those numbers can only come from a decoded sentence.
+    char buf[176];
+    snprintf(buf, sizeof(buf),
+             "NO_FIX,0.0,0.0,Sats:%s,HDOP:%s,rx=%lu,lines=%lu,csum=%lu,gga=%lu,ovf=%lu",
+             sats.c_str(), hdop.c_str(),
+             (unsigned long)gpsBytes, (unsigned long)gpsLines,
+             (unsigned long)gpsChecksumOk, (unsigned long)gpsGgaSeen,
+             (unsigned long)gpsOverflows);
+    latest_gps_csv = String(buf);
     return;
   }
+
+  // A fix is the end of diagnostics: the payload is the position and nothing
+  // else, which is what parse_gps_telemetry() on the host wants to see.
 
   latest_gps_csv = "FIX_OK," + lat + latDir + "," + lon + lonDir +
                    ",Sats:" + sats + ",HDOP:" + hdop;
