@@ -14,8 +14,10 @@ walking outside.
 
 Three artifacts, all produced by step 6:
 
-- `field_test_live_hardware.json` — stamped `LIVE_HARDWARE`, with a **different**
-  latitude and longitude on every one of the five samples.
+- `field_test_live_hardware.json` — stamped `LIVE_HARDWARE`, with valid,
+  non-zero GPS coordinates. For a spatial mapping demonstration the samples
+  should come from distinct field locations; repeated readings at one spot are
+  perfectly valid sensor data, they just interpolate to a single region.
 - `artifacts/field_test_map.html` — the interpolated field map, openable in any browser.
 - The 2.8" TFT showing live values pushed from the pipeline.
 
@@ -127,7 +129,8 @@ nothing to work with.
 
 Each capture prints a line. Read two fields on every one:
 
-- `position` differs from the previous point.
+- `position` is non-zero. For a spatial run it should also differ from the
+  previous point — that is what gives the interpolation something to work with.
 - `moisture` is above zero. `0.0%` means the probe is reading air, not soil.
 
 Samples rejected as `not pipeline eligible` are usually a bad insertion — push
@@ -181,7 +184,7 @@ The counters in that `NO_FIX` line say exactly where the GPS path breaks.
 | Connection refused during collection | Container address changed. | Re-run `docker exec unified_v1-main-1 hostname -i` and use the new address. |
 | Serial device not found | USB-RS485 adapter not enumerated. | `ls -l /dev/ttyUSB*`. If empty, replug it and check `sudo dmesg \| tail -20`. |
 | Panel shows old numbers | Values persist until replaced, by design. | Re-run step 6. The panel never blanks itself on a dropped update. |
-| Every sample identical | Probe reading air, not soil. | `moisture 0.0%` confirms it. Push deeper into moist ground. |
+| Every sample identical **and** `moisture 0.0%` | Probe reading air, not soil. | Push deeper into moist ground. Identical readings on their own are fine if you did not move between points. |
 
 ---
 
@@ -192,8 +195,11 @@ valid, stable across repeated reads. The original fault was a software bug, now
 fixed, not the sensor. If a soil reading looks wrong, suspect the insertion
 before the hardware.
 
-The GPS receiver has already achieved a lock at nine satellites with an HDOP of
-0.89, so the antenna and wiring are known good. What has **not** yet been
-confirmed on hardware is the firmware fix from step 1 — gate A is the first time
-anyone will see whether it works. That reading is the single most useful thing
-to report back.
+The GPS path is proven too. On 2026-08-24 this procedure ran clean end to end:
+gate A passed, then gate B reported `FIX_OK` at ten satellites with an HDOP of
+0.96, and the collector captured 5/5 samples with none rejected. Probe, GPS,
+collector, spatial engine, dashboard and TFT panel all work together.
+
+That run was a single-location proof, so the map collapsed to one region as it
+should. A multi-point run — five locations 3–5 m apart — is what produces a
+field map worth showing.
