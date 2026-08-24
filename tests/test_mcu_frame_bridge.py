@@ -142,6 +142,10 @@ class MockSTM32:
                     and height == self.panel_h
                     and 0 < self.chunk <= self.max_chunk
                     and self.chunk % 2 == 0
+                    # Whole rows only - the sketch sets an address window per
+                    # chunk from the row index and cannot express a mid-row
+                    # boundary. Mirrors the guard in frame_receiver.ino.
+                    and self.chunk % (width * 2) == 0
                 )
                 if not acceptable:
                     self._nak("geometry or protocol")
@@ -228,7 +232,7 @@ def test_header_rejects_geometry_outside_uint16(width, height):
 def test_chunking_covers_the_frame_exactly_once():
     payload = gradient_frame()
     records = iter_frame_chunks(payload, DEFAULT_CHUNK_BYTES)
-    assert len(records) == 38  # ceil(153600 / 4096)
+    assert len(records) == 40  # ceil(153600 / 3840), 8 rows per chunk
     rebuilt = b"".join(record[:-2] for record in records)
     assert rebuilt == payload
 
@@ -255,7 +259,7 @@ def test_full_frame_arrives_byte_identical():
     assert bytes(mcu.pixels) == payload
     assert mcu.nak_reason is None
     assert stats["bytes"] == FRAME_BYTES
-    assert stats["chunks"] == 38
+    assert stats["chunks"] == 40
 
 
 def test_caller_supplied_transport_is_not_closed_by_the_stream():
@@ -276,9 +280,10 @@ def test_receiver_resyncs_past_leading_garbage():
 def test_smaller_chunk_size_still_delivers_the_frame():
     payload = gradient_frame()
     mcu = MockSTM32()
-    stats = stream_frame_to_mcu(payload, PANEL_W, PANEL_H, chunk=512, transport=mcu)
+    # 480 bytes = exactly one row, the smallest legal chunk for a 240 px panel.
+    stats = stream_frame_to_mcu(payload, PANEL_W, PANEL_H, chunk=480, transport=mcu)
     assert bytes(mcu.pixels) == payload
-    assert stats["chunks"] == 300
+    assert stats["chunks"] == 320   # one per row
 
 
 # ------------------------------------------------------------------- failures
@@ -305,10 +310,24 @@ def test_geometry_nak_from_a_rotated_sketch_surfaces_as_an_error():
     assert rotated.nak_reason == "geometry or protocol"
 
 
+def test_chunk_not_row_aligned_is_refused_before_the_wire():
+    """A mid-row chunk is caught host-side, with the nearest legal size named.
+
+    The receiver would NAK it anyway, but failing here costs no round trip and
+    no reflash - and on this board a wasted connection is expensive, since the
+    monitor link accepts only one client per boot.
+    """
+    mcu = MockSTM32()
+    with pytest.raises(DisplayBridgeError, match="multiple of 480"):
+        stream_frame_to_mcu(gradient_frame(), PANEL_W, PANEL_H, chunk=512, transport=mcu)
+    # Nothing reached the MCU: rejected before any write.
+    assert mcu.pixels == bytearray()
+
+
 def test_chunk_larger_than_sketch_buffer_is_naked():
     small = MockSTM32(max_chunk=1024)
     with pytest.raises(DisplayBridgeError, match="rejected header"):
-        stream_frame_to_mcu(gradient_frame(), PANEL_W, PANEL_H, chunk=4096, transport=small)
+        stream_frame_to_mcu(gradient_frame(), PANEL_W, PANEL_H, chunk=4800, transport=small)
 
 
 def test_silent_mcu_reports_a_missing_ack_rather_than_hanging():
@@ -364,7 +383,10 @@ def test_mcu_defaults_match_the_sketch_constants():
     # to this endpoint.
     assert args.port == DEFAULT_MCU_PORT == "127.0.0.1:7500"
     assert args.baud == DEFAULT_MCU_BAUD == 115200
-    assert args.chunk_bytes == DEFAULT_CHUNK_BYTES == 4096
+    # 8 rows of 240 px. Row-aligned because the receiver takes the SPI bus per
+    # chunk; see the deadlock note in frame_receiver.ino.
+    assert args.chunk_bytes == DEFAULT_CHUNK_BYTES == 3840
+    assert DEFAULT_CHUNK_BYTES % (240 * 2) == 0
 
 
 # ------------------------------------------------------- transport selection

@@ -277,7 +277,12 @@ void loop() {
          && height  == tft.height()
          && chunk   > 0
          && chunk   <= MAX_CHUNK
-         && (chunk % 2) == 0;
+         && (chunk % 2) == 0
+         // Chunks must cover whole rows. Each one now opens its own SPI
+         // transaction and sets its own address window, so a chunk that ended
+         // mid-row would leave the window on a pixel boundary the next
+         // setAddrWindow() cannot express. width*2 bytes per row.
+         && (chunk % ((uint32_t)width * 2UL)) == 0;
   if (!ok) {
     Serial.write(NAK);
     return;
@@ -286,15 +291,29 @@ void loop() {
   Serial.write(ACK);
 
   const uint32_t total = (uint32_t)width * (uint32_t)height * 2UL;
+  const uint32_t rowBytes = (uint32_t)width * 2UL;
   const uint32_t expectedChunks = (total + chunk - 1UL) / chunk;
   uint32_t received = 0;
   uint32_t index = 0;
   uint32_t started = millis();
   const char *why = NULL;   // NULL means the frame completed
 
-  tft.startWrite();
-  tft.setAddrWindow(0, 0, width, height);
-
+  // NO transaction is held across the read loop, deliberately.
+  //
+  // The previous version wrapped the whole frame in one startWrite() /
+  // endWrite() pair and set the address window once. On this board that
+  // deadlocks: SPI.beginTransaction() takes the bus mutex, and the
+  // Arduino_RouterBridge RPC that services Serial runs on a separate Zephyr
+  // thread. Holding the transaction starves the thread that would deliver
+  // mon/read data, so readExact() waits for bytes that can never arrive.
+  //
+  // The symptom was precise and worth recording: the 12-byte header ACKed
+  // normally, then chunk 1 returned 0 of 153600 bytes after an 8 s wait -
+  // and shrinking chunks from 4096 to 256 changed nothing, because the fault
+  // was never about size. Every read after startWrite() was starved.
+  //
+  // So each chunk now reads with no transaction open, then takes the bus only
+  // for the pixel write. That is why chunks must be row-aligned.
   while (received < total) {
     uint32_t remaining = total - received;
     uint16_t want = (remaining < (uint32_t)chunk) ? (uint16_t)remaining : chunk;
@@ -313,15 +332,22 @@ void loop() {
 
     uint16_t expect = (uint16_t)(crcBytes[0] << 8 | crcBytes[1]);
     if (crc16_ccitt(chunkBuf, want) != expect) {
-      // NAK and stop. The address window is already advanced, so resuming
-      // mid-frame would tear; the host retries the whole frame instead.
+      // NAK and stop. Rows already on glass stay; the host retries the whole
+      // frame rather than resuming mid-stream.
       Serial.write(NAK);
       why = "CRC mismatch";
       break;
     }
 
+    // Bus held only for the write, never across a read.
+    uint16_t rowStart = (uint16_t)(received / rowBytes);
+    uint16_t rowCount = (uint16_t)(want / rowBytes);
+    tft.startWrite();
+    tft.setAddrWindow(0, rowStart, width, rowCount);
     // bigEndian=true: bytes are already in ST7789 wire order, no swap.
     tft.writePixels((uint16_t *)chunkBuf, want / 2, true, true);
+    tft.endWrite();
+
     received += want;
     Serial.write(ACK);
 
@@ -330,8 +356,6 @@ void loop() {
       break;
     }
   }
-
-  tft.endWrite();
 
   if (why != NULL) {
     // The panel is the only console this board has, so the banner has to carry

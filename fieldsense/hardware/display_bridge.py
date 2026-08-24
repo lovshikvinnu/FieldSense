@@ -478,9 +478,12 @@ DEFAULT_MCU_PORT = "127.0.0.1:7500"
 # Matches LINK_BAUD in the receiver sketch. Raise BOTH together or the link
 # desynchronises: 115200 is ~13 s per frame, 921600 is ~1.7 s.
 DEFAULT_MCU_BAUD = 115200
-# 4 KB keeps the ACK round-trip count to 38 for a full frame and fits the
-# receiver's MAX_CHUNK. Must be even - two bytes per pixel.
-DEFAULT_CHUNK_BYTES = 4096
+# 3840 bytes = 8 rows of 240 px. Chunks MUST cover whole rows: the receiver
+# takes the SPI bus per chunk and sets an address window from the row index,
+# because holding one transaction across the whole frame starves the Zephyr
+# thread serving the RouterBridge RPC and every read returns nothing.
+# 40 round trips per frame, and it fits the receiver's MAX_CHUNK of 4096.
+DEFAULT_CHUNK_BYTES = 3840
 
 
 def crc16_ccitt(data: bytes) -> int:
@@ -570,8 +573,11 @@ def _await_ack(transport, what: str, timeout: float) -> None:
     if not reply:
         raise DisplayBridgeError(
             "MCU did not acknowledge {} within {}s.\n"
-            "Is frame_receiver.ino flashed and running, and does its "
-            "LINK_BAUD match --baud?".format(what, timeout))
+            "Is frame_receiver.ino flashed and running?\n"
+            "On the UNO Q the monitor link accepts only ONE client per boot - "
+            "if anything connected to the proxy since the MCU last reset, "
+            "re-flash to reset it. Over TCP --baud is irrelevant; the router "
+            "fixes its own line speed.".format(what, timeout))
     if reply[0] == NAK:
         raise DisplayBridgeError(
             "MCU rejected {} (NAK). Geometry, protocol version, or CRC "
@@ -620,6 +626,15 @@ def stream_frame_to_mcu(
             "payload is {} bytes but {}x{} RGB565 needs {}. Pack with "
             "rgb_to_rgb565(rgb, 'big') before streaming.".format(
                 len(payload), width, height, expected))
+
+    row_bytes = width * 2
+    if chunk % row_bytes:
+        raise DisplayBridgeError(
+            "--chunk-bytes must be a multiple of {} ({} px x 2 bytes per row) "
+            "so each chunk covers whole rows; got {}. The receiver sets an "
+            "address window per chunk and cannot express a mid-row boundary. "
+            "Try {}.".format(row_bytes, width, chunk,
+                             max(row_bytes, (chunk // row_bytes) * row_bytes)))
 
     header = build_frame_header(width, height, chunk)
     records = iter_frame_chunks(payload, chunk)
@@ -1018,7 +1033,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--chunk-bytes", type=int, default=DEFAULT_CHUNK_BYTES,
-        help="payload bytes per chunk for --target mcu; even, <= sketch MAX_CHUNK",
+        help="payload bytes per chunk for --target mcu; must be a multiple of "
+             "width*2 (whole rows) and <= the sketch's MAX_CHUNK of 4096",
     )
     parser.add_argument(
         "--ack-timeout", type=float, default=5.0,
