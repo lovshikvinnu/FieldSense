@@ -609,6 +609,68 @@ _MODEL_TEXT = (
 )
 
 
+def test_system_rules_never_name_the_terms_they_forbid():
+    """Naming a forbidden term teaches a small model to use it.
+
+    The rules once said "Never mention carbon credits, carbon offsets, or carbon
+    sequestration". Qwen2.5-0.5B on the UNO Q then produced all three phrases
+    verbatim, in both sections, on every attempt including the retry. A 0.5B
+    model reads an enumerated term as topic, not prohibition.
+
+    The scope rule replacing it covers those claims without writing the words,
+    and covers whatever a future model drifts toward too. The guard still
+    enforces; this only reduces how often it must fire.
+    """
+    from fieldsense.ai.prompt import SYSTEM_RULES
+
+    lowered = SYSTEM_RULES.lower()
+    for primed in ("carbon credit", "carbon offset", "sequestration"):
+        assert primed not in lowered, (
+            "{!r} in the prompt primes the very output the guard rejects".format(primed))
+
+    assert "only about the values listed in DATA".lower() in lowered
+
+
+def test_prompts_state_a_word_budget():
+    """The model must be told a length, not only a sentence count.
+
+    Guard limits are 900 and 500 characters, but the prompt said "three or four
+    plain sentences" and no length at all - which on hardware became 1367 and
+    1632 characters. A sentence count is not a size.
+    """
+    from fieldsense.ai.prompt import (
+        FIELD_SUMMARY_WORD_BUDGET,
+        ZONE_WORD_BUDGET,
+        build_field_summary_prompt,
+        build_zone_prompt,
+    )
+
+    ctx = _simple_context()
+    assert "{} words".format(FIELD_SUMMARY_WORD_BUDGET) in build_field_summary_prompt(ctx)
+    assert "{} words".format(ZONE_WORD_BUDGET) in build_zone_prompt(ctx.zones[0])
+
+    # Sized under the guard with margin, at roughly six characters per word.
+    assert FIELD_SUMMARY_WORD_BUDGET * 6 < 900
+    assert ZONE_WORD_BUDGET * 6 < 500
+
+
+def test_retry_suffix_addresses_length_when_that_was_the_failure():
+    """A rejection for length must be answered with advice about length.
+
+    The old suffix only ever mentioned quantities and numbers, so a 1523
+    character answer was retried into a 1493 character one.
+    """
+    from fieldsense.ai.prompt import build_retry_suffix
+
+    suffix = build_retry_suffix(["LENGTH_EXCEEDED[field_summary]:1367>900"])
+    assert "too long" in suffix.lower()
+
+    # And must not echo the vocabulary that caused the rejection.
+    claim_suffix = build_retry_suffix(["FORBIDDEN_CLAIM[field_summary]:carbon credits"])
+    assert "carbon" not in claim_suffix.lower()
+    assert "FORBIDDEN_CLAIM" not in claim_suffix
+
+
 def test_clean_output_keeps_plain_model_text_untouched():
     """The baseline: without furniture, this text is already clean and allowed."""
     cleaned = LlamaCppAdapter._clean_output(_MODEL_TEXT)
