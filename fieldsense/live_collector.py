@@ -95,6 +95,7 @@ def collect_samples(
         adapter = SensorAdapterFactory.create_adapter(
             DataSourceConfig(source=source, sensor_port=sensor_port)
         )
+        adapter.initialize()
     except Exception as exc:
         raise CollectionError(
             "Could not initialise the {} adapter: {}\n"
