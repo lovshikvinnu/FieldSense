@@ -177,22 +177,68 @@ static void statRow(int16_t y, const char *name, int32_t value, uint16_t colour)
   }
 }
 
-static void render() {
-  tft.fillScreen(COL_BG);
+// NEVER call fillScreen() on a periodic repaint.
+//
+// render() used to clear the whole panel and redraw it once a second. There is
+// no framebuffer between this sketch and the ST7789 - every draw lands on glass
+// immediately - so the clear is visible: 153,600 bytes at the library default
+// 24 MHz is ~51 ms of blank panel, followed by the elements reappearing one at
+// a time. Physically that reads as a black wipe sweeping the dashboard once per
+// second, which is what was observed on hardware.
+//
+// The split below is the whole fix. Coordinates, colours, fonts, card geometry
+// and the record format are unchanged - only WHEN pixels are written.
 
-  // Title
+// Static chrome: background, title, card shapes, fixed labels. Drawn once.
+static void renderChrome() {
+  tft.fillScreen(COL_BG);
   label(8, 8, "FIELDSENSE", COL_ACCENT, 2);
 
+  drawCard(40, 26);                                  // field name
+  drawCard(72, 58);                                  // headline status
+  label(14, 80, "SOIL HEALTH", COL_DIM, 1);
+  drawCard(138, 44);                                 // score
+  label(14, 146, "SCORE", COL_DIM, 1);
+  drawCard(190, 84);                                 // counts
+  label(14, 198, "samples total",   COL_DIM, 1);
+  label(14, 212, "valid",           COL_DIM, 1);
+  label(14, 226, "rejected",        COL_DIM, 1);
+  label(14, 240, "zones",           COL_DIM, 1);
+  label(14, 254, "recommendations", COL_DIM, 1);
+  drawCard(284, 28);                                 // provenance
+  label(14, 292, "evidence", COL_DIM, 1);
+}
+
+// Clear just this value's box, then print into it. Width is generous enough
+// for the longest value each field can hold.
+static void putValue(int16_t x, int16_t y, int16_t w, int16_t h,
+                     uint16_t bg, uint16_t colour, uint8_t size) {
+  tft.fillRect(x, y, w, h, bg);
+  tft.setCursor(x, y);
+  tft.setTextColor(colour);
+  tft.setTextSize(size);
+}
+
+static void putCount(int16_t y, int32_t value, uint16_t colour) {
+  putValue(150, y, 80, 8, COL_CARD, colour, 1);
+  if (value < 0) {
+    tft.print("--");
+  } else {
+    tft.print(value);
+  }
+}
+
+// Everything that can change. Called on new data, and once a second so the
+// age counter stays truthful.
+static void renderValues() {
   // Link state - always honest about freshness.
   bool everReceived = recordCount > 0;
   uint32_t ageS = everReceived ? (millis() - lastRecordMs) / 1000 : 0;
-  tft.setCursor(8, 28);
-  tft.setTextSize(1);
+  putValue(8, 28, PANEL_W - 16, 8, COL_BG,
+           everReceived ? (ageS > 30 ? COL_WARN : COL_DIM) : COL_WARN, 1);
   if (!everReceived) {
-    tft.setTextColor(COL_WARN);
     tft.print("waiting for data...");
   } else {
-    tft.setTextColor(ageS > 30 ? COL_WARN : COL_DIM);
     tft.print("updated ");
     tft.print(ageS);
     tft.print("s ago  #");
@@ -200,55 +246,46 @@ static void render() {
   }
 
   // Field name
-  drawCard(40, 26);
-  label(14, 48, fieldName, COL_TEXT, 1);
+  putValue(14, 48, PANEL_W - 28, 8, COL_CARD, COL_TEXT, 1);
+  tft.print(fieldName);
 
   // Headline status
-  drawCard(72, 58);
-  label(14, 80, "SOIL HEALTH", COL_DIM, 1);
-  tft.setCursor(14, 96);
-  tft.setTextColor(statusColour());
-  tft.setTextSize(2);
+  putValue(14, 96, PANEL_W - 28, 16, COL_CARD, statusColour(), 2);
   tft.print(statusText);
 
   // Score as a number plus a bar - the bar is what reads from a distance.
-  drawCard(138, 44);
-  label(14, 146, "SCORE", COL_DIM, 1);
-  tft.setCursor(150, 146);
-  tft.setTextColor(COL_TEXT);
-  tft.setTextSize(1);
+  putValue(150, 146, 70, 8, COL_CARD, COL_TEXT, 1);
   if (healthScore < 0.0f) {
     tft.print("--");
   } else {
     tft.print(healthScore, 2);
   }
+  // Always clear the full track first or a shrinking score would leave the
+  // tail of the previous bar behind it.
+  tft.fillRect(14, 160, PANEL_W - 40, 8, COL_BG);
   if (healthScore >= 0.0f) {
     int16_t barW = (int16_t)((PANEL_W - 40) * healthScore);
     if (barW < 0) barW = 0;
     if (barW > PANEL_W - 40) barW = PANEL_W - 40;
-    tft.fillRect(14, 160, PANEL_W - 40, 8, COL_BG);
     tft.fillRect(14, 160, barW, 8, statusColour());
   }
 
   // Sample counts
-  drawCard(190, 84);
-  statRow(198, "samples total",  totalSamples,    COL_TEXT);
-  statRow(212, "valid",          validSamples,    COL_GOOD);
-  statRow(226, "rejected",       rejectedSamples, rejectedSamples > 0 ? COL_WARN : COL_DIM);
-  statRow(240, "zones",          zoneCount,       COL_TEXT);
-  statRow(254, "recommendations", recCount,       COL_ACCENT);
+  putCount(198, totalSamples,    COL_TEXT);
+  putCount(212, validSamples,    COL_GOOD);
+  putCount(226, rejectedSamples, rejectedSamples > 0 ? COL_WARN : COL_DIM);
+  putCount(240, zoneCount,       COL_TEXT);
+  putCount(254, recCount,        COL_ACCENT);
 
   // Provenance footer. Evidence level and offline flag matter for trust, so
   // they get their own line rather than being buried.
-  drawCard(284, 28);
-  label(14, 292, "evidence", COL_DIM, 1);
-  tft.setCursor(90, 292);
-  tft.setTextColor(COL_TEXT);
-  tft.setTextSize(1);
+  putValue(90, 292, PANEL_W - 104, 8, COL_CARD, COL_TEXT, 1);
   tft.print(evidence);
-  tft.setCursor(14, 302);
-  tft.setTextColor(offlineMode == 1 ? COL_GOOD : COL_DIM);
-  tft.print(offlineMode == 1 ? "OFFLINE MODE" : "");
+  putValue(14, 302, PANEL_W - 28, 8, COL_BG,
+           offlineMode == 1 ? COL_GOOD : COL_BG, 1);
+  if (offlineMode == 1) {
+    tft.print("OFFLINE MODE");
+  }
 }
 
 // ----------------------------------------------------------------- GPS
@@ -571,7 +608,8 @@ void setup() {
   quietenGPS();
   Bridge.provide("get_gps_data", get_gps_data);
 
-  render();
+  renderChrome();
+  renderValues();
 }
 
 void loop() {
@@ -623,12 +661,13 @@ void loop() {
     }
   }
 
-  // Repaint on new data, and once a second otherwise so the age counter stays
-  // truthful without burning SPI bandwidth.
+  // Values only - the chrome is already on the glass and redrawing it is what
+  // caused the black wipe. Once a second is enough for the age counter, and
+  // this now costs a few hundred bytes of SPI instead of 153,600.
   static uint32_t lastPaint = 0;
   if (dirty || millis() - lastPaint > 1000) {
     dirty = false;
     lastPaint = millis();
-    render();
+    renderValues();
   }
 }
