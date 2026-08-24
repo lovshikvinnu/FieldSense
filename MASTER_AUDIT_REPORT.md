@@ -458,7 +458,7 @@ NONE FOUND
 | **Hardware boundary** | 🟡 PARTIAL | `HardwareSensorAdapter`, Mock transport & Virtual GPS implemented; physical serial/UART drivers undergoing bench testing in `hardware_test/`. |
 | **Storage** | ⚪ NOT PRESENT | Package `fieldsense/storage/` exists as placeholder; persistence planned for Phase 3 (SQLite). |
 | **AI/LLM** | ⚪ NOT PRESENT | Package `fieldsense/ai/` exists as placeholder; isolated edge LLM explainer planned for Phase 3. |
-| **Testing** | 🟢 IMPLEMENTED | 105/105 tests passing in 0.60s covering unit, integration, golden datasets, and fault injection. |
+| **Testing** | 🟢 IMPLEMENTED | **294/294 tests passing in 35.84s** (verified 2026-08-24) covering unit, integration, golden datasets, fault injection, hardware adapters, and standalone deployment. *This report's original figure of 105 was correct at the time of writing; the count is reconciled here so the submission carries one number.* |
 | **Documentation** | 🟢 IMPLEMENTED | Modular spec structure (`docs/` 6 core specs, legacy files moved to `docs/archive/`). |
 
 ---
