@@ -547,7 +547,7 @@ static void renderValues() {
       // Say so on the glass. A unit whose touch is not answering must not
       // look identical to one where it is - the operator would keep pressing
       // a target that does nothing instead of reaching for the board keys.
-      const char *note = "USE VOL KEYS";
+      const char *note = "USE BOARD BTN";
       label(PANEL_W - MARGIN - 8 - (int16_t)(strlen(note) * CHAR_W),
             BAR_Y + 34, note, COL_WARN, 1);
     }

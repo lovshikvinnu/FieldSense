@@ -66,18 +66,46 @@ at least 16 px. `tests/test_landscape_panel.py` holds the firmware to that.
 `TRIGGER=any`, the default, watches every control the unit physically has.
 Whichever the operator reaches for starts the sample.
 
-**1. The board's own VOL+ / VOL- keys - the primary control.**
+**1. The board's own USER button - the primary control.**
 
-These are soldered to the UNO Q, exposed by the kernel's `gpio-keys` driver at
-`/dev/input/by-path/platform-gpio-keys-event` as `KEY_VOLUMEDOWN` (114) and
-`KEY_VOLUMEUP` (115). Nothing to wire, nothing to fit. The path from a finger
-to the workflow is one file read: no RPC round trip, no MCU involvement, and it
-works whether or not the panel's touch controller is connected.
+It is soldered to the UNO Q, exposed by the kernel's `gpio-keys` driver at
+`/dev/input/by-path/platform-gpio-keys-event`. Nothing to wire, nothing to fit.
+The path from a finger to the workflow is one file read: no RPC round trip, no
+MCU involvement, and it works whether or not the panel's touch controller is
+connected.
 
-*Either* key starts a sample. There is one action in this workflow, and making
-an operator remember which of two identical-feeling buttons means "go" is a way
-to lose a sample, not a feature. Key *releases* and autorepeat are ignored, so
-a held button takes one sample rather than one per repeat interval.
+> **The kernel calls this button "Volume Up"/"Volume Down". The UNO Q has no
+> volume keys.** It has one user push-button and a power button. Those labels,
+> and the codes `KEY_VOLUMEDOWN` (114) and `KEY_VOLUMEUP` (115), are inherited
+> from the Qualcomm SoM's reference device tree, where the same GPIO lines
+> genuinely were a phone's volume rocker. Press the **USER** button. Never
+> describe this to an operator as "the volume keys" - it sends them hunting for
+> a control that is not printed on the board.
+
+Both codes are watched rather than one chosen code: there is exactly one action
+in this workflow, so there is nothing to distinguish between, and which code the
+user button emits is a property of the board's wiring rather than of its labels.
+Key *releases* and autorepeat are ignored, so a held button takes one sample
+rather than one per repeat interval.
+
+The **power button is deliberately never watched.** It is a separate input
+device (`pm8941_pwrkey`), and holding it five seconds reboots the Linux side -
+which mid-session would cost the operator their walk.
+
+To find which code your board's USER button emits:
+
+```python
+# python3 whichkey.py   - then press the USER button
+import struct
+
+names = {114: "VOLUME DOWN (code 114)", 115: "VOLUME UP (code 115)"}
+handle = open("/dev/input/by-path/platform-gpio-keys-event", "rb", buffering=0)
+print("press the USER button...")
+while True:
+    _, _, kind, code, value = struct.unpack("llHHi", handle.read(24))
+    if kind == 1 and value == 1:
+        print("  ->", names.get(code, code), "PRESSED")
+```
 
 The device node is `root:input`, so the service needs the `input` group -
 `fieldsense-field.service` declares it. Without it the node starts, finds no
@@ -139,7 +167,7 @@ PY
 ```
 
 `TP:1` means a touch controller answered. `TP:0` means it did not, and the
-panel says `USE VOL KEYS` in its bottom bar - so an operator does not keep
+panel says `USE BOARD BUTTON` in its bottom bar - so an operator does not keep
 pressing a target that does nothing.
 
 `Z1`/`Z2` are the raw pressure channels, which separate "no controller" from
@@ -202,7 +230,7 @@ Useful environment variables (all optional):
 | | |
 | :--- | :--- |
 | `SAMPLES=5` | samples in a session |
-| `TRIGGER=any` | `any` (every control), `button` (board keys), `mcu` (panel/D5), `enter` (keyboard), `auto` (bench only) |
+| `TRIGGER=any` | `any` (every control), `button` (the board's USER button), `mcu` (panel touch), `enter` (keyboard), `auto` (bench only) |
 | `FIELD_NAME=` | label shown on the panel |
 | `RESUME=<session_id>` | continue a session after a power cut |
 | `REQUIRE_GPS_FIX=1` | wait for a lock before the panel says READY |

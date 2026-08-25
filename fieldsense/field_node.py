@@ -63,15 +63,33 @@ DEFAULT_DWELL_SECONDS = 2.0
 #: press lockout, so no press can fall between two polls.
 TRIGGER_POLL_SECONDS = 0.5
 
-#: The UNO Q's own VOL+ / VOL- keys, exposed by the kernel's gpio-keys driver.
-#: These are physical buttons already on the board - nothing to wire, nothing to
-#: fit, and readable straight from Linux with no MCU round trip. The by-path
-#: name is stable across boots; /dev/input/eventN is not.
+#: The board's own push-button, exposed by the kernel's gpio-keys driver. It is
+#: already on the UNO Q - nothing to wire, nothing to fit - and readable straight
+#: from Linux with no MCU round trip. The by-path name is stable across boots;
+#: /dev/input/eventN is not.
 GPIO_KEYS_DEVICE = "/dev/input/by-path/platform-gpio-keys-event"
 
-#: KEY_VOLUMEDOWN and KEY_VOLUMEUP, the only two codes gpio-keys reports on this
-#: board. Read off the device's own capability bitmap rather than assumed.
+#: KEY_VOLUMEDOWN and KEY_VOLUMEUP, read off the device's own capability bitmap
+#: rather than assumed.
+#:
+#: DO NOT CALL THESE "THE VOLUME KEYS" TO AN OPERATOR. The UNO Q has no volume
+#: keys - it has one user push-button and a power button. These labels are
+#: inherited from the Qualcomm SoM's reference device tree, where the same GPIO
+#: lines really were a phone's volume rocker. On this board the physical control
+#: that reports them is the USER button, and telling someone to press a key that
+#: is not printed on the hardware sends them hunting for it in a field.
+#:
+#: Both codes are watched because which one the user button maps to is a
+#: property of the board's wiring, not something worth asserting from a label.
 GPIO_KEY_CODES = (114, 115)
+
+#: What to call the control when speaking to a person.
+GPIO_KEY_DESCRIPTION = "the board's USER button"
+
+#: The power button is a SEPARATE input device (pm8941_pwrkey, event1) and is
+#: deliberately never watched: holding it five seconds reboots the Linux side,
+#: which in the middle of a field session would cost the operator their walk.
+POWER_KEY_DEVICE = "/dev/input/by-path/platform-1c40000.spmi-platform-1c40000.spmi:pmic@0:pon@800:pwrkey-event"
 
 #: struct input_event: struct timeval, then type, code, value. 24 bytes on a
 #: 64-bit kernel; calcsize keeps this correct on a 32-bit one.
@@ -125,17 +143,19 @@ class TriggerSource:
 
 
 class ButtonTrigger(TriggerSource):
-    """The board's own VOL+ / VOL- keys, read from the kernel's evdev node.
+    """The board's own USER button, read from the kernel's evdev node.
 
     This is the operator control with the fewest things that can be wrong with
-    it: the buttons are soldered to the board, the driver is in the kernel, and
+    it: the button is soldered to the board, the driver is in the kernel, and
     the path from a finger to this process is one file read. Nothing has to be
     wired, nothing crosses the RPC link, and it works whether or not the panel's
     touch controller is connected.
 
-    Either key starts a sample. There is one action in this workflow, and making
-    an operator remember which of two identical-feeling buttons means "go" is a
-    way to lose a sample, not a feature.
+    Every code the node reports starts a sample, rather than one chosen code.
+    There is exactly one action in this workflow, so there is nothing to
+    distinguish between - and which code the user button actually emits is a
+    property of this board's wiring rather than of its labels. See
+    GPIO_KEY_CODES for why those labels say "volume".
     """
 
     name = "button"
@@ -203,7 +223,7 @@ class ButtonTrigger(TriggerSource):
     def describe(self) -> str:
         if self.handle is None:
             return "button (UNAVAILABLE: {})".format(self.error)
-        return "button (board VOL+/VOL- keys via {})".format(self.device_path)
+        return "button ({} via {})".format(GPIO_KEY_DESCRIPTION, self.device_path)
 
 
 class CompositeTrigger(TriggerSource):

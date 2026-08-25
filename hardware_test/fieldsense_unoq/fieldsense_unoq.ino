@@ -85,9 +85,10 @@
 // enclosure.
 //
 // It is not the only operator control, and deliberately not the primary one.
-// The board's own VOL+/VOL- keys are read on the Linux side straight from the
+// The board's own USER button is read on the Linux side straight from the
 // kernel's gpio-keys evdev node - soldered on, nothing to wire, and no RPC
-// round trip. This panel target is the second path, so a unit whose touch is
+// round trip. (The kernel labels that line "Volume Up/Down", inherited from
+// the Qualcomm SoM reference device tree; the UNO Q has no volume keys.) This panel target is the second path, so a unit whose touch is
 // unwired is still fully operable.
 //
 // The touch target is the bottom bar and only the bottom bar. The integration
@@ -1147,7 +1148,7 @@ static void renderValues() {
       // Say so on the glass. A unit whose touch is not answering must not
       // look identical to one where it is - the operator would keep pressing
       // a target that does nothing instead of reaching for the board keys.
-      const char *note = "USE VOL KEYS";
+      const char *note = "USE BOARD BTN";
       label(PANEL_W - MARGIN - 8 - (int16_t)(strlen(note) * CHAR_W),
             BAR_Y + 34, note, COL_WARN, 1);
     }
