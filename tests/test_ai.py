@@ -609,6 +609,94 @@ _MODEL_TEXT = (
 )
 
 
+def test_token_budget_is_derived_per_section_not_shared():
+    """A 500 character zone note and a 900 character summary need different caps.
+
+    Both were given the same global 256 tokens. Measured on the UNO Q, that
+    produced 1354 and 1420 characters against a 900 limit, and 1296 and 1274
+    against 500 - four generations within 11% of each other on unrelated
+    content, which is a token ceiling rather than a model choosing a length.
+    """
+    adapter = LlamaCppAdapter(AIConfig(model_path="/tmp/x.gguf", binary_path="llama-cli"))
+
+    field_budget = adapter._token_budget(900)
+    zone_budget = adapter._token_budget(500)
+
+    assert zone_budget < field_budget < 256, "each section must get its own ceiling"
+    # At the measured ~5.2 characters per token, both must land inside the guard.
+    assert field_budget * 5.6 <= 900
+    assert zone_budget * 5.6 <= 500
+
+
+def test_token_budget_never_exceeds_the_configured_ceiling():
+    """This may only ever shorten generation, never lengthen it."""
+    adapter = LlamaCppAdapter(
+        AIConfig(model_path="/tmp/x.gguf", binary_path="llama-cli", max_output_tokens=32))
+
+    assert adapter._token_budget(100000) == 32
+    assert adapter._token_budget(None) == 32
+
+
+def test_build_command_uses_the_section_budget(tmp_path):
+    """The derived budget must actually reach llama-cli as -n."""
+    adapter = LlamaCppAdapter(_llama_config(tmp_path, "ok"))
+    command = adapter._build_command("PROMPT", max_tokens=80)
+
+    assert command[command.index("-n") + 1] == "80"
+
+
+def test_trim_keeps_whole_sentences_within_the_limit():
+    """A section cut mid-word is rejected and replaced by a template.
+
+    The reader then loses the entire narrative because of its final few
+    characters. Trimming at a sentence boundary shows what the model completed.
+    """
+    text = "First sentence. Second sentence. Third one gets cut off here somewhere"
+
+    trimmed = LlamaCppAdapter._trim_to_sentence(text, 40)
+
+    assert trimmed == "First sentence. Second sentence."
+    assert len(trimmed) <= 40
+
+
+def test_trim_leaves_compliant_text_untouched():
+    """Nothing is removed from a section that already fits."""
+    text = "Short enough already."
+
+    assert LlamaCppAdapter._trim_to_sentence(text, 900) == text
+
+
+def test_trim_falls_back_to_a_word_boundary():
+    """With no sentence ending in range, do not slice through a word."""
+    trimmed = LlamaCppAdapter._trim_to_sentence("alpha bravo charlie delta", 14)
+
+    assert trimmed == "alpha bravo"
+    assert not trimmed.endswith("cha")
+
+
+def test_trim_makes_an_overlong_generation_pass_the_guard(tmp_path):
+    """End to end: the guard rejected this before, and accepts it after.
+
+    The guard is unchanged - the adapter now honours the limit it was given
+    instead of handing over text it already knows is over budget.
+    """
+    from fieldsense.ai.guard import NarrativeGuard
+
+    long_text = "The field is poor and moisture is the limiting factor. " * 30
+    guard = NarrativeGuard()
+    ctx = _simple_context()
+
+    assert len(long_text) > 900
+    before = guard.inspect_text(long_text, ctx, location="field_summary", max_chars=900)
+    assert any(v.startswith("LENGTH_EXCEEDED") for v in before)
+
+    trimmed = LlamaCppAdapter._trim_to_sentence(long_text, 900)
+    after = guard.inspect_text(trimmed, ctx, location="field_summary", max_chars=900)
+
+    assert not any(v.startswith("LENGTH_EXCEEDED") for v in after)
+    assert trimmed.endswith(".")
+
+
 def test_system_rules_never_name_the_terms_they_forbid():
     """Naming a forbidden term teaches a small model to use it.
 

@@ -44,6 +44,20 @@ _END_MARKERS = ("[end of text]", "</s>", "<|im_end|>", "<|endoftext|>", "<|eot_i
 #
 # Each pattern matches llama.cpp's output specifically, never anything shaped
 # like prose, so a narrative is not silently edited on its way to the guard.
+# Measured on the UNO Q with Qwen2.5-0.5B: four generations at -n 256 produced
+# 1354, 1420, 1296 and 1274 characters - 4.98 to 5.55 characters per token. The
+# spread across two different sections with unrelated content is the giveaway:
+# the model was not choosing a length, it was running into the cap every time.
+#
+# 5.6 is deliberately above the measured maximum. Overestimating characters per
+# token asks for fewer tokens, which errs toward a shorter answer rather than a
+# rejected one.
+_CHARS_PER_TOKEN = 5.6
+
+# Ask for a little less than the section allows, so a model that runs slightly
+# rich still lands inside the guard's limit.
+_TOKEN_BUDGET_MARGIN = 0.9
+
 _LLAMA_NOISE = (
     re.compile(r"\[\s*Prompt:.*?t/s.*?\]", re.IGNORECASE | re.DOTALL),
     re.compile(r"^Loading model\.\.\..*$", re.MULTILINE),
@@ -203,10 +217,11 @@ class LlamaCppAdapter(LocalLLMAdapter):
         all_violations: List[str] = []
         attempts = max(1, self.config.max_generation_attempts)
         current_prompt = prompt
+        token_budget = self._token_budget(max_chars)
 
         for attempt in range(attempts):
             try:
-                raw = self._run_binary(current_prompt)
+                raw = self._run_binary(current_prompt, max_tokens=token_budget)
             except subprocess.TimeoutExpired:
                 return fallback_text, False, all_violations + [f"TIMEOUT[{location}]:"], True
             except (OSError, subprocess.SubprocessError) as exc:
@@ -217,7 +232,7 @@ class LlamaCppAdapter(LocalLLMAdapter):
                     False,
                 )
 
-            text = self._clean_output(raw)
+            text = self._trim_to_sentence(self._clean_output(raw), max_chars)
             section_violations = self.guard.inspect_text(
                 text, context, location=location, max_chars=max_chars
             )
@@ -239,18 +254,37 @@ class LlamaCppAdapter(LocalLLMAdapter):
             return candidate
         return shutil.which(candidate)
 
-    def _build_command(self, prompt: str) -> List[str]:
+    def _token_budget(self, max_chars: Optional[int]) -> int:
+        """Tokens to allow for a section of at most `max_chars` characters.
+
+        Every section shared one global `max_output_tokens` before this, so a
+        500 character zone note and a 900 character field summary were both
+        given 256 tokens and both overran. Deriving the budget from the limit
+        the guard will actually apply is what makes the section fit by
+        construction rather than by asking the model nicely - which it ignored.
+
+        Never returns more than the configured ceiling, so this can only ever
+        shorten generation.
+        """
+        if not max_chars:
+            return self.config.max_output_tokens
+        derived = int(max_chars / _CHARS_PER_TOKEN * _TOKEN_BUDGET_MARGIN)
+        return max(1, min(self.config.max_output_tokens, derived))
+
+    def _build_command(self, prompt: str, max_tokens: Optional[int] = None) -> List[str]:
         """Assemble the llama-cli argument vector.
 
-        HARDWARE_SPEC_REQUIRED - flag names vary between llama.cpp releases.
-        Verify against the binary installed on the target before deployment.
+        Args:
+            prompt: Fully built section prompt.
+            max_tokens: Token ceiling for this section. Falls back to the
+                configured maximum when a caller has no section limit.
         """
         binary = self._resolve_binary() or self.config.binary_path
         command = [
             binary,
             "-m", self.model_path(),
             "-p", prompt,
-            "-n", str(self.config.max_output_tokens),
+            "-n", str(max_tokens or self.config.max_output_tokens),
             "-c", str(self.config.context_tokens),
             "-t", str(self.config.threads),
             "--temp", str(self.config.temperature),
@@ -260,7 +294,7 @@ class LlamaCppAdapter(LocalLLMAdapter):
         command.extend(self.config.extra_args)
         return command
 
-    def _run_binary(self, prompt: str) -> str:
+    def _run_binary(self, prompt: str, max_tokens: Optional[int] = None) -> str:
         """Execute one generation and return raw stdout.
 
         Raises:
@@ -268,7 +302,7 @@ class LlamaCppAdapter(LocalLLMAdapter):
             OSError / subprocess.SubprocessError: Binary could not be executed.
         """
         completed = subprocess.run(
-            self._build_command(prompt),
+            self._build_command(prompt, max_tokens=max_tokens),
             capture_output=True,
             text=True,
             timeout=self.config.timeout_seconds,
@@ -313,6 +347,36 @@ class LlamaCppAdapter(LocalLLMAdapter):
         for marker in _END_MARKERS:
             text = text.replace(marker, " ")
         return " ".join(text.split())
+
+    @staticmethod
+    def _trim_to_sentence(text: str, max_chars: Optional[int]) -> str:
+        """Cut to the last complete sentence that fits inside `max_chars`.
+
+        The model is stopped by a token ceiling, not by finishing, so its last
+        sentence is routinely cut mid-word. Handing that to the guard means a
+        section is rejected and replaced by a template - the reader loses the
+        whole narrative because of its final few characters.
+
+        Trimming at a sentence boundary shows what the model actually completed.
+        It is not a relaxation of anything: the guard still applies its own
+        limit, and this only ever removes text.
+        """
+        if not text or not max_chars or len(text) <= max_chars:
+            return text
+
+        window = text[:max_chars]
+        cut = max(window.rfind(". "), window.rfind("! "), window.rfind("? "))
+        if cut == -1:
+            for end in (".", "!", "?"):
+                cut = max(cut, window.rfind(end))
+        if cut != -1:
+            return window[:cut + 1].strip()
+
+        # No sentence ended in range. Fall back to a word boundary rather than
+        # slicing through a word, and leave the text alone if even that fails,
+        # so the guard sees the real output instead of something this invented.
+        space = window.rfind(" ")
+        return window[:space].strip() if space > 0 else text
 
     def _missing_asset_label(self) -> str:
         """Describe which asset is missing, for the audit trail."""
