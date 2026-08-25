@@ -273,7 +273,30 @@ class FieldSessionStore:
         return counts
 
     def close(self, status: str, **extra: Any) -> None:
-        """Stamp a terminal status into the manifest."""
+        """Stamp a terminal status into the manifest.
+
+        A session holding no samples is never recorded as COMPLETED, whatever
+        the caller passes. That combination is not a state the workflow can
+        legitimately reach - `process()` refuses to finish a session with fewer
+        than three usable samples - so a manifest carrying it means the samples
+        went missing after the session ended: a deleted directory, a filesystem
+        that filled, a half-restored backup. Observed exactly once, when a
+        concurrent process removed the session directory mid-run.
+
+        Reporting COMPLETED there would be the one thing this store exists to
+        prevent: a record that reads as a finished survey and contains nothing.
+        The count is always recomputed from disk, so the downgrade is decided by
+        what is actually there rather than by what the session believed.
+        """
+        stored = self.stored_count()
+        if stored == 0 and str(status).upper() == "COMPLETED":
+            self.write_manifest(
+                status="INCOMPLETE", closed_at=utc_now_iso(),
+                reason="closed as COMPLETED but no samples are on disk; the "
+                       "session directory was emptied after the samples were "
+                       "written",
+                **extra)
+            return
         self.write_manifest(status=status, closed_at=utc_now_iso(), **extra)
 
 

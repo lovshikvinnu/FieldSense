@@ -224,6 +224,12 @@ Every record keeps the evidence an audit needs:
 two field sessions into one dataset. Resuming re-opens the session that was in
 progress; starting fresh makes a new directory.
 
+The manifest's `stored_samples` is always recomputed from disk, never from what
+the session believed it had written, and a session holding no samples is never
+stamped `COMPLETED` — it is downgraded to `INCOMPLETE` with the reason. A
+manifest that reads as a finished survey and contains nothing is the one thing
+this store exists to prevent.
+
 ---
 
 ## Sample quality — four answers, not two

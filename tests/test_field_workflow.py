@@ -403,3 +403,35 @@ def test_the_record_stays_inside_the_firmware_line_buffer(tmp_path):
     summary = workflow_summary(session, soil=SOIL,
                                field_name="A" * 40, extra={"evidence_level": "LIMITED"})
     assert len(build_panel_record(summary)) < 256
+
+
+def test_an_empty_session_is_never_recorded_as_completed(tmp_path):
+    """A manifest that reads as a finished survey and holds nothing is a lie.
+
+    Seen on hardware when a concurrent process removed the session directory
+    mid-run: the samples were written, then deleted, and close() recomputed the
+    count from disk and would otherwise have stamped COMPLETED over zero.
+    """
+    store = FieldSessionStore(root=str(tmp_path), planned_samples=3)
+    store.close("COMPLETED")
+    manifest = json.load(open(store.manifest_path))
+    assert manifest["status"] == "INCOMPLETE"
+    assert manifest["stored_samples"] == 0
+    assert "no samples are on disk" in manifest["reason"]
+
+
+def test_a_session_that_holds_samples_still_completes_normally(tmp_path):
+    store = FieldSessionStore(root=str(tmp_path), planned_samples=1)
+    store.append_sample({"sample_index": 1, "quality": "VALID"})
+    store.close("COMPLETED")
+    manifest = json.load(open(store.manifest_path))
+    assert manifest["status"] == "COMPLETED"
+    assert manifest["stored_samples"] == 1
+
+
+def test_other_terminal_statuses_are_not_rewritten_on_an_empty_session(tmp_path):
+    """FAILED and INTERRUPTED are honest answers for a session with no samples."""
+    for status in ("FAILED", "INTERRUPTED", "INCOMPLETE"):
+        store = FieldSessionStore(root=str(tmp_path / status), planned_samples=3)
+        store.close(status)
+        assert json.load(open(store.manifest_path))["status"] == status
