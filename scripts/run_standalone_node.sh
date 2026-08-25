@@ -37,6 +37,7 @@
 #   GPS_FIX_TIMEOUT=300         seconds to wait for FIX_OK
 #   GATEWAY_HOST=auto           auto-discovered, or set explicitly
 #   GATEWAY_PORT=9876
+#   GATEWAY_WAIT_SECONDS=180     wait for the gateway before restarting
 #   MCU_PORT=127.0.0.1:7500     router monitor proxy for the panel push
 #   SENSOR_PORT=/dev/ttyUSB0    USB-RS485 adapter
 #   APP_NAME=user:unified_v1
@@ -58,6 +59,7 @@ REQUIRE_GPS_FIX="${REQUIRE_GPS_FIX:-1}"
 GPS_FIX_TIMEOUT="${GPS_FIX_TIMEOUT:-300}"
 GATEWAY_HOST="${GATEWAY_HOST:-auto}"
 GATEWAY_PORT="${GATEWAY_PORT:-9876}"
+GATEWAY_WAIT_SECONDS="${GATEWAY_WAIT_SECONDS:-180}"
 MCU_PORT="${MCU_PORT:-127.0.0.1:7500}"
 SENSOR_PORT="${SENSOR_PORT:-/dev/ttyUSB0}"
 APP_NAME="${APP_NAME:-user:unified_v1}"
@@ -101,10 +103,45 @@ ensure_app_running() {
   if gateway_reachable "$1"; then
     return 0
   fi
-  log "gateway unreachable; restarting App Lab app $APP_NAME"
+  # WHY WAITING COMES BEFORE RESTARTING
+  #
+  # Starting an App Lab app FLASHES THE MCU - its log carries openocd bank
+  # writes and `Progress[sketch updated]`. On a cold boot this node can be
+  # running before App Lab has finished that flash, and a restart issued in that
+  # window puts a second openocd on the same SWD lines, which fails with
+  # `Error requesting gpio line swdio` and needs `sudo killall -9 openocd` to
+  # clear. An unattended field node cannot do that for itself, so a slow start
+  # must never be mistaken for a broken one. Waiting is also strictly cheaper: a
+  # restart costs a flash cycle, waiting costs seconds.
+  log "gateway not up yet; waiting up to ${GATEWAY_WAIT_SECONDS}s for $APP_NAME"
+  if wait_for_gateway; then
+    log "gateway appeared on its own; no restart needed"
+    return 0
+  fi
+
+  log "gateway still unreachable after ${GATEWAY_WAIT_SECONDS}s; restarting $APP_NAME"
+  log "note: this reflashes the MCU, so the panel will reset"
   arduino-app-cli app restart "$APP_NAME" >/dev/null 2>&1 \
     || log "could not restart $APP_NAME (continuing anyway)"
   sleep 15
+}
+
+# Poll until the gateway answers or the budget runs out.
+#
+# The container address is re-discovered on every pass rather than taken as an
+# argument: at boot the container may not exist yet, so its address is not
+# knowable before the wait, only during it.
+wait_for_gateway() {
+  local deadline=$(( SECONDS + GATEWAY_WAIT_SECONDS ))
+  local host
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    host="$(discover_gateway)"
+    if gateway_reachable "$host"; then
+      return 0
+    fi
+    sleep 5
+  done
+  return 1
 }
 
 discover_gateway() {

@@ -92,20 +92,37 @@ for group in video dialout; do
 done
 
 # 3. Payload.
+#
+# --standalone deliberately sets PREFIX to the repository itself, because the
+# node needs docker access to reach the App Lab container and a /opt copy under
+# a system account would not have it. Copying a tree onto itself is then not
+# merely redundant, it is unsafe: this image has no rsync, and the tar fallback
+# streams `tar -cf - .` into `tar -xf -` over the SAME directory, extracting
+# files while they are still being read. That branch also does not exclude
+# models/, so it would pipe ~1.2 GB of GGUF weights onto themselves and could
+# leave the very weights the node is about to load truncated.
+#
+# Nothing needs copying when source and destination are the same tree, so skip.
 echo "==> installing the application to $PREFIX"
-run mkdir -p "$PREFIX"
-if command -v rsync >/dev/null 2>&1; then
-  run rsync -a --delete \
-    --exclude '.git' --exclude '__pycache__' --exclude '.pytest_cache' \
-    --exclude 'models' \
-    "$REPO_ROOT"/ "$PREFIX"/
+if [ "$(cd "$REPO_ROOT" 2>/dev/null && pwd -P)" = "$(cd "$PREFIX" 2>/dev/null && pwd -P)" ]; then
+  echo "    source and destination are the same tree; nothing to copy"
 else
-  # tar keeps this working on an image without rsync.
-  if [ "$DRY_RUN" = "1" ]; then
-    echo "  would run: tar -C $REPO_ROOT -cf - . | tar -C $PREFIX -xf -"
+  run mkdir -p "$PREFIX"
+  if command -v rsync >/dev/null 2>&1; then
+    run rsync -a --delete \
+      --exclude '.git' --exclude '__pycache__' --exclude '.pytest_cache' \
+      --exclude 'models' \
+      "$REPO_ROOT"/ "$PREFIX"/
   else
-    tar -C "$REPO_ROOT" --exclude='.git' --exclude='__pycache__' \
-        --exclude='.pytest_cache' -cf - . | tar -C "$PREFIX" -xf -
+    # tar keeps this working on an image without rsync. models/ is excluded here
+    # too, matching the rsync branch: weights are large and are deployed
+    # separately, never streamed through the installer.
+    if [ "$DRY_RUN" = "1" ]; then
+      echo "  would run: tar -C $REPO_ROOT -cf - . | tar -C $PREFIX -xf -"
+    else
+      tar -C "$REPO_ROOT" --exclude='.git' --exclude='__pycache__' \
+          --exclude='.pytest_cache' --exclude='models' -cf - . | tar -C "$PREFIX" -xf -
+    fi
   fi
 fi
 run mkdir -p "$PREFIX/artifacts" "$PREFIX/models"
@@ -126,6 +143,21 @@ fi
 echo "==> enabling $UNIT"
 run systemctl daemon-reload
 run systemctl enable "$UNIT"
+
+# 6. Force the unit to disk before returning.
+#
+# NOT DEFENSIVE PROGRAMMING - this exact failure has happened. An install
+# followed within seconds by a power cut left
+# /etc/systemd/system/fieldsense-standalone.service at ZERO BYTES: ext4 in
+# ordered mode journals the metadata, so the directory entry and the enable
+# symlink both survived, while the file's data blocks were never written.
+# systemd reports a zero-length unit as MASKED, so the node silently did not
+# exist at the next boot, with `systemctl is-enabled` answering "masked" and no
+# log line anywhere to explain it.
+#
+# A field node is installed and then immediately power-cycled almost by
+# definition, so the window is the normal case here, not an edge case.
+run sync
 
 echo
 echo "==> Done. Start it now and watch the log:"

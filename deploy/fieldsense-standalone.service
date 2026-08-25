@@ -26,9 +26,23 @@
 Description=FieldSense AI autonomous field node (collect, map, panel)
 Documentation=file:%h/FieldSense/FieldSense/docs/FIELD_RUN.md
 # App Lab runs in Docker; without it there is no GPS gateway and no panel link.
-After=docker.service local-fs.target
-Wants=docker.service
-# No network unit of any kind. The node must come up with the radios off.
+#
+# arduino-app-cli.service is ordered BEFORE this unit because starting an App Lab
+# app FLASHES THE MCU: its log carries openocd bank writes and
+# `Progress[sketch updated]`. Without this ordering the node could start first,
+# find no gateway, and call `arduino-app-cli app restart` while App Lab was still
+# mid-flash. Two openocd sessions contending for the same SWD lines produce
+# `Error requesting gpio line swdio`, which needs `sudo killall -9 openocd` to
+# clear - not something an unattended field node can do for itself.
+#
+# arduino-router.service owns the monitor proxy on 127.0.0.1:7500, which is the
+# only transport that reaches the panel on this board.
+After=docker.service arduino-router.service arduino-app-cli.service local-fs.target
+Wants=docker.service arduino-app-cli.service
+# No network unit of any kind. The node must come up with the radios off. Note
+# arduino-app-cli.service itself Wants=network-online.target, so on a board with
+# the radios off it may take that target's full timeout before the gateway
+# appears. GATEWAY_WAIT_SECONDS below is sized to outlast that.
 
 [Service]
 Type=simple
@@ -56,6 +70,9 @@ Environment=GPS_FIX_TIMEOUT=300
 Environment=APP_NAME=user:unified_v1
 Environment=GATEWAY_HOST=auto
 Environment=GATEWAY_PORT=9876
+# Wait this long for App Lab's gateway before falling back to restarting the app.
+# Restarting costs an MCU flash, so waiting is strictly cheaper than acting.
+Environment=GATEWAY_WAIT_SECONDS=180
 Environment=MCU_PORT=127.0.0.1:7500
 
 # --- outputs -----------------------------------------------------------------
@@ -65,8 +82,15 @@ Environment=INTERVAL=900
 
 # Optional local SLM. Absent weights are normal — the AI factory falls back to
 # the deterministic template backend, and the fidelity gate still applies.
+#
+# No FIELDSENSE_MODEL_PATH here on purpose. It used to name
+# models/fieldsense-slm.gguf, a file that has never existed on this board, and
+# because the environment outranks discovery that one line was enough to force
+# the template backend while Qwen sat in models/. AIConfig.from_env() now
+# resolves the installed weights from the package location, which is systemd-safe
+# — that was the original reason for setting an absolute path here. Naming a
+# specific file again would only re-create the drift, in two places at once.
 Environment=FIELDSENSE_AI_BACKEND=AUTO
-Environment=FIELDSENSE_MODEL_PATH=/home/arduino/FieldSense/FieldSense/models/fieldsense-slm.gguf
 
 ExecStart=/home/arduino/FieldSense/FieldSense/scripts/run_standalone_node.sh --loop
 
