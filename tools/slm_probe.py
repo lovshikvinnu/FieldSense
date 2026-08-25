@@ -191,6 +191,29 @@ def sample_context() -> ExplanationContext:
     )
 
 
+def section_outcomes(narrative, context) -> list:
+    """Say, per section, whether the model's text survived or a template replaced it.
+
+    Compares each section against what the deterministic backend would have
+    written for the same context. An exact match means the model's attempt was
+    rejected and this is the fallback - which is the number that actually
+    matters when judging whether a model is usable.
+    """
+    from fieldsense.ai.mock import MockAIAdapter
+
+    template = MockAIAdapter()
+    template.initialize()
+    reference = template.explain(context)
+
+    outcomes = [("field_summary",
+                 "template" if narrative.field_summary.strip() ==
+                 reference.field_summary.strip() else "model")]
+    for zone_id, text in (narrative.zone_narratives or {}).items():
+        same = text.strip() == (reference.zone_narratives or {}).get(zone_id, "").strip()
+        outcomes.append((zone_id, "template" if same else "model"))
+    return outcomes
+
+
 def run_inference(config: AIConfig) -> dict:
     """Generate one narrative and report which backend truly produced it."""
     print("\nInference")
@@ -229,7 +252,15 @@ def run_inference(config: AIConfig) -> dict:
     took_model_path = narrative.generated_by != TEMPLATE_VERSION
     failed_to_run = any(v.startswith(("GENERATION_FAILED", "TIMEOUT")) for v in violations)
     executed = took_model_path and not failed_to_run
-    accepted = bool(narrative.is_ai_generated) and took_model_path
+
+    # Count sections rather than trusting is_ai_generated, which is true when
+    # ANY section came from the model. A run with one section accepted and one
+    # replaced by a template was reporting as cleanly accepted, which is the
+    # same conflation that once called a rejected run a passing one.
+    sections = section_outcomes(narrative, context)
+    from_model = [name for name, source in sections if source == "model"]
+    from_template = [name for name, source in sections if source == "template"]
+    accepted = bool(from_model) and not from_template
 
     line(INFO, "generated_by", narrative.generated_by)
     line(INFO, "generation_status", status)
@@ -241,8 +272,15 @@ def run_inference(config: AIConfig) -> dict:
     line(PASS if executed else FAIL, "model executed",
          "yes - {} ran".format(narrative.generated_by) if executed
          else "NO - no model process produced output")
-    line(PASS if accepted else FAIL, "output accepted",
-         "yes" if accepted else "NO - generated text was rejected downstream")
+
+    total = len(sections)
+    line(PASS if accepted else (WARN if from_model else FAIL), "sections accepted",
+         "{}/{} from the model, {} fell back to templates{}".format(
+             len(from_model), total, len(from_template),
+             "" if not from_template else " ({})".format(", ".join(from_template))))
+    for name, source in sections:
+        line(PASS if source == "model" else WARN, "  section {}".format(name),
+             "model output" if source == "model" else "TEMPLATE - model text rejected")
     real = executed and accepted
 
     summary = (narrative.field_summary or "").strip().replace("\n", " ")
@@ -251,7 +289,9 @@ def run_inference(config: AIConfig) -> dict:
 
     return {"ran": True, "real": real, "executed": executed, "accepted": accepted,
             "wall_ms": wall_ms, "generated_by": narrative.generated_by,
-            "status": status, "violations": violations}
+            "status": status, "violations": violations,
+            "from_model": from_model, "from_template": from_template,
+            "narrative": narrative}
 
 
 def dump_streams(config: AIConfig) -> int:
@@ -476,6 +516,18 @@ def main(argv=None) -> int:
     result = run_inference(config)
 
     print("\n" + "=" * 72)
+    if result.get("executed") and result.get("from_template") and result.get("from_model"):
+        print("VERDICT: the model RAN and was PARTLY accepted.")
+        print("  model     : {}".format(result["generated_by"]))
+        print("  accepted  : {}".format(", ".join(result["from_model"])))
+        print("  rejected  : {} (template shown instead)".format(
+            ", ".join(result["from_template"])))
+        print("  wall clock: {} ms".format(result["wall_ms"]))
+        print("\nExecution and the output contract are proven. Fidelity is not:")
+        print("a section that contradicts the data was replaced, which is the")
+        print("system working, not the model being usable.")
+        return 1
+
     if result.get("real"):
         print("VERDICT: real on-board inference confirmed.")
         print("  model     : {}".format(result["generated_by"]))
