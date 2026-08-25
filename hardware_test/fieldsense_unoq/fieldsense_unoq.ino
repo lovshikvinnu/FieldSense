@@ -78,16 +78,17 @@
 // several metres, and a previous bench run produced five distinct coordinates
 // spanning 8 m at HDOP 3.58 - one physical location wearing five hats.
 //
-// Two input paths are serviced, both already on this board:
+// The control serviced here is the XPT2046 laminated to this same panel, on
+// TOUCH_CS with its own SPI transaction at 2 MHz. Presence is probed at boot
+// rather than assumed, and the probe result rides out on the GPS telemetry line
+// so Linux can see whether touch is answering without anyone opening the
+// enclosure.
 //
-//   TOUCH   the XPT2046 controller laminated to this same panel, on TOUCH_CS
-//           with its own SPI transaction at 2 MHz. Presence is probed at boot
-//           rather than assumed, and the probe result rides out on the GPS
-//           telemetry line so Linux can see whether touch is wired without
-//           anyone opening the enclosure.
-//   BUTTON  a momentary switch to ground on BUTTON_PIN, read with the internal
-//           pull-up. Costs nothing when no switch is fitted - the pull-up
-//           holds the line high and the press counter never moves.
+// It is not the only operator control, and deliberately not the primary one.
+// The board's own VOL+/VOL- keys are read on the Linux side straight from the
+// kernel's gpio-keys evdev node - soldered on, nothing to wire, and no RPC
+// round trip. This panel target is the second path, so a unit whose touch is
+// unwired is still fully operable.
 //
 // The touch target is the bottom bar and only the bottom bar. The integration
 // record for this panel documents a mechanical lamination pinch that produces
@@ -120,17 +121,36 @@
 #define TFT_RST    8
 #define TFT_LED    6   // D7 is MAX485_RE_DE for the RS485 soil bus - never here
 
-// XPT2046 resistive touch, laminated to this panel and sharing the SPI bus.
-// Pin assignment from hardware_test/TFT_UNOQ/TFT_UNOQ_INTEGRATION.md, which is
-// the record of the bring-up that verified this controller on this glass.
-#define TOUCH_CS   4
+// XPT2046 resistive touch, sharing the display's SPI bus.
+//
+// WIRING, AND WHY T_DO MUST BE ON A4
+//
+// On the UNO Q the hardware SPI is on the ANALOG header, not D11-D13. From the
+// board's device tree, arduino_spi is spi2:
+//
+//     SCK   A5   PB13        MISO  A4   PB14        MOSI  A3   PB15
+//
+// The SPI peripheral samples MISO from PB14 and from nowhere else. Wiring the
+// controller's T_DO to a general-purpose pin - D4 was tried - means the command
+// byte clocks out correctly over the shared SCK/MOSI and the 12-bit reply lands
+// on a pin the hardware never reads, so every channel returns 0 and the panel
+// looks identical to one with no controller fitted.
+//
+// Bit-banging is not an escape: SCK and MOSI are held by SPI2 through Zephyr
+// pinctrl, and claiming them as GPIO would take the display down with them.
+//
+//     T_CLK -> A5   shared with the display's SCK
+//     T_DIN -> A3   shared with the display's MOSI
+//     T_DO  -> A4   the hardware SPI MISO. The ST7789 is write-only and never
+//                   uses MISO, so this pin is free for the touch controller.
+//     T_CS  -> D5   dedicated
+//     T_IRQ -> D2   dedicated
+//
+// D5 previously held an optional momentary START switch. That is gone: it was a
+// fallback for a unit whose touch panel did not answer, and the board's own
+// VOL+/VOL- keys cover that case from the Linux side without occupying a pin.
+#define TOUCH_CS   5
 #define TOUCH_IRQ  2
-
-// Optional momentary START switch to ground. D5 is claimed by nothing else on
-// this board: D0/D1 are the GPS UART, D6 the backlight, D8/9/10 the display,
-// D2/D4 the touch controller, and D7 is reserved for MAX485_RE_DE even though
-// the soil bus now hangs off Linux.
-#define BUTTON_PIN 5
 
 // LANDSCAPE. The glass is 240x320; setRotation(1) presents it as 320x240 and
 // every coordinate in this file is written against that.
@@ -321,12 +341,15 @@ static uint16_t lastTouchZ     = 0;
 // heuristic is what needs adjusting.
 static uint16_t lastTouchZ1    = 0;
 static uint16_t lastTouchZ2    = 0;
+// Where the last contact landed, in panel Y. Reported so the axis calibration
+// can be checked from Linux with one touch instead of a flash-and-look cycle:
+// if a press on the bottom bar reports a small TY, the axis is inverted for
+// this panel and the map() in contactInBar() needs its ends swapped.
+static int16_t  lastTouchY     = -1;
 static uint32_t pressCount     = 0;    // monotonic; the host diffs it
 static uint32_t lastPressMs    = 0;
 static uint32_t contactBeganMs = 0;
 static bool     contactActive  = false;
-static bool     buttonWasDown  = false;
-static uint32_t buttonSinceMs  = 0;
 
 static uint16_t readTouchChannel(uint8_t command) {
   SPI.beginTransaction(SPISettings(TOUCH_SPI_HZ, MSBFIRST, SPI_MODE0));
@@ -399,6 +422,7 @@ static bool contactInBar() {
   int32_t y = (int32_t)map((int32_t)raw, 200, 3700, (int32_t)PANEL_H, 0);
   if (y < 0) y = 0;
   if (y > PANEL_H) y = PANEL_H;
+  lastTouchY = (int16_t)y;
   return y >= BAR_Y;
 }
 
@@ -415,16 +439,6 @@ static void notePress() {
 
 static void serviceOperatorInput() {
   uint32_t now = millis();
-
-  // Momentary switch to ground, debounced by the same hold the glass uses.
-  bool buttonDown = (digitalRead(BUTTON_PIN) == LOW);
-  if (buttonDown && !buttonWasDown) {
-    buttonSinceMs = now;
-  } else if (buttonDown && (now - buttonSinceMs) >= TOUCH_HOLD_MS) {
-    notePress();
-    buttonSinceMs = now;   // do not re-fire while it is still held
-  }
-  buttonWasDown = buttonDown;
 
   uint16_t z = readTouchZ();
   lastTouchZ = z;
@@ -450,6 +464,7 @@ static void serviceOperatorInput() {
   if (!contactActive) {
     contactActive = true;
     contactBeganMs = now;
+    contactInBar();      // for its side effect: record where this landed
     return;
   }
   // Held long enough to be deliberate. The lamination pinch on this panel
@@ -792,15 +807,18 @@ static void serviceGPS() {
 //       dashes - and a counter the parser increments is the only evidence on
 //       the wire that a push actually landed.
 //   TZ  last derived contact pressure.
+//   TY  panel Y of the last contact, -1 if there has been none. The bottom bar
+//       starts at y=182, so a press on it should report TY in the 180s-230s; a
+//       small TY means the axis is inverted on this panel.
 //   Z1  raw pressure channel 1.        Z2  raw pressure channel 2.
 //       The raw pair is what separates "no controller" from "controller
 //       present but untouched" from "MISO stuck at a rail" - all three of
 //       which produce TZ:0 and need different fixes.
 String get_gps_data() {
-  char suffix[80];
-  snprintf(suffix, sizeof(suffix), ",UI:%lu,TP:%d,TZ:%u,Z1:%u,Z2:%u,RC:%lu",
+  char suffix[96];
+  snprintf(suffix, sizeof(suffix), ",UI:%lu,TP:%d,TZ:%u,Z1:%u,Z2:%u,TY:%d,RC:%lu",
            (unsigned long)pressCount, touchPresent ? 1 : 0, (unsigned)lastTouchZ,
-           (unsigned)lastTouchZ1, (unsigned)lastTouchZ2,
+           (unsigned)lastTouchZ1, (unsigned)lastTouchZ2, (int)lastTouchY,
            (unsigned long)recordCount);
   return latest_gps_csv + String(suffix);
 }
@@ -1090,9 +1108,10 @@ static void renderValues() {
       label(SOIL_COL_A, BAR_Y + 34, "OFFLINE", COL_GOOD, 1);
     }
     if (!touchPresent) {
-      // Say so on the glass. A unit whose only START control is a button
-      // nobody fitted must not look identical to one whose touch panel works.
-      const char *note = "BUTTON ONLY";
+      // Say so on the glass. A unit whose touch is not answering must not
+      // look identical to one where it is - the operator would keep pressing
+      // a target that does nothing instead of reaching for the board keys.
+      const char *note = "USE VOL KEYS";
       label(PANEL_W - MARGIN - 8 - (int16_t)(strlen(note) * CHAR_W),
             BAR_Y + 34, note, COL_WARN, 1);
     }
@@ -1104,11 +1123,6 @@ static void renderValues() {
 void setup() {
   pinMode(TFT_LED, OUTPUT);
   digitalWrite(TFT_LED, HIGH);
-
-  // Pulled up, so an unfitted switch reads high forever and the press counter
-  // simply never moves. Fitting one later needs no reflash.
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
-
   delay(500);
   SPI.begin();
 

@@ -132,6 +132,10 @@ class UIEvent:
     #: collected the bytes. This counter is the only delivery evidence there is:
     #: if it does not move after a push, the record did not land.
     records_parsed: Optional[int] = None
+    #: Panel Y of the last contact, or None. The bottom-bar target starts at
+    #: y=182, so a press there should land in the 180s-230s; a small value means
+    #: the touch axis is inverted on this panel.
+    touch_y: Optional[int] = None
 
     @property
     def reported(self) -> bool:
@@ -169,6 +173,7 @@ def parse_ui_event(payload: str) -> UIEvent:
     raw_z1: Optional[int] = None
     raw_z2: Optional[int] = None
     records: Optional[int] = None
+    touch_y: Optional[int] = None
 
     for part in str(payload or "").strip().split(","):
         key, sep, value = part.partition(":")
@@ -189,11 +194,14 @@ def parse_ui_event(payload: str) -> UIEvent:
                 raw_z2 = int(value)
             elif key == "RC":
                 records = int(value)
+            elif key == "TY":
+                touch_y = int(value)
         except ValueError:
             continue
     raw = (raw_z1, raw_z2) if raw_z1 is not None and raw_z2 is not None else None
     return UIEvent(press_count=press, touch_present=present,
-                   touch_pressure=pressure, touch_raw=raw, records_parsed=records)
+                   touch_pressure=pressure, touch_raw=raw, records_parsed=records,
+                   touch_y=touch_y)
 
 
 class BridgeGPSAdapter(GPSAdapter):

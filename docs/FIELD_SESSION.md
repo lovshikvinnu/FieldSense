@@ -83,22 +83,46 @@ The device node is `root:input`, so the service needs the `input` group -
 `fieldsense-field.service` declares it. Without it the node starts, finds no
 usable trigger, and waits forever with nothing in the log to say why.
 
-**2. The panel's touch target, and an optional switch on D5.**
+**2. The panel's touch target.**
 
-The XPT2046 laminated to this glass, if it is wired. The target is the
-**bottom bar only** - the integration record for this panel documents a
-lamination pinch that produces phantom touches near the *centre*, so the centre
-is not a safe place for a control. A press must be held ~180 ms, which phantom
-contacts do not survive. A momentary switch to ground on **D5** is read the
-same way, with the internal pull-up; if none is fitted the line stays high.
+The XPT2046 laminated to this glass. The target is the **bottom bar only** -
+the integration record for this panel documents a lamination pinch that
+produces phantom touches near the *centre*, so the centre is not a safe place
+for a control. A press must be held ~180 ms, which phantom contacts do not
+survive.
 
-> **Status on the assembled unit as of 2026-08-25: the touch controller does
-> not answer.** Its telemetry reads `TP:0,Z1:0,Z2:0` - both raw pressure
-> channels at zero, which is a MISO that returns nothing rather than an
-> untouched controller. The touch wiring (TOUCH_CS D4, TOUCH_IRQ D2, and MISO)
-> is not present on this build. The board keys are the working control, and the
-> firmware re-arms touch automatically the moment those channels start
-> answering, so wiring it later needs no reflash.
+### Touch wiring, and the pin that is easy to get wrong
+
+**On the UNO Q the hardware SPI is on the ANALOG header, not D11-D13.** From
+the board's device tree, `arduino_spi` is `spi2`:
+
+| Signal | Arduino pin | STM32 |
+| :--- | :--- | :--- |
+| SCK | **A5** | PB13 |
+| MISO | **A4** | PB14 |
+| MOSI | **A3** | PB15 |
+
+```
+T_CLK -> A5   shared with the display's SCK
+T_DIN -> A3   shared with the display's MOSI
+T_DO  -> A4   the hardware SPI MISO - see below
+T_CS  -> D5   dedicated
+T_IRQ -> D2   dedicated
+```
+
+**T_DO must be on A4.** The SPI peripheral samples MISO from PB14 and from
+nowhere else. Wiring T_DO to a general-purpose pin - D4 was tried on this unit -
+means the command byte clocks out correctly over the shared SCK/MOSI while the
+12-bit reply lands on a pin the hardware never reads. Every channel then returns
+zero, and the panel is indistinguishable from one with no controller fitted.
+Bit-banging is not an escape: SCK and MOSI are held by SPI2 through Zephyr
+pinctrl, and claiming them as GPIO would take the display down too.
+
+The ST7789 is write-only and never uses MISO, so A4 is free for touch.
+
+D5 previously carried an optional momentary START switch. That is gone - it was
+a fallback for a unit whose touch did not answer, and the board's VOL keys cover
+that case without occupying a pin.
 
 Whether touch answered is probed at boot and reported to Linux on the telemetry
 line, so it can be checked without opening the enclosure:
@@ -115,10 +139,19 @@ PY
 ```
 
 `TP:1` means a touch controller answered. `TP:0` means it did not, and the
-panel says `BUTTON ONLY` in its bottom bar - use the board keys, fit a switch on
-D5, or use `TRIGGER=enter` on a bench. `Z1`/`Z2` are the raw pressure channels,
-which separate "no controller" from "untouched controller" from "MISO stuck at
-a rail" - all three read `TZ:0`.
+panel says `USE VOL KEYS` in its bottom bar - so an operator does not keep
+pressing a target that does nothing.
+
+`Z1`/`Z2` are the raw pressure channels, which separate "no controller" from
+"untouched controller" from "MISO on the wrong pin" - all three read `TZ:0`.
+Untouched and working looks like a small `Z1` with a large `Z2`; `Z1:0,Z2:0` is
+the signature of a MISO returning nothing.
+
+`TY` is the panel Y where the last contact landed, or `-1` for none. The bottom
+bar starts at y=182 on a 240-tall screen, so a press there should report roughly
+180-235. A small `TY` from a press on the bottom means the touch axis is
+inverted on this panel and the `map()` in `contactInBar()` needs its ends
+swapped - the field exists so that costs one flash rather than a guess.
 
 `RC` is the number of `FS|` records the MCU has **parsed**. It is the only
 delivery evidence on the wire: the panel link is a TCP socket into
