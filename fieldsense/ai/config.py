@@ -120,6 +120,61 @@ def _env_float(name: str, default: float) -> float:
 
 
 @dataclass(frozen=True)
+class FidelityConfig:
+    """Configuration for the semantic fidelity checker.
+
+    Separate from GuardConfig on purpose. The guard decides whether a sentence
+    is SAFE - no dose, no product, no invented number. Fidelity decides whether
+    it is TRUE to the deterministic result it claims to describe. A narrative
+    can be perfectly safe and still say the opposite of the data.
+
+    Deliberately conservative. A false positive routes every narrative to the
+    template and silently disables the model, which is worse than a missed
+    contradiction because nothing reports it.
+    """
+
+    enabled: bool = True
+
+    # Scores at or below the first value read as deficient, at or above the
+    # second as excessive. The band between is not judged.
+    low_score_ceiling: float = 0.34
+    high_score_floor: float = 0.66
+
+    positive_terms: List[str] = field(default_factory=lambda: [
+        "good", "healthy", "excellent", "strong", "favourable", "favorable",
+        "high", "reliable", "robust",
+    ])
+    negative_terms: List[str] = field(default_factory=lambda: [
+        "poor", "degraded", "unhealthy", "critical", "bad", "low", "weak",
+        "limited", "unreliable",
+    ])
+
+    excess_moisture_terms: List[str] = field(default_factory=lambda: [
+        "high moisture", "excess moisture", "excessive moisture", "high water",
+        "waterlogged", "water logged", "too much water", "saturated soil",
+        "overwatered", "over-watered",
+    ])
+    deficient_moisture_terms: List[str] = field(default_factory=lambda: [
+        "low moisture", "moisture deficiency", "lack of moisture", "drought",
+        "dry soil", "too dry", "insufficient moisture",
+    ])
+
+    # Reversals of a WATER recommendation. A narrative telling a farmer to
+    # withhold water above a recommendation to review irrigation is the single
+    # most consequential contradiction this layer exists to catch.
+    water_reversal_terms: List[str] = field(default_factory=lambda: [
+        "reduce irrigation", "reduce watering", "stop irrigation",
+        "stop watering", "avoid irrigation", "avoid watering", "do not water",
+        "withhold water", "cease irrigation", "less water",
+    ])
+
+    minimising_terms: List[str] = field(default_factory=lambda: [
+        "mild", "minor", "negligible", "no concern", "not a concern",
+        "no action", "healthy condition",
+    ])
+
+
+@dataclass(frozen=True)
 class GuardConfig:
     """Safety boundary configuration for NarrativeGuard.
 

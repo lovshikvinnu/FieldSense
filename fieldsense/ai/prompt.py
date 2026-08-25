@@ -151,6 +151,10 @@ def build_retry_suffix(violations: List[str]) -> str:
             "product, or scheme.")
     if "UNSUPPORTED_NUMBER" in codes:
         corrections.append("Use no number that is not written in DATA.")
+    if "CONTRADICTS_CONTEXT" in codes:
+        corrections.append(
+            "Your answer disagreed with DATA. State what DATA says and nothing "
+            "different from it.")
 
     return (
         "\n\nYour previous answer was rejected. "

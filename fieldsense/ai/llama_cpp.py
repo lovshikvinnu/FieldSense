@@ -28,6 +28,7 @@ from typing import List, Optional, Tuple
 
 from .base import LocalLLMAdapter
 from .config import AIConfig, GuardConfig
+from .fidelity import FidelityChecker
 from .guard import NarrativeGuard
 from .mock import MockAIAdapter
 from .models import AINarrative, ExplanationContext, NarrativeStatus, ZoneContext
@@ -83,6 +84,7 @@ class LlamaCppAdapter(LocalLLMAdapter):
         config: Optional[AIConfig] = None,
         guard: Optional[NarrativeGuard] = None,
         fallback: Optional[MockAIAdapter] = None,
+        fidelity: Optional[FidelityChecker] = None,
     ) -> None:
         """Initialize the backend.
 
@@ -90,10 +92,15 @@ class LlamaCppAdapter(LocalLLMAdapter):
             config: AIConfig holding model path, binary path, and limits.
             guard: NarrativeGuard applied to every generated section.
             fallback: Template backend supplying per-section replacements.
+            fidelity: FidelityChecker rejecting sections that contradict the
+                deterministic result. Separate from the guard because safety
+                and accuracy are different questions - text can be perfectly
+                safe and still say the opposite of what was measured.
         """
         self.config = config or AIConfig()
         self.guard = guard or NarrativeGuard(GuardConfig())
         self.fallback = fallback or MockAIAdapter(guard=self.guard)
+        self.fidelity = fidelity or FidelityChecker()
         self._initialized = False
 
     # ------------------------------------------------------------- lifecycle
@@ -175,6 +182,7 @@ class LlamaCppAdapter(LocalLLMAdapter):
                 location=zone.zone_id,
                 max_chars=self.guard.config.max_zone_narrative_chars,
                 fallback_text=self.fallback.compose_zone_narrative(zone),
+                zone=zone,
             )
             zone_narratives[zone.zone_id] = text
             violations.extend(section_violations)
@@ -217,6 +225,7 @@ class LlamaCppAdapter(LocalLLMAdapter):
         location: str,
         max_chars: int,
         fallback_text: str,
+        zone: Optional[ZoneContext] = None,
     ) -> Tuple[str, bool, List[str], bool]:
         """Generate and guard one narrative section.
 
@@ -246,6 +255,12 @@ class LlamaCppAdapter(LocalLLMAdapter):
                 self._clean_output(raw, current_prompt), max_chars)
             section_violations = self.guard.inspect_text(
                 text, context, location=location, max_chars=max_chars
+            )
+            # Safety first, then truth. A section that says the opposite of the
+            # deterministic result is rejected here and falls back to the
+            # template through the same path as any other violation.
+            section_violations = section_violations + self.fidelity.inspect(
+                text, context, location=location, zone=zone
             )
             if not section_violations:
                 return text, True, all_violations, False
