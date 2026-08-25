@@ -212,6 +212,7 @@ The hardware side and the software side are both **frozen**. An adapter layer is
 | 🏗️ **[Architecture](docs/ARCHITECTURE.md)** | Module contracts, algorithms, decision log, frozen contracts |
 | 🔌 **[Hardware Specs](docs/HARDWARE.md)** | Component specs, register maps, wiring, datasheet references |
 | 🚀 **[Integration Runbook](docs/INTEGRATION_RUNBOOK.md)** | Four-step bring-up: acquisition → contract → pipeline → display |
+| 🥾 **[Field Session](docs/FIELD_SESSION.md)** | The operator's procedure: multi-sample workflow, sample quality, GPS jitter, offline guarantees |
 | 🧪 **[Testing Guide](TESTING_GUIDE.md)** | How to test every component, plus the test evidence register |
 | 🤖 **[AI Safety & Deployment](docs/AI_DEPLOYMENT.md)** | Local SLM setup, `NarrativeGuard`, and the display bridge |
 | 📋 [Status & Open Items](docs/STATUS.md) · [Project Handbook](docs/PROJECT_HANDBOOK.md) · [Demo Guide](docs/DEMO_GUIDE.md) | Requirements matrix, purpose, presentation walkthrough |
@@ -226,11 +227,21 @@ Python 3.10+. **No runtime dependencies.**
 python3 -m pip install -e ".[dev]"
 ```
 
-**Run the tests** — 294 should pass:
+**Run the tests** — 529 should pass:
 
 ```bash
 python3 -m pytest -q
 ```
+
+**Walk a field with the unit** (on the board, no network needed):
+
+```bash
+./scripts/run_field_session.sh
+```
+
+The panel says `READY — SAMPLE 1 / 5`. Place the probe, press START on the
+glass, and the device measures, judges, and stores that sample under its own
+index before telling you to move on. See **[docs/FIELD_SESSION.md](docs/FIELD_SESSION.md)**.
 
 **Execute the full pipeline:**
 

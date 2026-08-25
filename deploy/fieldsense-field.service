@@ -1,0 +1,125 @@
+# FieldSense AI — field session unit for the Arduino UNO Q.
+#
+# The unit for a unit somebody carries. On power-on it brings the board up,
+# waits for App Lab, waits for a satellite fix, and then hands the device to
+# whoever is holding it: the panel says READY, and the operator drives the rest
+# from the glass.
+#
+#   sudo cp deploy/fieldsense-field.service /etc/systemd/system/
+#   sudo systemctl enable --now fieldsense-field.service
+#   journalctl -u fieldsense-field -f
+#
+# HOW THIS DIFFERS FROM fieldsense-standalone.service
+# ---------------------------------------------------
+# That unit runs unattended V1 cycles on an interval: it collects five points
+# back to back with nobody present, which is right for a fixed installation and
+# wrong for a walk. This unit runs the multi-sample field workflow — one sample
+# per operator press, each stored under its own index as it is taken, and the
+# session recoverable after a power cut. Enable one or the other, not both:
+# they would contend for the probe and the panel link.
+#
+# fieldsense.service and fieldsense-refresh.service push the panel through a
+# Linux framebuffer, which cannot work on this board at all — the QRB2210
+# routes no SPI to the external headers, so no /dev/fbN exists for this panel.
+# This unit reaches it through arduino-router's monitor proxy, the only
+# transport that gets there.
+
+[Unit]
+Description=FieldSense AI field session (operator-driven multi-sample soil survey)
+Documentation=file:%h/FieldSense/FieldSense/docs/FIELD_SESSION.md
+# App Lab runs in Docker; without it there is no GPS gateway and no panel link.
+#
+# arduino-app-cli.service is ordered BEFORE this unit because starting an App Lab
+# app FLASHES THE MCU: its log carries openocd bank writes and
+# `Progress[sketch updated]`. Without this ordering the node could start first,
+# find no gateway, and call `arduino-app-cli app restart` while App Lab was still
+# mid-flash. Two openocd sessions on the same SWD lines produce
+# `Error requesting gpio line swdio`, which needs `sudo killall -9 openocd` to
+# clear — not something a unit in a field can do for itself.
+#
+# arduino-router.service owns the monitor proxy on 127.0.0.1:7500, which is the
+# only transport that reaches the panel on this board.
+After=docker.service arduino-router.service arduino-app-cli.service local-fs.target
+Wants=docker.service arduino-app-cli.service
+# No network unit of any kind, and no network-online.target. The unit must come
+# up with the radios off. Note that arduino-app-cli.service itself
+# Wants=network-online.target, so on a board with the radios off it may take
+# that target's full timeout before the gateway appears; GATEWAY_WAIT_SECONDS
+# below is sized to outlast that.
+
+[Service]
+Type=simple
+
+# Runs as the board's own login user, not a system account: the App Lab app is
+# owned by 'arduino' and the script needs docker access to find the container.
+User=arduino
+# 'dialout' to open the RS485 probe, 'docker' to find the App Lab container, and
+# 'input' to read /dev/input/by-path/platform-gpio-keys-event — the board's own
+# VOL+/VOL- keys, which are the operator's START control. Without 'input' the
+# node starts, finds no usable trigger, and waits forever with no error.
+SupplementaryGroups=dialout docker input
+
+WorkingDirectory=/home/arduino/FieldSense/FieldSense
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/home/arduino/FieldSense/FieldSense
+
+# --- the session ------------------------------------------------------------
+Environment=SAMPLES=5
+Environment=SENSOR_PORT=/dev/ttyUSB0
+
+# The operator control. 'any' watches every control the unit physically has:
+# the board's own VOL+/VOL- keys, which are soldered on and need nothing wired,
+# and the panel's touch target or a switch on D5 for units that have them.
+# 'enter' needs a TTY this unit does not have, and 'auto' advances samples on a
+# timer, which is a bench rehearsal and not an operator.
+Environment=TRIGGER=any
+
+# Wait for a lock before the panel says READY. A press with no fix is not
+# corrupting — the workflow retries it — but it does send someone to walk for
+# nothing, which is worse in a field than waiting here.
+Environment=REQUIRE_GPS_FIX=1
+Environment=GPS_FIX_TIMEOUT=300
+
+# --- App Lab / transports ---------------------------------------------------
+Environment=APP_NAME=user:unified_v1
+Environment=GATEWAY_HOST=auto
+Environment=GATEWAY_PORT=9876
+# Wait this long for App Lab's gateway before falling back to restarting the
+# app. Restarting costs an MCU flash, so waiting is strictly cheaper.
+Environment=GATEWAY_WAIT_SECONDS=180
+Environment=MCU_PORT=127.0.0.1:7500
+
+# --- outputs ----------------------------------------------------------------
+Environment=SESSION_ROOT=/home/arduino/FieldSense/FieldSense/artifacts/sessions
+Environment=DATASET=field_test_live_hardware.json
+Environment=OUTPUT_DIR=artifacts
+
+# Optional local SLM. Absent weights are normal — the AI factory falls back to
+# the deterministic template backend, and the fidelity gate still applies.
+#
+# No FIELDSENSE_MODEL_PATH here on purpose. It used to name a file that has
+# never existed on this board, and because the environment outranks discovery
+# that one line was enough to force the template backend while Qwen sat in
+# models/. AIConfig.from_env() resolves the installed weights from the package
+# location, which is systemd-safe — the original reason for an absolute path.
+Environment=FIELDSENSE_AI_BACKEND=AUTO
+
+# --loop so the unit is ready for the next survey without a power cycle. Each
+# pass starts a NEW session; RESUME is deliberately not set here, because a unit
+# that silently appended today's samples to yesterday's session would produce a
+# dataset nobody could explain.
+ExecStart=/home/arduino/FieldSense/FieldSense/scripts/run_field_session.sh --loop
+
+# The panel is the only output an operator has, so keep the unit alive rather
+# than leaving a stale frame after one bad session.
+Restart=always
+RestartSec=30
+
+NoNewPrivileges=yes
+# PrivateTmp only. ProtectHome would hide WorkingDirectory, and ProtectSystem
+# is left off because the App Lab tooling this unit shells out to writes outside
+# the home directory.
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

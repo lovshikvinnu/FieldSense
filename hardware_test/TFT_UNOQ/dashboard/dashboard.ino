@@ -1,39 +1,21 @@
-// FieldSense - MCU-rendered dashboard for the 2.8" ST7789 panel.
+// FieldSense AI - display-only bench panel, 320x240 landscape.
 //
-// WHY THIS REPLACES PIXEL STREAMING
+// DERIVED FROM hardware_test/fieldsense_unoq/fieldsense_unoq.ino, which is the
+// firmware the assembled unit actually runs. This variant drops the GPS
+// receiver and the operator's START control and keeps only the panel, so the
+// display path can be exercised on a bare board with no receiver attached and
+// nobody pressing anything.
 //
-// frame_receiver.ino ships a full 240x320 RGB565 frame - 153,600 bytes - from
-// the QRB2210 to this MCU. On the UNO Q that cannot work, and the numbers say
-// so rather than any hunch:
+// KEEP THE RECORD PARSER IN STEP WITH THE UNIFIED SKETCH.
+// tests/test_panel_record_contract.py compares applyPair() across both files
+// and fails if they diverge, because a key handled in one and ignored in the
+// other is a value that silently never appears on one of the two panels.
+// tests/test_landscape_panel.py holds the two layouts to the same orientation
+// for the same reason.
 //
-//   * Serial here is Arduino_RouterBridge's Monitor, and every
-//     Serial.available() costs ~595 ms whether or not data is waiting - it is
-//     a mon/read RPC round trip, measured at 1.68 calls/second by
-//     link_probe.ino over a 247-second run.
-//   * That caps the link at roughly 512 bytes per 595 ms, about 860 B/s.
-//     A single frame would take three minutes.
-//
-// So this sketch does not receive pixels. It receives VALUES - one short
-// newline-terminated record, about 70 bytes - and draws the dashboard itself
-// with Adafruit_GFX. Under a second even at the measured rate, and the panel
-// stays readable when nothing arrives at all.
-//
-// RECORD FORMAT, newline-terminated, order-independent, unknown keys ignored:
-//
-//   FS|f=North Paddock|s=HEALTHY|h=0.79|n=5|v=5|r=0|z=2|c=4|e=LIMITED|o=1
-//
-//     f  field name          (text)
-//     s  soil health status  (text, drives the status colour)
-//     h  soil health score   (0..1)
-//     n  total samples       v  valid samples      r  rejected samples
-//     z  zone count          c  recommendation count
-//     e  evidence level      (text)
-//     o  offline mode        (1/0)
-//
-// Values persist until replaced, so a dropped update leaves the last good
-// reading on screen rather than blanking it. The header line always shows
-// link state and seconds since the last accepted record, so the panel never
-// lies about how fresh it is.
+// The record format, the palette, the layout constants and the renderer are
+// otherwise identical to the unified sketch; see its header for why the panel
+// receives values rather than pixels, and why it is landscape.
 
 #include <SPI.h>
 
@@ -45,13 +27,36 @@
 #include <Adafruit_ST7789.h>
 #include <Arduino_RouterBridge.h>
 
+#include <stdio.h>    // snprintf, used by every value the panel formats
+#include <string.h>   // strcmp/strlen/strchr, used by the record parser
+
 #define TFT_CS    10
 #define TFT_DC     9
 #define TFT_RST    8
 #define TFT_LED    6   // D7 is MAX485_RE_DE for the RS485 soil bus - never here
 
-static const uint16_t PANEL_W = 240;
-static const uint16_t PANEL_H = 320;
+// XPT2046 resistive touch, laminated to this panel and sharing the SPI bus.
+// Pin assignment from hardware_test/TFT_UNOQ/TFT_UNOQ_INTEGRATION.md, which is
+// the record of the bring-up that verified this controller on this glass.
+#define TOUCH_CS   4
+#define TOUCH_IRQ  2
+
+// Optional momentary START switch to ground. D5 is claimed by nothing else on
+// this board: D0/D1 are the GPS UART, D6 the backlight, D8/9/10 the display,
+// D2/D4 the touch controller, and D7 is reserved for MAX485_RE_DE even though
+// the soil bus now hangs off Linux.
+#define BUTTON_PIN 5
+
+// LANDSCAPE. The glass is 240x320; setRotation(1) presents it as 320x240 and
+// every coordinate in this file is written against that.
+static const uint16_t PANEL_W = 320;
+static const uint16_t PANEL_H = 240;
+static const uint8_t  PANEL_ROTATION = 1;
+
+// Adafruit_GFX's built-in font is 6x8 px per character at size 1 and scales by
+// integer multiples. Named here because every fit calculation below uses them.
+static const uint8_t  CHAR_W = 6;
+static const uint8_t  CHAR_H = 8;
 
 // Deep slate, matching the dashboard HTML so the panel and the browser view
 // read as the same product rather than two different tools.
@@ -66,22 +71,64 @@ static const uint16_t COL_ACCENT = 0x05FF;
 
 Adafruit_ST7789 tft = Adafruit_ST7789(&SPI, TFT_CS, TFT_DC, TFT_RST);
 
+// --------------------------------------------------------- landscape layout
+//
+// One place for every coordinate. A layout constant that appears twice is a
+// layout constant that will disagree with itself after the first edit, and on
+// this board finding out costs a ninety-second flash-and-look cycle.
+//
+//   0            HEADER    FIELDSENSE            SAMPLE 2 / 5     26
+//   30           GPS       FIX  SAT 10  HDOP 1.2      updated 3s  22
+//   56           ACTION    the one large operator instruction     48
+//   108          SOIL      moisture / pH / EC / N / P / K         70
+//   182          BAR       START target, or the field result      58
+//
+static const int16_t HEADER_Y   = 0,   HEADER_H = 26;
+static const int16_t GPS_Y      = 30,  GPS_H    = 22;
+static const int16_t ACTION_Y   = 56,  ACTION_H = 48;
+static const int16_t SOIL_Y     = 108, SOIL_H   = 70;
+static const int16_t BAR_Y      = 182, BAR_H    = 58;
+static const int16_t MARGIN     = 6;
+
+// Two columns inside the soil card, and four label/value rows in each.
+static const int16_t SOIL_COL_A = MARGIN + 8;
+static const int16_t SOIL_COL_B = PANEL_W / 2 + 6;
+static const int16_t SOIL_ROW_H = 15;
+
 // ------------------------------------------------------------- panel state
 
-static char     fieldName[24] = "FieldSense";
-static char     statusText[16] = "NO DATA";
-static char     evidence[16]  = "-";
-static float    healthScore   = -1.0f;   // negative means "never received"
-static int32_t  totalSamples  = -1;
-static int32_t  validSamples  = -1;
+static char     fieldName[24]   = "FieldSense";
+static char     statusText[16]  = "NO DATA";
+static char     evidence[16]    = "-";
+static char     workflowState[20] = "BOOT";
+static char     actionLine[40]  = "STARTING";
+static char     lastQuality[14] = "";
+static float    healthScore     = -1.0f;   // negative means "never received"
+static int32_t  totalSamples    = -1;
+static int32_t  validSamples    = -1;
 static int32_t  rejectedSamples = -1;
-static int32_t  zoneCount     = -1;
-static int32_t  recCount      = -1;
-static int32_t  offlineMode   = -1;
+static int32_t  zoneCount       = -1;
+static int32_t  recCount        = -1;
+static int32_t  offlineMode     = -1;
+static int32_t  sampleIndex     = -1;
+static int32_t  plannedSamples  = -1;
+static int32_t  distinctLocs    = -1;
+static float    soilMoisture    = -1.0f;
+static float    soilPh          = -1.0f;
+static float    soilEc          = -1.0f;
+static int32_t  soilN           = -1;
+static int32_t  soilP           = -1;
+static int32_t  soilK           = -1;
 
 static uint32_t lastRecordMs  = 0;
 static uint32_t recordCount   = 0;
 static bool     dirty         = true;
+
+// Redrawing the static chrome is what caused the black wipe (see renderChrome
+// below), so it happens once at boot and again only when the bottom bar has to
+// change shape - armed green button, or flat result strip.
+static bool     barIsButton   = false;
+static bool     barShapeKnown = false;
 
 static char     lineBuf[256];
 static size_t   lineLen = 0;
@@ -103,6 +150,9 @@ static void applyPair(const char *key, const char *value) {
   if (!strcmp(key, "f"))      copyField(fieldName, sizeof(fieldName), value);
   else if (!strcmp(key, "s")) copyField(statusText, sizeof(statusText), value);
   else if (!strcmp(key, "e")) copyField(evidence, sizeof(evidence), value);
+  else if (!strcmp(key, "t")) copyField(workflowState, sizeof(workflowState), value);
+  else if (!strcmp(key, "a")) copyField(actionLine, sizeof(actionLine), value);
+  else if (!strcmp(key, "q")) copyField(lastQuality, sizeof(lastQuality), value);
   else if (!strcmp(key, "h")) healthScore     = atof(value);
   else if (!strcmp(key, "n")) totalSamples    = atol(value);
   else if (!strcmp(key, "v")) validSamples    = atol(value);
@@ -110,6 +160,15 @@ static void applyPair(const char *key, const char *value) {
   else if (!strcmp(key, "z")) zoneCount       = atol(value);
   else if (!strcmp(key, "c")) recCount        = atol(value);
   else if (!strcmp(key, "o")) offlineMode     = atol(value);
+  else if (!strcmp(key, "i")) sampleIndex     = atol(value);
+  else if (!strcmp(key, "m")) plannedSamples  = atol(value);
+  else if (!strcmp(key, "d")) distinctLocs    = atol(value);
+  else if (!strcmp(key, "w")) soilMoisture    = atof(value);
+  else if (!strcmp(key, "p")) soilPh          = atof(value);
+  else if (!strcmp(key, "k")) soilEc          = atof(value);
+  else if (!strcmp(key, "x")) soilN           = atol(value);
+  else if (!strcmp(key, "y")) soilP           = atol(value);
+  else if (!strcmp(key, "j")) soilK           = atol(value);
 }
 
 // Split "FS|k=v|k=v|..." in place. Returns false if the record is not ours,
@@ -136,18 +195,46 @@ static bool parseRecord(char *text) {
   return true;
 }
 
+// True while the workflow is waiting for the operator to press START. Only
+// these two states arm the bottom bar; a press in any other state is noise.
+static bool workflowArmed() {
+  return !strcmp(workflowState, "READY") ||
+         !strcmp(workflowState, "READY_NEXT_SAMPLE");
+}
+
+// ------------------------------------------------- GPS placeholders
+
+// This sketch carries no receiver. The GPS strip still draws, so the layout is
+// exercised exactly as it is on the assembled unit, but it reports the truth:
+// there is nothing attached to report a fix.
+static String latest_gps_csv = "NO_GPS_IN_THIS_SKETCH";
+static const char *gpsSatsText() { return "--"; }
+static const char *gpsHdopText() { return "--"; }
+
+// The operator control lives in the unified sketch. Declared here because the
+// renderer tells the operator when no touch controller answered, and a bench
+// panel with no control at all should not raise that warning.
+static bool touchPresent = true;
+
 // ------------------------------------------------------------- drawing
 
 static uint16_t statusColour() {
   if (!strcmp(statusText, "HEALTHY"))  return COL_GOOD;
+  if (!strcmp(statusText, "GOOD"))     return COL_GOOD;
   if (!strcmp(statusText, "DEGRADED")) return COL_WARN;
   if (!strcmp(statusText, "STRESSED")) return COL_WARN;
+  if (!strcmp(statusText, "MODERATE")) return COL_WARN;
+  if (!strcmp(statusText, "POOR"))     return COL_BAD;
   if (!strcmp(statusText, "CRITICAL")) return COL_BAD;
   return COL_DIM;
 }
 
-static void drawCard(int16_t y, int16_t h) {
-  tft.fillRoundRect(6, y, PANEL_W - 12, h, 4, COL_CARD);
+static uint16_t qualityColour() {
+  if (!strcmp(lastQuality, "VALID"))      return COL_GOOD;
+  if (!strcmp(lastQuality, "SUSPICIOUS")) return COL_WARN;
+  if (!strcmp(lastQuality, "RETRY"))      return COL_WARN;
+  if (!strcmp(lastQuality, "REJECTED"))   return COL_BAD;
+  return COL_DIM;
 }
 
 static void label(int16_t x, int16_t y, const char *text, uint16_t colour, uint8_t size) {
@@ -157,45 +244,58 @@ static void label(int16_t x, int16_t y, const char *text, uint16_t colour, uint8
   tft.print(text);
 }
 
-static void statRow(int16_t y, const char *name, int32_t value, uint16_t colour) {
-  label(14, y, name, COL_DIM, 1);
-  tft.setCursor(150, y);
+// Largest text size at which `text` fits inside `width`, floor of 1.
+//
+// This is what keeps the instruction line from clipping. "SAMPLE 1 SAVED" gets
+// size 3 and reads across a field; "PLACE PROBE - PRESS START" gets size 2 and
+// still fits on one line. Neither is truncated, and neither is hard-coded.
+static uint8_t fitTextSize(const char *text, int16_t width, uint8_t maxSize) {
+  size_t len = strlen(text);
+  if (len == 0) return maxSize;
+  for (uint8_t size = maxSize; size > 1; size--) {
+    if ((int16_t)(len * CHAR_W * size) <= width) {
+      return size;
+    }
+  }
+  return 1;
+}
+
+// Draw `text` at a fixed left edge, truncated to the width it is given.
+//
+// Adafruit_GFX wraps by default: a string wider than the screen continues on
+// the next line, which here would land on top of the band below. Every
+// host-supplied string on this panel goes through this or drawCentered(), so
+// no value the host sends can push another one off the glass.
+static void drawClipped(int16_t x, int16_t y, int16_t w,
+                        const char *text, uint16_t colour, uint8_t size) {
+  size_t maxChars = (size_t)(w / (CHAR_W * size));
+  size_t len = strlen(text);
+  if (len > maxChars) len = maxChars;
+  tft.setCursor(x, y);
   tft.setTextColor(colour);
-  tft.setTextSize(1);
-  if (value < 0) {
-    tft.print("--");
-  } else {
-    tft.print(value);
+  tft.setTextSize(size);
+  for (size_t i = 0; i < len; i++) {
+    tft.write(text[i]);
   }
 }
 
-// NEVER call fillScreen() on a repaint.
-//
-// The first version redrew the whole panel once a second, background and all.
-// There is no framebuffer between us and the ST7789 - every draw call lands on
-// glass immediately - so a full clear-and-redraw is visible as a hard flicker,
-// the screen emptying and refilling once a second. Splitting the paint in two
-// fixes it: the chrome is written once and left alone, and each value clears
-// only its own few pixels before reprinting.
+// Draw `text` centred in a box, clipped rather than allowed to overflow it.
+static void drawCentered(int16_t x, int16_t y, int16_t w, int16_t h,
+                         const char *text, uint16_t colour, uint8_t maxSize) {
+  uint8_t size = fitTextSize(text, w - 8, maxSize);
+  size_t len = strlen(text);
+  size_t maxChars = (size_t)((w - 8) / (CHAR_W * size));
+  if (maxChars < 1) maxChars = 1;
+  if (len > maxChars) len = maxChars;
 
-// Static chrome: background, title, card shapes, fixed labels. Drawn once.
-static void renderChrome() {
-  tft.fillScreen(COL_BG);
-  label(8, 8, "FIELDSENSE", COL_ACCENT, 2);
-
-  drawCard(40, 26);                                  // field name
-  drawCard(72, 58);                                  // headline status
-  label(14, 80, "SOIL HEALTH", COL_DIM, 1);
-  drawCard(138, 44);                                 // score
-  label(14, 146, "SCORE", COL_DIM, 1);
-  drawCard(190, 84);                                 // counts
-  label(14, 198, "samples total",   COL_DIM, 1);
-  label(14, 212, "valid",           COL_DIM, 1);
-  label(14, 226, "rejected",        COL_DIM, 1);
-  label(14, 240, "zones",           COL_DIM, 1);
-  label(14, 254, "recommendations", COL_DIM, 1);
-  drawCard(284, 28);                                 // provenance
-  label(14, 292, "evidence", COL_DIM, 1);
+  int16_t textW = (int16_t)(len * CHAR_W * size);
+  int16_t textH = (int16_t)(CHAR_H * size);
+  tft.setCursor(x + (w - textW) / 2, y + (h - textH) / 2);
+  tft.setTextColor(colour);
+  tft.setTextSize(size);
+  for (size_t i = 0; i < len; i++) {
+    tft.write(text[i]);
+  }
 }
 
 // Clear just this value's box, then print into it. Width is generous enough
@@ -208,8 +308,66 @@ static void putValue(int16_t x, int16_t y, int16_t w, int16_t h,
   tft.setTextSize(size);
 }
 
-static void putCount(int16_t y, int32_t value, uint16_t colour) {
-  putValue(150, y, 80, 8, COL_CARD, colour, 1);
+// NEVER call fillScreen() on a periodic repaint.
+//
+// render() used to clear the whole panel and redraw it once a second. There is
+// no framebuffer between this sketch and the ST7789 - every draw lands on glass
+// immediately - so the clear is visible: at the library default 24 MHz a full
+// clear is tens of milliseconds of blank panel, followed by the elements
+// reappearing one at a time. Physically that reads as a black wipe sweeping the
+// panel once per second, which is what was observed on hardware.
+//
+// The split below is the whole fix: chrome once, values per update.
+
+// Static chrome: background, title, card shapes, fixed labels. Drawn once.
+static void renderChrome() {
+  tft.fillScreen(COL_BG);
+
+  // Header band
+  tft.fillRect(0, HEADER_Y, PANEL_W, HEADER_H, COL_CARD);
+  label(MARGIN + 2, 5, "FIELDSENSE", COL_ACCENT, 2);
+  tft.drawFastHLine(0, HEADER_H, PANEL_W, COL_DIM);
+
+  // Soil card and its fixed labels. Two columns, because 320 px of width is
+  // the whole reason this layout exists.
+  tft.fillRoundRect(MARGIN, SOIL_Y, PANEL_W - 2 * MARGIN, SOIL_H, 4, COL_CARD);
+  label(SOIL_COL_A, SOIL_Y + 6,                   "MOISTURE", COL_DIM, 1);
+  label(SOIL_COL_A, SOIL_Y + 6 + SOIL_ROW_H,      "PH",       COL_DIM, 1);
+  label(SOIL_COL_A, SOIL_Y + 6 + SOIL_ROW_H * 2,  "EC",       COL_DIM, 1);
+  label(SOIL_COL_B, SOIL_Y + 6,                   "N",        COL_DIM, 1);
+  label(SOIL_COL_B, SOIL_Y + 6 + SOIL_ROW_H,      "P",        COL_DIM, 1);
+  label(SOIL_COL_B, SOIL_Y + 6 + SOIL_ROW_H * 2,  "K",        COL_DIM, 1);
+  label(SOIL_COL_A, SOIL_Y + 6 + SOIL_ROW_H * 3,  "SAMPLES",  COL_DIM, 1);
+  label(SOIL_COL_B, SOIL_Y + 6 + SOIL_ROW_H * 3,  "SITES",    COL_DIM, 1);
+}
+
+// The bottom bar changes shape, not just contents: a green START target when
+// the workflow is armed, a flat strip otherwise. Redrawing that shape is the
+// only chrome change after boot, and it happens on a state edge rather than on
+// every repaint so it cannot reintroduce the wipe.
+static void renderBarChrome(bool asButton) {
+  if (asButton) {
+    tft.fillRoundRect(MARGIN, BAR_Y, PANEL_W - 2 * MARGIN, BAR_H - 2, 6, COL_GOOD);
+    tft.drawRoundRect(MARGIN, BAR_Y, PANEL_W - 2 * MARGIN, BAR_H - 2, 6, COL_TEXT);
+  } else {
+    tft.fillRoundRect(MARGIN, BAR_Y, PANEL_W - 2 * MARGIN, BAR_H - 2, 6, COL_CARD);
+  }
+  barIsButton = asButton;
+  barShapeKnown = true;
+}
+
+static void putFloat(int16_t x, int16_t y, int16_t w, float value,
+                     uint8_t decimals, uint16_t colour) {
+  putValue(x, y, w, CHAR_H, COL_CARD, colour, 1);
+  if (value < 0.0f) {
+    tft.print("--");
+  } else {
+    tft.print(value, decimals);
+  }
+}
+
+static void putInt(int16_t x, int16_t y, int16_t w, int32_t value, uint16_t colour) {
+  putValue(x, y, w, CHAR_H, COL_CARD, colour, 1);
   if (value < 0) {
     tft.print("--");
   } else {
@@ -217,61 +375,140 @@ static void putCount(int16_t y, int32_t value, uint16_t colour) {
   }
 }
 
-// Everything that can change. Called on new data, and once a second so the
-// age counter stays truthful.
+// Everything that can change. Called on new data, and once a second so the age
+// counter stays truthful.
 static void renderValues() {
+  char buf[48];
+
+  // Header right: which sample, out of how many. The counter an operator
+  // checks before deciding whether to walk on.
+  putValue(PANEL_W - 150, 5, 144, CHAR_H * 2, COL_CARD, COL_TEXT, 2);
+  if (sampleIndex > 0 && plannedSamples > 0) {
+    snprintf(buf, sizeof(buf), "SAMPLE %ld/%ld", (long)sampleIndex, (long)plannedSamples);
+    int16_t width = (int16_t)(strlen(buf) * CHAR_W * 2);
+    tft.setCursor(PANEL_W - MARGIN - 2 - width, 5);
+    tft.print(buf);
+  }
+
+  // GPS strip. Fix state, satellites and HDOP come straight from this sketch's
+  // own GGA parse - the host is never asked to tell the panel what the receiver
+  // attached to this MCU is doing.
+  putValue(MARGIN, GPS_Y, PANEL_W - 2 * MARGIN, CHAR_H, COL_BG, COL_DIM, 1);
+  bool haveFix = (strncmp(latest_gps_csv.c_str(), "FIX_OK", 6) == 0);
+  tft.setTextColor(haveFix ? COL_GOOD : COL_WARN);
+  tft.print(haveFix ? "GPS FIX" : "GPS SEARCHING");
+  tft.setTextColor(COL_DIM);
+  tft.print("   SAT ");
+  tft.print(gpsSatsText());
+  tft.print("   HDOP ");
+  tft.print(gpsHdopText());
+
+  // Link freshness - always honest about it.
   bool everReceived = recordCount > 0;
   uint32_t ageS = everReceived ? (millis() - lastRecordMs) / 1000 : 0;
-
-  putValue(8, 28, PANEL_W - 16, 8, COL_BG,
-           everReceived ? (ageS > 30 ? COL_WARN : COL_DIM) : COL_WARN, 1);
   if (!everReceived) {
-    tft.print("waiting for data...");
+    snprintf(buf, sizeof(buf), "NO HOST");
   } else {
-    tft.print("updated ");
-    tft.print(ageS);
-    tft.print("s ago  #");
-    tft.print(recordCount);
+    snprintf(buf, sizeof(buf), "%lus #%lu", (unsigned long)ageS, (unsigned long)recordCount);
   }
+  int16_t linkW = (int16_t)(strlen(buf) * CHAR_W);
+  putValue(PANEL_W - MARGIN - linkW, GPS_Y, linkW, CHAR_H, COL_BG,
+           everReceived ? (ageS > 30 ? COL_WARN : COL_DIM) : COL_WARN, 1);
+  tft.print(buf);
 
-  putValue(14, 48, PANEL_W - 28, 8, COL_CARD, COL_TEXT, 1);
-  tft.print(fieldName);
+  // Session label, small, above the instruction.
+  tft.fillRect(MARGIN, GPS_Y + 11, PANEL_W - 2 * MARGIN, CHAR_H, COL_BG);
+  drawClipped(MARGIN, GPS_Y + 11, PANEL_W - 2 * MARGIN, fieldName, COL_DIM, 1);
 
-  putValue(14, 96, PANEL_W - 28, 16, COL_CARD, statusColour(), 2);
-  tft.print(statusText);
+  // THE INSTRUCTION. The largest thing on the panel, and the only thing an
+  // operator reads while walking.
+  tft.fillRect(MARGIN, ACTION_Y, PANEL_W - 2 * MARGIN, ACTION_H, COL_BG);
+  uint16_t actionColour = COL_TEXT;
+  if (!strcmp(workflowState, "ERROR"))              actionColour = COL_BAD;
+  else if (!strcmp(workflowState, "MEASURING"))     actionColour = COL_ACCENT;
+  else if (!strcmp(workflowState, "SAMPLE_SAVED"))  actionColour = COL_GOOD;
+  else if (!strcmp(workflowState, "PROCESSING"))    actionColour = COL_ACCENT;
+  drawCentered(MARGIN, ACTION_Y, PANEL_W - 2 * MARGIN, ACTION_H,
+               actionLine, actionColour, 3);
 
-  putValue(150, 146, 70, 8, COL_CARD, COL_TEXT, 1);
-  if (healthScore < 0.0f) {
+  // Soil card values, two columns.
+  int16_t vA = SOIL_COL_A + 64, vB = SOIL_COL_B + 22;
+  putFloat(vA, SOIL_Y + 6,                  60, soilMoisture, 1, COL_TEXT);
+  if (soilMoisture >= 0.0f) tft.print("%");
+  putFloat(vA, SOIL_Y + 6 + SOIL_ROW_H,     60, soilPh,       2, COL_TEXT);
+  putFloat(vA, SOIL_Y + 6 + SOIL_ROW_H * 2, 60, soilEc,       2, COL_TEXT);
+  putInt(vB, SOIL_Y + 6,                    60, soilN, COL_TEXT);
+  putInt(vB, SOIL_Y + 6 + SOIL_ROW_H,       60, soilP, COL_TEXT);
+  putInt(vB, SOIL_Y + 6 + SOIL_ROW_H * 2,   60, soilK, COL_TEXT);
+
+  // Stored samples, and how many of them are far enough apart to be separate
+  // places. The second number is the honest denominator for any spatial claim.
+  putValue(vA, SOIL_Y + 6 + SOIL_ROW_H * 3, 60, CHAR_H, COL_CARD, COL_TEXT, 1);
+  if (totalSamples < 0) {
     tft.print("--");
   } else {
-    tft.print(healthScore, 2);
+    tft.print(totalSamples);
+    if (validSamples >= 0) { tft.print(" OK "); tft.print(validSamples); }
+  }
+  putInt(vB, SOIL_Y + 6 + SOIL_ROW_H * 3, 60, distinctLocs, COL_TEXT);
+
+  // Bottom bar. Shape follows the workflow; contents follow the state.
+  bool wantButton = workflowArmed();
+  if (!barShapeKnown || wantButton != barIsButton) {
+    renderBarChrome(wantButton);
   }
 
-  // The bar reads from across a room; the number does not. Always clear the
-  // full track first or a shrinking score would leave the old bar behind.
-  tft.fillRect(14, 160, PANEL_W - 40, 8, COL_BG);
-  if (healthScore >= 0.0f) {
-    int16_t barW = (int16_t)((PANEL_W - 40) * healthScore);
-    if (barW < 0) barW = 0;
-    if (barW > PANEL_W - 40) barW = PANEL_W - 40;
-    tft.fillRect(14, 160, barW, 8, statusColour());
-  }
-
-  putCount(198, totalSamples,    COL_TEXT);
-  putCount(212, validSamples,    COL_GOOD);
-  putCount(226, rejectedSamples, rejectedSamples > 0 ? COL_WARN : COL_DIM);
-  putCount(240, zoneCount,       COL_TEXT);
-  putCount(254, recCount,        COL_ACCENT);
-
-  putValue(90, 292, PANEL_W - 104, 8, COL_CARD, COL_TEXT, 1);
-  tft.print(evidence);
-
-  putValue(14, 302, PANEL_W - 28, 8, COL_BG,
-           offlineMode == 1 ? COL_GOOD : COL_BG, 1);
-  if (offlineMode == 1) {
-    tft.print("OFFLINE MODE");
+  if (wantButton) {
+    snprintf(buf, sizeof(buf), "PRESS START");
+    drawCentered(MARGIN, BAR_Y, PANEL_W - 2 * MARGIN, BAR_H - 2, buf, COL_BG, 3);
+  } else if (!strcmp(workflowState, "RESULT")) {
+    tft.fillRect(MARGIN + 2, BAR_Y + 2, PANEL_W - 2 * MARGIN - 4, BAR_H - 6, COL_CARD);
+    label(SOIL_COL_A, BAR_Y + 8, "FIELD STATUS", COL_DIM, 1);
+    // Score bar, which is what reads from a distance.
+    int16_t trackX = PANEL_W / 2 + 10, trackW = PANEL_W / 2 - 10 - MARGIN - 6;
+    // The status is clipped to the space left of the score bar. Every status
+    // this pipeline emits fits, but the host owns this string and a long one
+    // would otherwise run under the bar rather than being cut short.
+    drawClipped(SOIL_COL_A, BAR_Y + 22, trackX - SOIL_COL_A - 6,
+                statusText, statusColour(), 2);
+    tft.fillRect(trackX, BAR_Y + 26, trackW, 10, COL_BG);
+    if (healthScore >= 0.0f) {
+      int16_t fill = (int16_t)(trackW * healthScore);
+      if (fill < 0) fill = 0;
+      if (fill > trackW) fill = trackW;
+      tft.fillRect(trackX, BAR_Y + 26, fill, 10, statusColour());
+      putValue(trackX, BAR_Y + 8, trackW, CHAR_H, COL_CARD, COL_TEXT, 1);
+      tft.print(healthScore, 2);
+      tft.print("  Z");
+      tft.print(zoneCount < 0 ? 0 : zoneCount);
+      tft.print("  A");
+      tft.print(recCount < 0 ? 0 : recCount);
+    }
+  } else {
+    tft.fillRect(MARGIN + 2, BAR_Y + 2, PANEL_W - 2 * MARGIN - 4, BAR_H - 6, COL_CARD);
+    // State token, plus the last sample's quality verdict when there is one.
+    // READY_NEXT_SAMPLE is the longest state at 17 characters; the clip keeps
+    // it off the quality label whatever the host sends.
+    int16_t qualityW = (int16_t)(strlen(lastQuality) * CHAR_W);
+    int16_t stateW = PANEL_W - MARGIN - 8 - qualityW - SOIL_COL_A - 6;
+    drawClipped(SOIL_COL_A, BAR_Y + 10, stateW, workflowState, COL_ACCENT, 2);
+    if (lastQuality[0]) {
+      label(PANEL_W - MARGIN - 8 - qualityW, BAR_Y + 14, lastQuality,
+            qualityColour(), 1);
+    }
+    if (offlineMode == 1) {
+      label(SOIL_COL_A, BAR_Y + 34, "OFFLINE", COL_GOOD, 1);
+    }
+    if (!touchPresent) {
+      // Say so on the glass. A unit whose only START control is a button
+      // nobody fitted must not look identical to one whose touch panel works.
+      const char *note = "BUTTON ONLY";
+      label(PANEL_W - MARGIN - 8 - (int16_t)(strlen(note) * CHAR_W),
+            BAR_Y + 34, note, COL_WARN, 1);
+    }
   }
 }
+
 
 // ------------------------------------------------------------- lifecycle
 
@@ -281,26 +518,16 @@ void setup() {
   delay(500);
   SPI.begin();
 
-  tft.init(PANEL_W, PANEL_H);
-  tft.setRotation(0);
+  // Native 240x320 glass, driven as a 320x240 landscape surface. Every
+  // coordinate in this file is written against the rotated surface.
+  tft.init(240, 320);
+  tft.setRotation(PANEL_ROTATION);
   tft.invertDisplay(false);
-
-  // PAINT BEFORE THE LINK. tft.init() wakes the panel and lights the
-  // backlight but leaves display RAM uninitialised, which reads as a blank
-  // white screen. Bridge.begin() and Monitor.begin() both talk to the router
-  // over RPC - the same path measured at ~595 ms per call, which can stall or
-  // wedge outright. Anything drawn after them is not drawn at all when they
-  // hang, and the only symptom is a white panel that says nothing.
-  //
-  // So the dashboard goes up first, reading "waiting for data...", and the
-  // link is brought up underneath it. A white screen now means the SPI or
-  // display init failed, which is a genuinely different fault.
-  renderChrome();
-  renderValues();
 
   Bridge.begin();
   Monitor.begin(115200);
 
+  renderChrome();
   renderValues();
 }
 
@@ -330,8 +557,8 @@ void loop() {
     }
   }
 
-  // Values only - the chrome is already on the glass and redrawing it is what
-  // caused the flicker. Once a second is enough for the age counter.
+  // Values only - the chrome is already on the glass, and redrawing it is what
+  // caused the black wipe.
   static uint32_t lastPaint = 0;
   if (dirty || millis() - lastPaint > 1000) {
     dirty = false;

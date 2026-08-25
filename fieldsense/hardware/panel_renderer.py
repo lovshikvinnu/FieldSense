@@ -387,6 +387,25 @@ PANEL_RECORD_FIELDS = (
     ("z", "zone_count"),
     ("c", "recommendation_count"),
     ("e", "evidence_level"),
+    # --- field workflow, added for the multi-sample session ---------------
+    # The keys above describe a finished run. These describe a run in
+    # progress, which is what an operator standing in a field is actually
+    # looking at. Absent keys are omitted rather than sent empty, so a
+    # result-only summary still produces exactly the record it always did.
+    ("t", "workflow_state"),      # BOOT/READY/MEASURING/SAMPLE_SAVED/...
+    ("i", "sample_index"),        # the sample being taken now
+    ("m", "planned_samples"),     # how many this session intends to take
+    ("a", "action_line"),         # the large operator instruction
+    ("q", "sample_quality"),      # VALID/SUSPICIOUS/RETRY/REJECTED
+    ("d", "distinct_locations"),  # fixes clear of the GPS noise floor
+    # Live probe channels, so the panel can show what was just measured
+    # without waiting for the whole set to be processed.
+    ("w", "moisture"),
+    ("p", "ph"),
+    ("k", "ec"),
+    ("x", "nitrogen"),
+    ("y", "phosphorus"),
+    ("j", "potassium"),
 )
 
 # arduino-router re-exposes the MCU Monitor stream here. Not a tty: the daemon

@@ -1,5 +1,11 @@
 # Field Run — probe to dashboard
 
+> **Walking a field with the unit?** Use [FIELD_SESSION.md](FIELD_SESSION.md)
+> instead. That is the operator-driven multi-sample workflow: one sample per
+> press, each stored as it is taken, recoverable after a power cut, with the
+> landscape panel as the whole interface. This page is the unattended V1 cycle,
+> which is still the right thing for a fixed installation and for bring-up.
+
 Everything needed to turn the rig into a real, GPS-tagged soil dataset: flash,
 verify, collect, publish. Two gates in the middle decide whether it is worth
 walking outside.

@@ -7,6 +7,9 @@
 #   sudo ./scripts/install_boot_service.sh --standalone       # autonomous field node
 #                                                             # (probe + GPS + panel
 #                                                             #  over the router bridge)
+#   sudo ./scripts/install_boot_service.sh --field            # operator-driven field
+#                                                             # session: one sample per
+#                                                             # press, stored as it goes
 #   sudo ./scripts/install_boot_service.sh --prefix /srv/fs   # different install root
 #   sudo ./scripts/install_boot_service.sh --dry-run          # print, change nothing
 #
@@ -34,10 +37,18 @@ while [ $# -gt 0 ]; do
         SERVICE_USER="${SUDO_USER:-arduino}"
         PREFIX="$REPO_ROOT"
         shift ;;
+    # The field session unit runs from the board user's checkout for the same
+    # reason as --standalone: it needs docker access to find the App Lab
+    # container, which a system account under /opt does not have.
+    --field)
+        UNIT="fieldsense-field.service"
+        SERVICE_USER="${SUDO_USER:-arduino}"
+        PREFIX="$REPO_ROOT"
+        shift ;;
     --prefix)   PREFIX="$2"; shift 2 ;;
     --user)     SERVICE_USER="$2"; shift 2 ;;
     --dry-run)  DRY_RUN=1; shift ;;
-    -h|--help)  sed -n '2,14p' "$0"; exit 0 ;;
+    -h|--help)  sed -n '2,17p' "$0"; exit 0 ;;
     *)          echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -128,6 +139,11 @@ fi
 run mkdir -p "$PREFIX/artifacts" "$PREFIX/models"
 run chown -R "$SERVICE_USER":"$SERVICE_USER" "$PREFIX"
 run chmod +x "$PREFIX/scripts/boot_fieldsense.sh" "$PREFIX/scripts/launch_display.sh"
+# The two node launchers, whichever unit was selected. A unit whose ExecStart is
+# not executable fails at start with a bare 203/EXEC and no explanation.
+for launcher in run_standalone_node.sh run_field_session.sh; do
+  [ -f "$PREFIX/scripts/$launcher" ] && run chmod +x "$PREFIX/scripts/$launcher"
+done
 
 # 4. Unit file, with the prefix and user substituted in.
 echo "==> installing /etc/systemd/system/$UNIT"
