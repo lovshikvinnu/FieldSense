@@ -26,6 +26,37 @@ the run failed even though nothing printed an error — see gate B.
 
 ---
 
+## 0. The one-command path
+
+Steps 2, 5 and 6 below are the manual version. Once the firmware is flashed,
+this does all of them — restart the App Lab app if needed, discover the
+gateway container address, wait for a real fix, collect, interpolate, render,
+and push the panel:
+
+```bash
+./scripts/run_standalone_node.sh
+```
+
+Add `--loop` to keep cycling (default every 15 min). To make the board do this
+on power-on with no SSH at all:
+
+```bash
+sudo ./scripts/install_boot_service.sh --standalone
+```
+
+```bash
+journalctl -u fieldsense-standalone -f
+```
+
+It **skips a cycle rather than recording without a satellite fix** — the
+failure described in gate B below. Set `REQUIRE_GPS_FIX=0` for a bench run
+where position does not matter.
+
+The manual steps remain the reference, and are what to fall back to when a
+gate fails.
+
+---
+
 ## 1. Pull and flash the firmware
 
 The sketch changed since the last flash: the GPS receiver is now told to send

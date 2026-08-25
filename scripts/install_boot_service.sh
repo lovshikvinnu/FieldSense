@@ -4,6 +4,9 @@
 #
 #   sudo ./scripts/install_boot_service.sh                    # one-shot boot unit
 #   sudo ./scripts/install_boot_service.sh --refresh          # continuous loop unit
+#   sudo ./scripts/install_boot_service.sh --standalone       # autonomous field node
+#                                                             # (probe + GPS + panel
+#                                                             #  over the router bridge)
 #   sudo ./scripts/install_boot_service.sh --prefix /srv/fs   # different install root
 #   sudo ./scripts/install_boot_service.sh --dry-run          # print, change nothing
 #
@@ -23,6 +26,14 @@ DRY_RUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --refresh)  UNIT="fieldsense-refresh.service"; shift ;;
+    # The standalone node runs from the board user's own checkout, because it
+    # needs docker access to reach the App Lab container. Copying it to
+    # /opt under a system account would break that.
+    --standalone)
+        UNIT="fieldsense-standalone.service"
+        SERVICE_USER="${SUDO_USER:-arduino}"
+        PREFIX="$REPO_ROOT"
+        shift ;;
     --prefix)   PREFIX="$2"; shift 2 ;;
     --user)     SERVICE_USER="$2"; shift 2 ;;
     --dry-run)  DRY_RUN=1; shift ;;

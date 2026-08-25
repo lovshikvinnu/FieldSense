@@ -1,0 +1,82 @@
+# FieldSense AI — autonomous field node for the Arduino UNO Q.
+#
+# Use this unit when the board should run the WHOLE loop by itself on power-on:
+# acquire live probe + GPS samples, interpolate, render, and push the 2.8" TFT.
+#
+#   sudo ./scripts/install_boot_service.sh --standalone
+# or by hand:
+#   sudo cp deploy/fieldsense-standalone.service /etc/systemd/system/
+#   sudo systemctl enable --now fieldsense-standalone.service
+#   journalctl -u fieldsense-standalone -f
+#
+# HOW THIS DIFFERS FROM fieldsense.service / fieldsense-refresh.service
+# ---------------------------------------------------------------------
+# Those two push the panel through a Linux framebuffer. On this board that path
+# cannot work: the QRB2210 routes no SPI to the external headers, so no /dev/fbN
+# exists for this panel and the screen stays dark. This unit runs
+# scripts/run_standalone_node.sh, which pushes over the router monitor proxy
+# (--display bridge) — the only transport that reaches the panel here.
+#
+# It also depends on the App Lab app (user:unified_v1), which owns the GPS
+# gateway and that same monitor proxy. Hence docker.service below, the arduino
+# user, and the docker group: the script auto-discovers the container address,
+# which changes on every App Lab rebuild.
+
+[Unit]
+Description=FieldSense AI autonomous field node (collect, map, panel)
+Documentation=file:%h/FieldSense/FieldSense/docs/FIELD_RUN.md
+# App Lab runs in Docker; without it there is no GPS gateway and no panel link.
+After=docker.service local-fs.target
+Wants=docker.service
+# No network unit of any kind. The node must come up with the radios off.
+
+[Service]
+Type=simple
+
+# Runs as the board's own login user, not a system account: the App Lab app is
+# owned by 'arduino' and the script needs docker access to find the container.
+User=arduino
+SupplementaryGroups=dialout docker
+
+WorkingDirectory=/home/arduino/FieldSense/FieldSense
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/home/arduino/FieldSense/FieldSense
+
+# --- acquisition -------------------------------------------------------------
+Environment=POINTS=5
+Environment=SENSOR_PORT=/dev/ttyUSB0
+Environment=INTERACTIVE=0
+
+# A cycle with no satellite lock records every point at 0.000000, 0.000000 and
+# produces a meaningless map. The node skips such a cycle and retries instead.
+Environment=REQUIRE_GPS_FIX=1
+Environment=GPS_FIX_TIMEOUT=300
+
+# --- App Lab / transports ----------------------------------------------------
+Environment=APP_NAME=user:unified_v1
+Environment=GATEWAY_HOST=auto
+Environment=GATEWAY_PORT=9876
+Environment=MCU_PORT=127.0.0.1:7500
+
+# --- outputs -----------------------------------------------------------------
+Environment=DATASET=field_test_live_hardware.json
+Environment=OUTPUT_DIR=artifacts
+Environment=INTERVAL=900
+
+# Optional local SLM. Absent weights are normal — the AI factory falls back to
+# the deterministic template backend, and the fidelity gate still applies.
+Environment=FIELDSENSE_AI_BACKEND=AUTO
+Environment=FIELDSENSE_MODEL_PATH=/home/arduino/FieldSense/FieldSense/models/fieldsense-slm.gguf
+
+ExecStart=/home/arduino/FieldSense/FieldSense/scripts/run_standalone_node.sh --loop
+
+# The panel is the only output an operator has in a field, so keep the node
+# alive rather than leaving a stale frame after one bad cycle.
+Restart=always
+RestartSec=30
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
