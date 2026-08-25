@@ -318,6 +318,11 @@ Every detector keys on an **instrument** signature, not an agronomic one:
 - **all contact channels exactly zero** — what a JXBS probe reports out of soil,
   or when no Modbus frame decoded. Exactly zero, not "near zero": a threshold
   there would be a claim about how dry soil can get.
+- **every contact channel at the bottom of its range at once** — the probe
+  resting on the surface rather than seated. See below.
+- **moisture collapsing to a tenth of the previous sample's** — purely relative.
+  Soil dries across a field, but not by an order of magnitude between two
+  insertions minutes apart. That is the probe, not the field.
 - **N, P and K all zero while moisture is not** — nutrient channels not
   responding, a different fault that still leaves moisture and pH worth keeping.
 - **identical to the previous reading across every channel** — a stale frame or
@@ -327,6 +332,41 @@ Every detector keys on an **instrument** signature, not an agronomic one:
 There is deliberately **no** detector of the form "pH below X is unlikely".
 Those are agronomic thresholds, this project has no evidence for them, and
 inventing them is the failure mode the four-valued verdict exists to avoid.
+
+### The near-floor check, and the one place this gets thin
+
+The exact-zero check cannot catch a probe resting on the surface. A real session
+on 2026-08-25 recorded this, and stored **every row as VALID**:
+
+| idx | moisture | pH | EC | N | P | K | |
+| :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- |
+| 1 | 14.2% | 5.67 | 0.014 | 1 | 1 | 3 | |
+| 2 | 14.1% | 5.67 | 0.014 | 1 | 1 | 2 | |
+| 3 | **0.2%** | 5.86 | 0.021 | 1 | 2 | 4 | ← contact lost |
+| 4 | 0.2% | 5.49 | 0.024 | 1 | 2 | 4 | |
+| 5 | 0.2% | 5.38 | 0.025 | 1 | 2 | 5 | |
+
+`0.2` is not `0.0`, so nothing fired.
+
+What makes the replacement defensible is the **conjunction**. No single value is
+being called implausible — dry soil really does read low moisture, and poor soil
+really does read low nutrients. The signature is moisture, EC *and* all three
+nutrients sitting at the bottom of their ranges **simultaneously**, which is what
+this probe does out of contact. Samples 1 and 2 above still pass; 3, 4 and 5 do
+not.
+
+These four numbers live in `PlausibilityConfig` as parameters, not literals:
+
+```python
+near_floor_moisture_pct = 1.0
+near_floor_ec           = 0.05
+near_floor_npk_sum      = 15.0
+moisture_collapse_ratio = 0.10
+```
+
+**If a genuine soil in your region reads under all four at once, raise them.**
+That is the honest failure mode of this check, and it is the only place in the
+plausibility layer where a number could be mistaken for an agronomic threshold.
 
 If fewer than three samples are map-eligible, the session is **not processed**.
 The panel says so, the session is stored in full, and nothing is claimed.

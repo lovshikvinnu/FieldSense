@@ -24,11 +24,23 @@ Every detector below keys on an INSTRUMENT signature, not an agronomic one:
   * a reading identical to the previous one across every channel, to full
     sensor precision, is what a stale frame or an unmoved probe looks like. Real
     soil does not repeat to three decimals at a different place.
+  * moisture falling to a tenth of the previous sample's between two insertions
+    minutes apart is the probe losing contact, not the field drying out. The
+    test is purely relative and makes no claim about what moisture is plausible.
+  * every contact channel sitting at the bottom of its range SIMULTANEOUSLY is
+    what this probe reports when it is resting on the surface rather than seated
+    in soil.
 
 There is deliberately NO detector of the form "pH below X is unlikely" or
 "moisture under Y means dry soil". Those are agronomic thresholds, this project
 has no evidence for them, and inventing them would be exactly the failure mode
 the four-valued verdict was introduced to avoid.
+
+The near-floor check is the one place where that line is thin, and it is drawn
+deliberately: it fires only on the CONJUNCTION of four independent channels at
+once, never on any single one, and its four numbers are configuration rather
+than literals precisely so a region whose real soil trips them can raise them.
+Read the note on PlausibilityConfig before touching them.
 """
 
 from dataclasses import dataclass, field
@@ -64,6 +76,44 @@ class PlausibilityConfig:
     #: Require a satellite fix before a sample counts as located. A sample
     #: without one is not a point on a map, whatever else it measured.
     require_gps_fix: bool = True
+
+    # ---- near-floor detection --------------------------------------------
+    #
+    # THESE FOUR ARE THE ONLY NUMBERS IN THIS MODULE THAT COULD BE MISTAKEN FOR
+    # AGRONOMIC THRESHOLDS, SO READ THIS BEFORE CHANGING THEM.
+    #
+    # The exact-zero check cannot catch a probe resting on the surface rather
+    # than fully out of the ground. A real session recorded this:
+    #
+    #     idx  moisture   pH     EC      N   P   K
+    #     1    14.2%      5.67   0.014   1   1   3
+    #     2    14.1%      5.67   0.014   1   1   2
+    #     3     0.2%      5.86   0.021   1   2   4     <- contact lost here
+    #     4     0.2%      5.49   0.024   1   2   4
+    #     5     0.2%      5.38   0.025   1   2   5
+    #
+    # Every one of those was stored VALID, because 0.2 is not 0.0.
+    #
+    # What makes the check below defensible is the CONJUNCTION. No single one of
+    # these values is being called implausible: dry soil really can read low
+    # moisture, and poor soil really can read low nutrients. The signature is
+    # every independent channel sitting at the bottom of its range AT THE SAME
+    # TIME, which is what this probe does when it is not in contact with
+    # anything. SUSPICIOUS is also not a rejection - the reading is stored,
+    # marked, and kept out of the map.
+    #
+    # If a genuine soil in your region reads under all four of these at once,
+    # raise them. That is the honest failure mode of this check, and it is why
+    # they are parameters rather than literals.
+    near_floor_moisture_pct: float = 1.0
+    near_floor_ec: float = 0.05
+    near_floor_npk_sum: float = 15.0
+
+    #: A reading counts as a collapse when moisture falls to this fraction of
+    #: the previous stored sample's. Purely relative - it makes no claim about
+    #: what moisture level is plausible, only that a tenfold drop between two
+    #: consecutive insertions is a change in the probe, not in the field.
+    moisture_collapse_ratio: float = 0.10
 
 
 @dataclass(frozen=True)
@@ -135,6 +185,50 @@ def nutrients_all_zero(reading: Dict[str, Any]) -> bool:
         return False
     moisture = _numeric(reading.get("moisture"))
     return moisture is not None and moisture != 0.0
+
+
+def channels_near_floor(
+    reading: Dict[str, Any], config: Optional["PlausibilityConfig"] = None
+) -> bool:
+    """True when every contact channel sits at the bottom of its range at once.
+
+    The softer companion to `channels_all_zero`, for a probe resting on the
+    surface rather than held in the air. See PlausibilityConfig for why the
+    conjunction is what makes this an instrument signature rather than an
+    agronomic claim, and for the session that motivated it.
+    """
+    cfg = config or PlausibilityConfig()
+    moisture = _numeric(reading.get("moisture"))
+    ec = _numeric(reading.get("ec"))
+    nutrients = [_numeric(reading.get(name))
+                 for name in ("nitrogen", "phosphorus", "potassium")]
+    if moisture is None or ec is None or any(v is None for v in nutrients):
+        return False
+    return (moisture < cfg.near_floor_moisture_pct
+            and ec < cfg.near_floor_ec
+            and sum(nutrients) < cfg.near_floor_npk_sum)
+
+
+def moisture_collapsed(
+    reading: Dict[str, Any],
+    previous: Optional[Dict[str, Any]],
+    config: Optional["PlausibilityConfig"] = None,
+) -> bool:
+    """True when moisture fell off a cliff since the previous stored sample.
+
+    Relative only. Soil dries out across a field, but not by an order of
+    magnitude between two insertions minutes apart - that is the probe losing
+    contact, and it is exactly what separated sample 2 from sample 3 in the
+    session recorded in PlausibilityConfig.
+    """
+    cfg = config or PlausibilityConfig()
+    if not previous:
+        return False
+    current = _numeric(reading.get("moisture"))
+    prior = _numeric(previous.get("moisture"))
+    if current is None or prior is None or prior <= 0.0:
+        return False
+    return current <= prior * cfg.moisture_collapse_ratio
 
 
 def readings_identical(
@@ -228,6 +322,27 @@ def assess_reading(
             "every contact channel still reads zero after {} retries; stored "
             "and marked, kept out of the map".format(retry_count),
         )
+
+    # Contact lost rather than absent: the probe is touching something, but
+    # every channel is at the bottom of its range. Same handling as no contact
+    # at all, because the fix is the same - push the probe properly in.
+    if channels_near_floor(reading, cfg):
+        reasons.append("CONTACT_CHANNELS_AT_FLOOR")
+        if not exhausted:
+            return PlausibilityVerdict(
+                SampleQuality.RETRY, reasons,
+                "moisture, EC and all three nutrients are simultaneously at the "
+                "bottom of their ranges, which is what this probe reports when "
+                "it is not properly seated; push it in and measure again",
+            )
+        return PlausibilityVerdict(
+            SampleQuality.SUSPICIOUS, reasons,
+            "every contact channel still sits at its floor after {} retries; "
+            "stored and marked, kept out of the map".format(retry_count),
+        )
+
+    if moisture_collapsed(reading, previous_reading, cfg):
+        reasons.append("MOISTURE_COLLAPSE")
 
     if nutrients_all_zero(reading):
         reasons.append("NUTRIENT_CHANNELS_ZERO")

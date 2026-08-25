@@ -85,8 +85,28 @@ Environment=APP_NAME=user:unified_v1
 Environment=GATEWAY_HOST=auto
 Environment=GATEWAY_PORT=9876
 # Wait this long for App Lab's gateway before falling back to restarting the
-# app. Restarting costs an MCU flash, so waiting is strictly cheaper.
-Environment=GATEWAY_WAIT_SECONDS=180
+# app. Restarting costs an MCU flash and blanks the panel, so waiting is
+# strictly cheaper and the budget should comfortably outlast a slow boot.
+#
+# 300 s, not 180, and the boot chain is why. `systemd-analyze critical-chain`
+# on this board reads:
+#
+#   fieldsense-field.service @38.7s
+#   `- arduino-app-cli.service @38.7s
+#      `- docker.service @35.9s
+#         `- network-online.target @35.8s
+#            `- NetworkManager-wait-online.service +26.6s
+#
+# App Lab runs in Docker, and Docker sits behind network-online.target. That
+# cost 26.6 s with Wi-Fi CONNECTED. With the radios off - which is the intended
+# field configuration - `nm-online -s -q` burns its full 30 s default before the
+# target is reached, and App Lab starts that much later still.
+#
+# The worst gateway wait actually observed on this board was 158 s against the
+# old 180 s budget. Adding the offline penalty tips it over, and the penalty
+# applies exactly when nobody is watching. 300 s costs nothing when the gateway
+# is quick, because the wait returns as soon as it answers.
+Environment=GATEWAY_WAIT_SECONDS=300
 Environment=MCU_PORT=127.0.0.1:7500
 
 # --- outputs ----------------------------------------------------------------

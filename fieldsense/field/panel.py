@@ -90,6 +90,13 @@ def workflow_summary(
     shown_index = report["sample_index"]
     if session.state is FieldState.SAMPLE_SAVED and outcome is not None:
         shown_index = outcome.sample_index
+    elif session.state in (FieldState.PROCESSING, FieldState.RESULT):
+        # Collection is over, so "the next sample" is not a thing any more and
+        # showing it reads as a counting error: a finished five-sample session
+        # rendered SAMPLE 6/5 on the glass, because sample_index had already
+        # advanced past the last stored point. On these two screens the honest
+        # number is how many were actually stored.
+        shown_index = report["stored_samples"]
 
     summary: Dict[str, Any] = {
         "field_name": field_name or _short_label(session.store.session_id),

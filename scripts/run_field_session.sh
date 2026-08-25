@@ -40,7 +40,7 @@
 #   GPS_FIX_TIMEOUT=300         seconds to wait for FIX_OK
 #   GATEWAY_HOST=auto           auto-discovered, or set explicitly
 #   GATEWAY_PORT=9876
-#   GATEWAY_WAIT_SECONDS=180    wait for App Lab's gateway before restarting it
+#   GATEWAY_WAIT_SECONDS=300    wait for App Lab's gateway before restarting it
 #   MCU_PORT=127.0.0.1:7500     router monitor proxy for the panel
 #   SENSOR_PORT=/dev/ttyUSB0    USB-RS485 adapter
 #   APP_NAME=user:unified_v1
@@ -65,7 +65,7 @@ REQUIRE_GPS_FIX="${REQUIRE_GPS_FIX:-1}"
 GPS_FIX_TIMEOUT="${GPS_FIX_TIMEOUT:-300}"
 GATEWAY_HOST="${GATEWAY_HOST:-auto}"
 GATEWAY_PORT="${GATEWAY_PORT:-9876}"
-GATEWAY_WAIT_SECONDS="${GATEWAY_WAIT_SECONDS:-180}"
+GATEWAY_WAIT_SECONDS="${GATEWAY_WAIT_SECONDS:-300}"
 MCU_PORT="${MCU_PORT:-127.0.0.1:7500}"
 SENSOR_PORT="${SENSOR_PORT:-/dev/ttyUSB0}"
 APP_NAME="${APP_NAME:-user:unified_v1}"

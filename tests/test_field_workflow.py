@@ -435,3 +435,112 @@ def test_other_terminal_statuses_are_not_rewritten_on_an_empty_session(tmp_path)
         store = FieldSessionStore(root=str(tmp_path / status), planned_samples=3)
         store.close(status)
         assert json.load(open(store.manifest_path))["status"] == status
+
+
+# ------------------------------------------- contact lost, not merely absent
+
+#: The readings from the 2026-08-25 field session, where the probe lost soil
+#: contact after sample 2 and every sample was still stored VALID.
+LOST_CONTACT_SESSION = [
+    {"moisture": 14.2, "ph": 5.67, "ec": 0.014, "temperature": 26.0,
+     "nitrogen": 1, "phosphorus": 1, "potassium": 3},
+    {"moisture": 14.1, "ph": 5.67, "ec": 0.014, "temperature": 26.0,
+     "nitrogen": 1, "phosphorus": 1, "potassium": 2},
+    {"moisture": 0.2, "ph": 5.86, "ec": 0.021, "temperature": 26.0,
+     "nitrogen": 1, "phosphorus": 2, "potassium": 4},
+]
+
+
+def test_the_readings_that_slipped_through_as_valid_are_now_caught():
+    """0.2 % moisture is not 0.0 %, so the exact-zero check could not see it."""
+    from fieldsense.field.plausibility import channels_near_floor
+
+    assert not channels_near_floor(LOST_CONTACT_SESSION[0])
+    assert not channels_near_floor(LOST_CONTACT_SESSION[1])
+    assert channels_near_floor(LOST_CONTACT_SESSION[2])
+
+
+def test_the_two_seated_samples_are_still_accepted():
+    """The check must not swallow the samples that were genuinely in soil."""
+    assert assess_reading(LOST_CONTACT_SESSION[0]).quality is SampleQuality.VALID
+    assert assess_reading(LOST_CONTACT_SESSION[1],
+                          previous_reading=LOST_CONTACT_SESSION[0]
+                          ).quality is SampleQuality.VALID
+
+
+def test_the_sample_that_lost_contact_is_retried_then_stored_marked():
+    verdict = assess_reading(LOST_CONTACT_SESSION[2],
+                             previous_reading=LOST_CONTACT_SESSION[1])
+    assert verdict.quality is SampleQuality.RETRY
+    assert "CONTACT_CHANNELS_AT_FLOOR" in verdict.reasons
+
+    exhausted = assess_reading(LOST_CONTACT_SESSION[2],
+                               previous_reading=LOST_CONTACT_SESSION[1],
+                               retry_count=2)
+    assert exhausted.quality is SampleQuality.SUSPICIOUS
+    assert exhausted.storable and not exhausted.map_eligible
+
+
+def test_a_tenfold_moisture_drop_between_insertions_is_flagged():
+    """Soil dries across a field, but not by an order of magnitude in minutes."""
+    from fieldsense.field.plausibility import moisture_collapsed
+
+    assert moisture_collapsed({"moisture": 1.2}, {"moisture": 30.0})
+    assert not moisture_collapsed({"moisture": 24.0}, {"moisture": 30.0})
+    # Regaining contact is good news, not a fault.
+    assert not moisture_collapsed({"moisture": 30.0}, {"moisture": 1.2})
+
+
+def test_moisture_collapse_marks_but_does_not_discard():
+    """The reading is kept - it is evidence about the probe, not noise."""
+    collapsed = dict(SOIL, moisture=1.0)
+    verdict = assess_reading(collapsed, previous_reading=SOIL)
+    assert verdict.quality is SampleQuality.SUSPICIOUS
+    assert "MOISTURE_COLLAPSE" in verdict.reasons
+    assert verdict.storable
+
+
+def test_genuinely_dry_or_poor_soil_is_not_rejected():
+    """The near-floor check fires on a conjunction, never on one low channel."""
+    dry = {"moisture": 3.0, "ph": 7.2, "ec": 0.12, "temperature": 30.0,
+           "nitrogen": 4, "phosphorus": 2, "potassium": 8}
+    lean = {"moisture": 8.0, "ph": 6.1, "ec": 0.30, "temperature": 25.0,
+            "nitrogen": 6, "phosphorus": 3, "potassium": 9}
+    for reading in (dry, lean):
+        assert assess_reading(reading).quality is SampleQuality.VALID
+
+
+def test_low_moisture_alone_is_not_enough_to_flag():
+    """Only the conjunction counts; a single channel at its floor is data."""
+    from fieldsense.field.plausibility import channels_near_floor
+
+    assert not channels_near_floor(dict(SOIL, moisture=0.4))
+
+
+def test_the_near_floor_limits_are_configurable_not_baked_in():
+    """A region whose real soil trips them must be able to raise them."""
+    from fieldsense.field.plausibility import PlausibilityConfig, channels_near_floor
+
+    reading = LOST_CONTACT_SESSION[2]
+    assert channels_near_floor(reading)
+    relaxed = PlausibilityConfig(near_floor_moisture_pct=0.05)
+    assert not channels_near_floor(reading, relaxed)
+
+
+def test_the_result_screen_shows_samples_stored_not_the_next_index(tmp_path):
+    """A finished five-sample session rendered SAMPLE 6/5 on the glass."""
+    session = make_session(tmp_path, planned=5)
+    session.boot_complete()
+    for step in range(5):
+        session.start_measurement()
+        session.record_measurement(
+            soil=dict(SOIL, moisture=30.0 + step),
+            gps=fix(lat=17.5697 + step * 0.0004), validation_state="VALID")
+        session.advance()
+
+    assert session.state is FieldState.PROCESSING
+    assert workflow_summary(session)["sample_index"] == 5
+    session.complete_processing({})
+    summary = workflow_summary(session)
+    assert summary["sample_index"] == 5
+    assert summary["planned_samples"] == 5
