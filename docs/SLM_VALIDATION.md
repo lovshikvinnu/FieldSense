@@ -177,12 +177,49 @@ VERDICT: real on-board inference confirmed.
   wall clock: 18342.7 ms
 ```
 
-`model` naming the GGUF file rather than `MOCK_TEMPLATE_v1` is the proof. The
-probe also prints the first 200 characters of the generated summary — read them.
-Template output is recognisably formulaic; model output is not.
+`model` naming the GGUF file rather than `MOCK_TEMPLATE_v1` is the proof that a
+model executed. **Record that entire block** — it is the on-board execution
+evidence, and it is the thing this project had never had.
 
-**Record that entire block.** It is the evidence for SLM validation, and it is
-the thing that has never existed for this project.
+But it is not the finish line, and twice it has looked like one.
+
+**Read the first 200 characters the probe prints, every time.** A run once passed
+with `status: OK` and llama.cpp's ASCII-art logo as the field summary: not empty,
+no forbidden claim, inside the length limit, and completely wrong. If the text is
+not recognisable prose about the field, gate 2 has not passed no matter what the
+verdict line says.
+
+## Gate 3 — does the narrative agree with the data?
+
+The one that decides whether the model is usable, rather than merely working.
+
+On the second passing run Qwen produced fluent, safe, correctly-sized prose that
+contradicted its own DATA block four times: a POOR field described as good, five
+samples rejected where the context said zero, a moisture *deficiency* described
+as *high moisture*, and LOW spatial support called high. The safety guard passed
+all of it, correctly — none of its rules were broken.
+
+`FidelityChecker` now rejects those. Nothing extra to run: it fires inside the
+same generation path, so gate 2's output already reflects it.
+
+**Reading the result:**
+
+| What you see | Meaning |
+| :--- | :--- |
+| `status: OK`, no violations | The model agreed with the data. This is the real pass. |
+| `CONTRADICTS_CONTEXT[...]` violations | The model contradicted the deterministic result and was rejected. The narrative you get is the template. |
+| `status: FALLBACK_TEMPLATE` | Some or all sections fell back. The dashboard says so; nothing silently pretends otherwise. |
+
+A fallback is **not** a failure of the system. It is the system refusing to show
+a farmer something untrue, and saying which model produced the rejected text.
+
+If most sections fall back, the honest conclusion is that this model does not
+meet the bar. That is a model-selection finding, not a bug — and with 2.9 GB free
+the next step is TinyLlama-1.1B at ~0.67 GB rather than loosening anything.
+
+**Never loosen the guard or the fidelity layer to make a run pass.** They are the
+only things standing between a small model's confident invention and a field
+decision.
 
 ---
 
