@@ -8,6 +8,7 @@ screen silently stays dark.
 """
 
 import os
+import re
 import shutil
 import subprocess
 
@@ -183,3 +184,45 @@ def test_installer_flushes_the_unit_to_disk():
     body = _read(INSTALLER)
     assert "run sync" in body
     assert body.index("systemctl enable") < body.index("run sync")
+
+
+APPLAB_SKETCH_YAML = os.path.join(
+    REPO, "deploy", "applab", "unified_v1", "sketch.yaml")
+
+
+def test_applab_profile_pins_the_display_libraries():
+    """The App Lab app builds the panel; an unpinned driver is a silent change.
+
+    App Lab's own library cache shipped ST7789 1.11.0 while the firmware verified
+    on the glass was built against 1.10.4. Either version compiles, so a drift
+    here is invisible until someone looks at the panel. The pin is the only thing
+    that keeps the deployed build and the verified build the same build.
+    """
+    body = _read(APPLAB_SKETCH_YAML)
+    required = {
+        "Adafruit GFX Library": "1.12.6",
+        "Adafruit BusIO": "1.17.4",
+        "Adafruit ST7735 and ST7789 Library": "1.10.4",
+    }
+    for name, version in required.items():
+        entry = "- {} ({})".format(name, version)
+        assert entry in body, "sketch.yaml must pin: {}".format(entry)
+
+
+def test_applab_profile_leaves_no_library_unpinned():
+    """Every declared library carries an explicit version, not a floating name."""
+    body = _read(APPLAB_SKETCH_YAML)
+    declared = [ln.strip()[2:].strip()
+                for ln in body.splitlines()
+                if ln.strip().startswith("- ") and "platform:" not in ln]
+    assert declared, "no libraries declared"
+    for entry in declared:
+        assert re.match(r"^.+ \(\d+\.\d+\.\d+\)$", entry), \
+            "library is not pinned to an exact version: {}".format(entry)
+
+
+def test_applab_dir_does_not_duplicate_the_sketch():
+    """A second copy of the .ino would drift from the one actually verified."""
+    applab_dir = os.path.dirname(APPLAB_SKETCH_YAML)
+    strays = [f for f in os.listdir(applab_dir) if f.endswith(".ino")]
+    assert not strays, "sketch must not be duplicated here: {}".format(strays)

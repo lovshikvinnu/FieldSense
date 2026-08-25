@@ -1,0 +1,9 @@
+profiles:
+  default:
+    platforms:
+      - platform: arduino:zephyr
+    libraries:
+      - Adafruit GFX Library (1.12.6)
+      - Adafruit BusIO (1.17.4)
+      - Adafruit ST7735 and ST7789 Library (1.10.4)
+default_profile: default
