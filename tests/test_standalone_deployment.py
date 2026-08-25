@@ -770,3 +770,91 @@ def test_offline_pipeline_makes_no_network_calls():
             assert "127.0.0.1" in body, \
                 "{} uses sockets without binding to loopback".format(path)
     assert demo_module is not None
+
+
+# --------------------------------------------- Layer 3  SLM asset discovery
+#
+# The board had both a built llama.cpp and validated Qwen weights installed and
+# still produced MOCK_TEMPLATE_v1, because `llama-cli` was not on PATH and the
+# weights were not named fieldsense-slm.gguf. Nothing errored. These tests pin
+# the discovery that closes that gap, and the two limits it must respect.
+
+
+def test_discovery_finds_installed_qwen_weights(tmp_path, monkeypatch):
+    """A GGUF whose name is not the default must still be found."""
+    from fieldsense.ai import config as ai_config
+
+    models = tmp_path / "models"
+    models.mkdir()
+    weights = models / "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+    weights.write_bytes(b"\x00")
+
+    monkeypatch.setattr(ai_config, "_repo_models_dirs", lambda: (str(models),))
+    found = ai_config.discover_model_path("models/fieldsense-slm.gguf")
+    assert found == str(weights)
+
+
+def test_discovery_refuses_to_promote_an_unvalidated_model(tmp_path, monkeypatch):
+    """TinyLlama lost the measured comparison; discovery must not select it.
+
+    Silently substituting a model that scored worse would be a model switch
+    wearing the costume of a convenience. The template path is the honest
+    outcome here.
+    """
+    from fieldsense.ai import config as ai_config
+
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf").write_bytes(b"\x00")
+
+    monkeypatch.setattr(ai_config, "_repo_models_dirs", lambda: (str(models),))
+    assert ai_config.discover_model_path("models/fieldsense-slm.gguf") == \
+        "models/fieldsense-slm.gguf"
+
+
+def test_discovery_finds_an_in_tree_llama_build(tmp_path, monkeypatch):
+    """A binary that exists but is not on PATH must still be found."""
+    from fieldsense.ai import config as ai_config
+
+    binary = tmp_path / "llama-cli"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+
+    monkeypatch.setattr(ai_config, "_BINARY_SEARCH_PATHS", (str(binary),))
+    assert ai_config.discover_binary_path("llama-cli") == str(binary)
+
+
+def test_discovery_never_overrides_explicit_configuration(tmp_path, monkeypatch):
+    """Environment and keyword configuration both outrank discovery."""
+    from fieldsense.ai import config as ai_config
+    from fieldsense.ai.config import AIConfig
+
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "qwen2.5-0.5b-instruct-q4_k_m.gguf").write_bytes(b"\x00")
+    monkeypatch.setattr(ai_config, "_repo_models_dirs", lambda: (str(models),))
+
+    monkeypatch.setenv("FIELDSENSE_MODEL_PATH", "/opt/fieldsense/models/env.gguf")
+    assert AIConfig.from_env().model_path == "/opt/fieldsense/models/env.gguf"
+
+    monkeypatch.delenv("FIELDSENSE_MODEL_PATH")
+    explicit = AIConfig.from_env(model_path="/opt/explicit.gguf")
+    assert explicit.model_path == "/opt/explicit.gguf"
+
+
+def test_discovery_is_inert_when_nothing_is_installed(tmp_path, monkeypatch):
+    """A machine with no model installed keeps the historical defaults.
+
+    This is the common case for a developer laptop and must stay untouched.
+    """
+    from fieldsense.ai import config as ai_config
+    from fieldsense.ai.config import AIConfig
+
+    monkeypatch.setattr(ai_config, "_repo_models_dirs", lambda: (str(tmp_path / "absent"),))
+    monkeypatch.setattr(ai_config, "_BINARY_SEARCH_PATHS", (str(tmp_path / "no-binary"),))
+    monkeypatch.delenv("FIELDSENSE_MODEL_PATH", raising=False)
+    monkeypatch.delenv("FIELDSENSE_LLAMA_BIN", raising=False)
+
+    cfg = AIConfig.from_env()
+    assert cfg.model_path == "models/fieldsense-slm.gguf"
+    assert cfg.binary_path == "llama-cli"

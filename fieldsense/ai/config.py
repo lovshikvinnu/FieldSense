@@ -1,8 +1,9 @@
 """Centralized configuration for the AI explanation layer."""
 
 import os
+import shutil
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -67,16 +68,26 @@ class AIConfig:
             FIELDSENSE_AI_TIMEOUT=120
 
         Explicit keyword overrides win over the environment, which wins over
-        the defaults. Malformed numeric values fall back to the default rather
-        than raising: a typo in a unit file must not stop the board from
-        booting, it must only cost the optional narrative.
+        on-disk discovery, which wins over the defaults. Malformed numeric
+        values fall back to the default rather than raising: a typo in a unit
+        file must not stop the board from booting, it must only cost the
+        optional narrative.
+
+        Discovery exists because BOTH generic defaults miss on a real UNO Q and
+        the symptom is silent. See `discover_binary_path`.
         """
+        _env_model = os.environ.get("FIELDSENSE_MODEL_PATH")
+        _env_bin = os.environ.get("FIELDSENSE_LLAMA_BIN")
         cfg = cls(
             backend=os.environ.get("FIELDSENSE_AI_BACKEND", cls.backend).upper(),
             model_path=os.path.expanduser(
-                os.environ.get("FIELDSENSE_MODEL_PATH", cls.model_path)
+                _env_model if _env_model is not None
+                else discover_model_path(cls.model_path)
             ),
-            binary_path=os.environ.get("FIELDSENSE_LLAMA_BIN", cls.binary_path),
+            binary_path=(
+                _env_bin if _env_bin is not None
+                else discover_binary_path(cls.binary_path)
+            ),
             threads=_env_int("FIELDSENSE_AI_THREADS", cls.threads),
             timeout_seconds=_env_float("FIELDSENSE_AI_TIMEOUT", cls.timeout_seconds),
             max_output_tokens=_env_int("FIELDSENSE_AI_MAX_TOKENS", cls.max_output_tokens),
@@ -101,6 +112,106 @@ class AIConfig:
         if os.path.isabs(self.model_path) or self.model_path.startswith("/") or self.model_path.startswith("\\"):
             return self.model_path
         return os.path.abspath(os.path.join(base_dir or os.getcwd(), self.model_path))
+
+
+# ------------------------------------------------------------ asset discovery
+
+# Where a locally built llama.cpp leaves its CLI. The `binary_path` default is
+# deliberately the bare name `llama-cli`, because a library must not assume one
+# machine's layout, and on a packaged install PATH is the right answer.
+#
+# On the UNO Q neither default holds. llama.cpp is built in-tree, so the binary
+# is at ~/llama.cpp/build/bin/llama-cli and never on PATH, and the weights keep
+# their upstream filenames rather than being renamed to fieldsense-slm.gguf. Both
+# defaults therefore missed at once, `is_available()` returned False, AUTO
+# resolved to the template backend, and the pipeline still printed SUCCESS with
+# `MOCK_TEMPLATE_v1 [FALLBACK_TEMPLATE]` and `guard blocks: 0`.
+#
+# That silent degradation is the most expensive failure mode this layer has: a
+# fully green run can contain no model output at all. Discovery closes the gap
+# so the standalone node and the boot unit both find the model with no
+# environment set. It only ever fills a gap - anything configured explicitly,
+# by keyword or by environment, still wins.
+_BINARY_SEARCH_PATHS: Tuple[str, ...] = (
+    "~/llama.cpp/build/bin/llama-cli",
+    "~/llama.cpp/build/bin/main",
+    "/opt/llama.cpp/build/bin/llama-cli",
+    "/usr/local/bin/llama-cli",
+)
+
+# Substrings ranked by preference when several GGUFs sit side by side.
+#
+# Qwen2.5-0.5B-Instruct is the only ranked entry because it is the MEASURED
+# choice for this board, not merely the smallest: TinyLlama-1.1B was compared
+# against it on the hardware and scored worse. Discovery deliberately does NOT
+# fall back to an unranked GGUF. Quietly promoting a model that lost its own
+# bake-off would be a model switch disguised as a convenience, so a board with
+# only unvalidated weights installed gets the template path and says so.
+_MODEL_PREFERENCE: Tuple[str, ...] = ("qwen",)
+
+
+def _repo_models_dirs() -> Tuple[str, ...]:
+    """Directories to search for installed weights, most specific first.
+
+    The package location is used before the working directory because systemd
+    does not guarantee a working directory, which is the same reason
+    `resolved_model_path` exists.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))          # fieldsense/ai
+    repo_root = os.path.dirname(os.path.dirname(here))          # repository root
+    return (os.path.join(repo_root, "models"), os.path.join(os.getcwd(), "models"))
+
+
+def discover_binary_path(static_default: str) -> str:
+    """Return a usable llama.cpp CLI path, preferring the configured default.
+
+    Args:
+        static_default: The configured value, honoured whenever it resolves.
+
+    Returns:
+        An executable path, or `static_default` unchanged when nothing is found.
+        Returning the default rather than an empty string keeps the "no model
+        installed" path identical to what it has always been.
+    """
+    if os.sep in static_default or os.path.isabs(static_default):
+        expanded = os.path.expanduser(static_default)
+        if os.path.isfile(expanded) and os.access(expanded, os.X_OK):
+            return static_default
+    elif shutil.which(static_default):
+        return static_default
+
+    for candidate in _BINARY_SEARCH_PATHS:
+        expanded = os.path.expanduser(candidate)
+        if os.path.isfile(expanded) and os.access(expanded, os.X_OK):
+            return expanded
+    return static_default
+
+
+def discover_model_path(static_default: str) -> str:
+    """Return installed GGUF weights, preferring the configured default.
+
+    Only a model named in `_MODEL_PREFERENCE` is ever selected; see that
+    constant for why an unranked GGUF is left alone.
+
+    Args:
+        static_default: The configured value, honoured whenever it exists.
+
+    Returns:
+        A path to weights, or `static_default` unchanged when none are found.
+    """
+    if os.path.isfile(os.path.expanduser(static_default)):
+        return static_default
+
+    for models_dir in _repo_models_dirs():
+        try:
+            names = sorted(n for n in os.listdir(models_dir) if n.endswith(".gguf"))
+        except OSError:
+            continue
+        for wanted in _MODEL_PREFERENCE:
+            for name in names:
+                if wanted in name.lower():
+                    return os.path.join(models_dir, name)
+    return static_default
 
 
 def _env_int(name: str, default: int) -> int:
