@@ -759,6 +759,65 @@ def test_retry_suffix_addresses_length_when_that_was_the_failure():
     assert "FORBIDDEN_CLAIM" not in claim_suffix
 
 
+# The chat session this build prints on stdout, captured from the UNO Q.
+_LLAMA_CHAT_BANNER = (
+    "Loading model... |\b-\b\n\n"
+    "\u2584\u2584 \u2588\u2588 \u2580\u2580\u2588\u2584\n"
+    "build      : b10615-f280b2698\n"
+    "model      : /home/arduino/FieldSense/FieldSense/models/qwen.gguf\n"
+    "ftype      : Q4_K - Medium\n"
+    "modalities : text\n\n"
+    "available commands:\n"
+    "  /exit or Ctrl+C     stop or exit\n"
+    "  /regen              regenerate the last response\n\n\n"
+)
+
+
+def test_clean_output_drops_the_banner_and_the_echoed_prompt():
+    """The chat UI's own session must never reach the guard as a narrative.
+
+    Captured on the UNO Q: this build prints an ASCII logo, a build/model block,
+    a command menu, then echoes the prompt after a '>' marker - elided as
+    '... (truncated)' when long - and only then answers.
+
+    That banner once passed the guard. It was not empty, it carried no forbidden
+    claim, and once trimmed it fitted the character limit, so a run was reported
+    as accepted with llama.cpp's logo as the field summary. Blacklisting each
+    piece had already failed twice; the prompt is known exactly, so every line
+    that came from it is dropped instead.
+    """
+    prompt = (
+        "You are a plain-language explainer.\n"
+        "Absolute rules:\n"
+        "- Write only about DATA.\n\nDATA:\nfield name: X\n\nSUMMARY:"
+    )
+    answer = "The field is in poor condition with limited moisture."
+    raw = (
+        _LLAMA_CHAT_BANNER
+        + "> You are a plain-language explainer.\n"
+        + "Absolute rules:\n- Write only about DATA.\n\nD ... (truncated)\n"
+        + answer
+        + "\n\n[ Prompt: 15.7 t/s | Generation: 7.7 t/s ]\n\nExiting...\n"
+    )
+
+    assert LlamaCppAdapter._clean_output(raw, prompt) == answer
+
+
+def test_clean_output_without_a_prompt_is_unchanged():
+    """A build that does not echo must not be affected by echo stripping."""
+    text = "A plain answer with no chat furniture around it."
+
+    assert LlamaCppAdapter._clean_output(text) == text
+
+
+def test_banner_alone_is_not_mistaken_for_a_narrative():
+    """With no answer after it, nothing should survive to be judged."""
+    prompt = "SUMMARY:"
+    raw = _LLAMA_CHAT_BANNER + "> SUMMARY:\n\nExiting...\n"
+
+    assert LlamaCppAdapter._clean_output(raw, prompt).strip() == ""
+
+
 def test_clean_output_keeps_plain_model_text_untouched():
     """The baseline: without furniture, this text is already clean and allowed."""
     cleaned = LlamaCppAdapter._clean_output(_MODEL_TEXT)

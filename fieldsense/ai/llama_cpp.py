@@ -58,6 +58,16 @@ _CHARS_PER_TOKEN = 5.6
 # rich still lands inside the guard's limit.
 _TOKEN_BUDGET_MARGIN = 0.9
 
+# Fixed furniture the chat UI prints before the conversation begins.
+_LLAMA_CHROME = re.compile(
+    r"^(build|model|ftype|modalities)\s*:"
+    r"|^available commands:"
+    r"|^/(exit|regen|clear|read|glob)\b"
+    r"|^Loading model"
+    r"|^Exiting\b",
+    re.IGNORECASE,
+)
+
 _LLAMA_NOISE = (
     re.compile(r"\[\s*Prompt:.*?t/s.*?\]", re.IGNORECASE | re.DOTALL),
     re.compile(r"^Loading model\.\.\..*$", re.MULTILINE),
@@ -232,7 +242,8 @@ class LlamaCppAdapter(LocalLLMAdapter):
                     False,
                 )
 
-            text = self._trim_to_sentence(self._clean_output(raw), max_chars)
+            text = self._trim_to_sentence(
+                self._clean_output(raw, current_prompt), max_chars)
             section_violations = self.guard.inspect_text(
                 text, context, location=location, max_chars=max_chars
             )
@@ -327,14 +338,68 @@ class LlamaCppAdapter(LocalLLMAdapter):
         return completed.stdout
 
     @staticmethod
-    def _clean_output(raw: str) -> str:
+    def _strip_echoed_prompt(raw: str, prompt: str) -> str:
+        """Drop the chat UI's banner and its echo of the prompt we just sent.
+
+        This build renders a full chat session on stdout: an ASCII-art logo, a
+        build/model/ftype block, a command menu, then the prompt echoed after a
+        `>` marker - elided in the middle as `... (truncated)` when it is long -
+        and only then the model's answer.
+
+        Blacklisting that furniture piece by piece is a losing game; the banner
+        alone slipped through two earlier filters and reached the guard, which
+        accepted it as a narrative because it was neither empty nor over length.
+        Instead this drops every line that came from the prompt, which is known
+        exactly, plus the fixed furniture around it. What survives is what the
+        model added.
+
+        Falls back to returning the input unchanged when no echo is found, so a
+        build that does not echo is unaffected.
+        """
+        if not raw or not prompt:
+            return raw
+
+        echoed = {ln.strip() for ln in prompt.splitlines() if ln.strip()}
+        kept, seen_response, saw_furniture = [], False, False
+        for line in raw.splitlines():
+            bare = line.strip()
+            candidate = bare[1:].strip() if bare.startswith(">") else bare
+
+            if not seen_response:
+                if not bare:
+                    continue
+                if candidate in echoed or "(truncated)" in bare:
+                    saw_furniture = True
+                    continue
+                if _LLAMA_CHROME.match(bare):
+                    saw_furniture = True
+                    continue
+                # Box-drawing art from the startup logo: no letters or digits.
+                if not any(ch.isalnum() for ch in bare):
+                    saw_furniture = True
+                    continue
+                seen_response = True
+            kept.append(line)
+
+        if seen_response:
+            return "\n".join(kept)
+
+        # Nothing followed the furniture. Returning the raw text here is how the
+        # banner reached the guard and was accepted as a narrative, so when this
+        # build's chat furniture was recognised, an empty answer is reported as
+        # empty. Only when no furniture was seen at all - a build that does not
+        # echo - is the input passed through untouched.
+        return "" if saw_furniture else raw
+
+    @staticmethod
+    def _clean_output(raw: str, prompt: str = "") -> str:
         """Normalize model stdout into a single plain paragraph.
 
         Removes llama.cpp's own output before anything is judged, so the guard's
         verdict is about the model rather than about the tool that ran it. See
-        `_LLAMA_NOISE` for what that furniture is and why it matters.
+        `_LLAMA_NOISE` and `_strip_echoed_prompt` for what that furniture is.
         """
-        text = raw or ""
+        text = LlamaCppAdapter._strip_echoed_prompt(raw or "", prompt)
         for pattern in _LLAMA_NOISE:
             text = pattern.sub(" ", text)
 
