@@ -152,6 +152,28 @@
 #define TOUCH_CS   5
 #define TOUCH_IRQ  2
 
+// TOUCH IS OFF BY DEFAULT, AND THE DEFAULT IS NOT TIMIDITY.
+//
+// The panel went white on the assembled unit at the moment touch became live -
+// both the jumpers and this firmware's runtime polling arrived together, so
+// either could be the cause. What is certain is the cost asymmetry: the panel
+// is the only output an operator in a field has, and touch is the SECOND input
+// path behind the board's own VOL+/VOL- keys, which work. Risking the first to
+// gain the second is a bad trade in any state of that uncertainty.
+//
+// The specific mechanism this guards against is real, not hypothetical. With
+// touch enabled, readTouchZ() runs on every pass of the 2 ms drain loop and
+// opens an SPI transaction at 2 MHz on the same bus the ST7789 drives at
+// 24 MHz. Every one of those reconfigures the Zephyr SPI controller mid-stream,
+// hundreds of times a second, between display writes. A white panel is exactly
+// what a display fed a corrupted transaction looks like.
+//
+// Set this to 1 only after the display has been confirmed good with the touch
+// jumpers physically connected and this still at 0. That order matters: it is
+// the only way to tell a wiring fault from a bus-contention fault, and the two
+// need opposite fixes.
+#define TOUCH_ENABLED 0
+
 // LANDSCAPE. The glass is 240x320; setRotation(1) presents it as 320x240 and
 // every coordinate in this file is written against that.
 static const uint16_t PANEL_W = 320;
@@ -384,9 +406,16 @@ static uint16_t readTouchZ() {
 // this heuristic is ever wrong on a particular unit it can be seen from Linux
 // rather than guessed at.
 static void probeTouch() {
+  // Deselect the controller regardless, so a wired-but-unused XPT2046 cannot
+  // sit with its chip select floating and drive the shared MISO line.
   pinMode(TOUCH_CS, OUTPUT);
   digitalWrite(TOUCH_CS, HIGH);
   pinMode(TOUCH_IRQ, INPUT_PULLUP);
+
+  if (!TOUCH_ENABLED) {
+    touchPresent = false;
+    return;
+  }
 
   bool sawSpread = false;
   for (uint8_t attempt = 0; attempt < 6; attempt++) {
@@ -438,6 +467,10 @@ static void notePress() {
 }
 
 static void serviceOperatorInput() {
+  if (!TOUCH_ENABLED) {
+    return;   // the display owns the SPI bus; nothing else touches it
+  }
+
   uint32_t now = millis();
 
   uint16_t z = readTouchZ();
@@ -1050,7 +1083,10 @@ static void renderValues() {
   putInt(vB, SOIL_Y + 6 + SOIL_ROW_H * 2,   60, soilK, COL_TEXT);
 
   // Stored samples, and how many of them are far enough apart to be separate
-  // places. The second number is the honest denominator for any spatial claim.
+  // places. The second number is the honest denominator for any spatial claim,
+  // so it gets its own value column rather than the shared one: "SITES" is five
+  // characters where N/P/K are one, and at the shared offset the value box
+  // clipped the label's last letter to "SITE" on the glass.
   putValue(vA, SOIL_Y + 6 + SOIL_ROW_H * 3, 60, CHAR_H, COL_CARD, COL_TEXT, 1);
   if (totalSamples < 0) {
     tft.print("--");
@@ -1058,7 +1094,7 @@ static void renderValues() {
     tft.print(totalSamples);
     if (validSamples >= 0) { tft.print(" OK "); tft.print(validSamples); }
   }
-  putInt(vB, SOIL_Y + 6 + SOIL_ROW_H * 3, 60, distinctLocs, COL_TEXT);
+  putInt(SOIL_COL_B + 40, SOIL_Y + 6 + SOIL_ROW_H * 3, 42, distinctLocs, COL_TEXT);
 
   // Bottom bar. Shape follows the workflow; contents follow the state.
   bool wantButton = workflowArmed();
