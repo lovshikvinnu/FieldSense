@@ -1,0 +1,42 @@
+# FieldSense — safety net for the radios-off verification. NOT FOR FIELD USE.
+#
+# The offline test requires turning the radios off and cold-booting with no SSH
+# and no laptop. On this board that is a one-way door: `nmcli radio wifi off`
+# persists across reboots, and the UNO Q exposes no serial console. Turn the
+# radios off, hit a problem, and there is no way back in short of physically
+# re-provisioning the board.
+#
+# This unit re-enables Wi-Fi a fixed time after boot, so the offline window is
+# real but bounded. Run the verification inside the window; when it expires the
+# board comes back on the network by itself and the logs can be collected.
+#
+#   sudo cp deploy/fieldsense-offline-test-netrestore.service /etc/systemd/system/
+#   sudo systemctl enable fieldsense-offline-test-netrestore.service
+#   sudo nmcli radio wifi off && sudo reboot
+#
+# ... run the offline verification ... then SSH back in once Wi-Fi returns, and
+# REMOVE IT, because a field unit that switches its radio on by itself is not an
+# offline device:
+#
+#   sudo systemctl disable --now fieldsense-offline-test-netrestore.service
+#   sudo rm /etc/systemd/system/fieldsense-offline-test-netrestore.service
+#
+# The delay is deliberately longer than a boot plus a short session. Measured
+# cold boot on this board is ~39 s with the radios on and slower without them,
+# because Docker sits behind network-online.target; 15 minutes leaves room to
+# watch the panel reach READY and take a few samples before the net returns.
+
+[Unit]
+Description=Restore Wi-Fi after the FieldSense offline test window (TEST AID - remove after use)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+# sleep-then-restore rather than a timer unit, so the countdown starts from this
+# boot rather than from a wall-clock schedule that a reboot would reset.
+ExecStart=/bin/sh -c 'sleep 900; nmcli radio wifi on || true'
+RemainAfterExit=no
+TimeoutStartSec=1200
+
+[Install]
+WantedBy=multi-user.target

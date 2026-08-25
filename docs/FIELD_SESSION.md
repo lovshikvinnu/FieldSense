@@ -398,6 +398,35 @@ coordinates say. For a spatial demonstration, physically walk between points.
 
 ---
 
+## Running the radios-off verification without locking yourself out
+
+The offline test means turning the radios off and cold-booting with no SSH and
+no laptop. On this board that is **a one-way door**: `nmcli radio wifi off`
+persists across reboots and the UNO Q exposes no serial console, so if anything
+goes wrong there is no way back in short of physically re-provisioning it.
+
+`deploy/fieldsense-offline-test-netrestore.service` bounds the window. It
+re-enables Wi-Fi 15 minutes after boot, which is long enough to watch the panel
+reach READY and take a few samples:
+
+```bash
+sudo cp deploy/fieldsense-offline-test-netrestore.service /etc/systemd/system/
+sudo systemctl enable fieldsense-offline-test-netrestore.service
+sudo nmcli radio wifi off && sudo reboot
+```
+
+Run the verification, then SSH back in when the network returns and **remove
+it** — a field unit that switches its own radio on is not an offline device:
+
+```bash
+sudo systemctl disable --now fieldsense-offline-test-netrestore.service
+sudo rm /etc/systemd/system/fieldsense-offline-test-netrestore.service
+```
+
+Expect the offline boot to be roughly 30 s slower than a connected one. Docker
+sits behind `network-online.target`, so App Lab starts only after `nm-online`
+times out — see the note on `GATEWAY_WAIT_SECONDS` in the unit file.
+
 ## Offline
 
 Nothing in the normal path leaves the board:
