@@ -118,6 +118,68 @@ def test_the_whole_hardware_zone_narrative_is_rejected():
     assert {"moisture_score", "confidence"} <= _codes(violations)
 
 
+# --------------------------------------------- counts must bind to their label
+
+# Verbatim from TinyLlama-1.1B on the UNO Q. It ignored the instruction to write
+# sentences and echoed the DATA block back as a key-value list. The rejected
+# count in it is CORRECT.
+_TINYLLAMA_LIST_OUTPUT = (
+    "Field Name: SLM Probe Field Overall Soil Health Score: 36% Overall "
+    "Condition: POOR Sampled: 5 Sampled: 5 Rejected as Implusable: 0 Map "
+    "Coverage: 100% Manageable Zones Detected: 1 Zone(s) Needing Attention: 1 "
+    "Evidence Level: LIMITED"
+)
+
+
+def test_a_labelled_zero_rejected_count_is_accepted():
+    """The count belongs to its label, not to whatever number precedes it.
+
+    Prose puts the count before the keyword - "five were rejected" - and the
+    pattern was written for that. A list-formatted answer puts it after a
+    label, and "Sampled: 5 Rejected as Implusable: 0" then matched the 5 from
+    the previous field. The text said zero rejected, which was right, and the
+    checker called it a contradiction.
+
+    A false positive here is the expensive direction: it rejects correct model
+    output into a template and silently makes a working model look unusable.
+    """
+    violations = FidelityChecker().inspect(
+        _TINYLLAMA_LIST_OUTPUT, _context(), "field_summary")
+
+    assert "rejected_samples" not in _codes(violations)
+
+
+def test_a_labelled_count_that_is_wrong_is_still_rejected():
+    """Fixing the association must not stop the rule from firing."""
+    violations = FidelityChecker().inspect(
+        "Sampled: 5 Rejected as Implausible: 3", _context(), "field_summary")
+
+    assert "rejected_samples" in _codes(violations)
+    assert any("claimed 3" in v for v in violations)
+
+
+def test_prose_counts_still_bind_the_old_way():
+    """Qwen's real contradiction must survive the fix.
+
+    Regression guard in the other direction: the labelled form takes precedence,
+    so this asserts prose is still read when no label is present.
+    """
+    violations = FidelityChecker().inspect(
+        "Five samples have passed validation, but only five have been rejected "
+        "as implausible.", _context(), "field_summary")
+
+    assert "rejected_samples" in _codes(violations)
+    assert any("claimed 5" in v for v in violations)
+
+
+def test_a_labelled_form_wins_over_an_adjacent_number():
+    """Where both readings are possible, the colon decides."""
+    violations = FidelityChecker().inspect(
+        "Total: 5 Rejected: 0", _context(), "field_summary")
+
+    assert "rejected_samples" not in _codes(violations)
+
+
 # ------------------------------------------- the fallback must survive the check
 
 

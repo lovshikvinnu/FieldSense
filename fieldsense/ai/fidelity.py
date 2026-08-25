@@ -53,6 +53,21 @@ _WORD_NUMBERS = {
 
 _COUNT_WORD = r"(\d+|" + "|".join(sorted(_WORD_NUMBERS, key=len, reverse=True)) + r")"
 
+# Two shapes carry a count, and they put it on opposite sides of the keyword.
+#
+# Prose puts the count first - "five were rejected" - which is what a model
+# writing sentences produces. A list-formatted answer puts it after a label:
+# "Rejected as Implausible: 0". TinyLlama produced exactly that and the prose
+# pattern matched the 5 from the PRECEDING "Sampled: 5", reporting a
+# contradiction against text that was correct.
+#
+# The labelled form is checked first and wins, because a colon binds a value to
+# its label unambiguously in a way that adjacency does not.
+_REJECTED_LABELLED = re.compile(
+    r"rejected[^:\n]{0,40}?:\s*" + _COUNT_WORD, re.IGNORECASE)
+_PASSED_LABELLED = re.compile(
+    r"(?:passed|validated)[^:\n]{0,40}?:\s*" + _COUNT_WORD, re.IGNORECASE)
+
 # "five were rejected", "5 samples rejected", "five of five rejected".
 _REJECTED_PATTERN = re.compile(
     _COUNT_WORD + r"(?:\s+of\s+\S+)?\s+(?:samples?\s+)?(?:were\s+|was\s+|are\s+|have\s+been\s+)?rejected",
@@ -176,16 +191,24 @@ class FidelityChecker:
         checks that the number exists somewhere in the context at all.
         """
         violations = []
-        for pattern, field_name, expected in (
-            (_REJECTED_PATTERN, "rejected_samples", context.rejected_samples),
-            (_PASSED_PATTERN, "valid_samples", context.valid_samples),
+        for labelled, prose, field_name, expected in (
+            (_REJECTED_LABELLED, _REJECTED_PATTERN,
+             "rejected_samples", context.rejected_samples),
+            (_PASSED_LABELLED, _PASSED_PATTERN,
+             "valid_samples", context.valid_samples),
         ):
-            for match in pattern.finditer(text):
+            claimed = None
+            match = labelled.search(text)
+            if match:
                 claimed = _to_count(match.group(1))
-                if claimed is not None and claimed != expected:
-                    violations.append(
-                        self._flag(location, field_name, expected, claimed))
-                    break  # one report per field is enough to reject
+            else:
+                for match in prose.finditer(text):
+                    claimed = _to_count(match.group(1))
+                    if claimed is not None:
+                        break
+
+            if claimed is not None and claimed != expected:
+                violations.append(self._flag(location, field_name, expected, claimed))
         return violations
 
     def _check_moisture_polarity(self, lowered, context, zone, location) -> List[str]:
