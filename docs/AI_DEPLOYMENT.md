@@ -62,6 +62,35 @@ Estimates derive from the memory-bandwidth bound
 (`tokens/sec ~= usable bandwidth / model bytes`) at an assumed ~4 GB/s achieved.
 `UNO_Q_PHYSICAL_BENCHMARK = PENDING_HARDWARE`; measure on the target board.
 
+### Measured head-to-head, 2026-08-25 on the UNO Q
+
+Same `field_summary` context, same prompt, same guard and fidelity checker, five
+repeats each. `tools/slm_bench.py` reproduces this.
+
+| | Qwen2.5-0.5B Q4_K_M | TinyLlama-1.1B-Chat Q4_K_M |
+| :--- | :--- | :--- |
+| Weights | 469 MB | 638 MB |
+| Acceptance | **0/5** | **0/5** |
+| Generation, mean | **28.2 s** | 75.1 s |
+| Peak child RSS | **584 MB** | 745 MB |
+| Deterministic | yes, 1 distinct text in 5 | yes, 1 distinct text in 5 |
+
+**The larger model is worse on this task, not better.** Qwen writes fluent prose
+and gets two facts wrong: it reads a 36% score as "high" and turns 5 valid / 0
+rejected into "five rejected". TinyLlama does not write a summary at all - it
+echoes the DATA block back as a key-value list, then quotes the TASK instruction
+including its own word budget, and is cut off mid-sentence. That earns a
+`UNSUPPORTED_NUMBER:120` from the guard, 120 being the word budget from the
+prompt rather than any field value.
+
+Both failures are deterministic across five runs, so neither is an unlucky
+sample. On this evidence there is no case for switching, and the 2.7x generation
+cost would buy a regression.
+
+**Recommendation: keep Qwen2.5-0.5B, keep the fidelity fallback.** The field
+summary is served by the deterministic template, which is accurate by
+construction; the zone narrative comes from the model and passes fidelity.
+
 **Measured 2026-08-25 on the UNO Q** (`tools/slm_probe.py`, idle board with the
 App Lab GPS gateway running): **2.8 GB available**. That makes Qwen2.5-0.5B a
 7x headroom choice and TinyLlama-1.1B a 4x one, while Phi-3-mini at 2.3 GB has
