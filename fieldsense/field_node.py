@@ -758,11 +758,19 @@ class FieldNode:
         RESULT_HOLD_SECONDS it returns anyway and the launcher starts the next
         session. Returns True when a press ended the wait.
         """
-        if self.session is None or self.session.state is not FieldState.RESULT:
+        # RESULT *or* ERROR. A session that could not be processed - too few
+        # usable samples - is just as finished as one that produced a map, and
+        # its screen carries something the operator needs more: the reason. The
+        # first version held only on RESULT, so a run that ended "0 of 5 samples
+        # are usable" flashed that conclusion and was replaced by READY within
+        # seconds, which is how an operator learns nothing from a failed walk.
+        if self.session is None or self.session.state not in (
+                FieldState.RESULT, FieldState.ERROR):
             return False
         self.trigger.sync()          # a tap during PROCESSING is not a request
-        log("result on screen; tap to start a new run "
-            "(auto-continues in {:.0f}s)".format(RESULT_HOLD_SECONDS))
+        log("{} on screen; tap to start a new run (auto-continues in {:.0f}s)".format(
+            "result" if self.session.state is FieldState.RESULT else "outcome",
+            RESULT_HOLD_SECONDS))
         pressed = self.trigger.wait_for_press(timeout=RESULT_HOLD_SECONDS)
         log("operator started a new run" if pressed
             else "no input; recycling for the next session")

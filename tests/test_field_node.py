@@ -506,3 +506,24 @@ def test_await_new_run_does_nothing_outside_the_result_state(tmp_path):
     node = build_node(tmp_path, adapter, samples=1)
     node.session = None
     assert node.await_new_run() is False
+
+
+def test_a_session_that_could_not_be_processed_also_holds_the_screen(tmp_path):
+    """The reason is the most useful thing a failed run has to show.
+
+    Holding only on RESULT meant "0 of 5 samples are usable" appeared and was
+    replaced by READY within seconds, so an operator learned nothing from a
+    walk that went wrong.
+    """
+    air = {"moisture": 0.0, "ec": 0.0, "nitrogen": 0.0,
+           "phosphorus": 0.0, "potassium": 0.0}
+    adapter = FakeAdapter([dict(air, lat=17.5697 + i * 0.0004) for i in range(3)])
+    node = build_node(tmp_path, adapter, samples=3)
+    trigger = CountingTrigger()
+    node.build_trigger = lambda: trigger
+    node.run()
+
+    assert node.session.state is FieldState.ERROR
+    assert node.session.map_eligible_records() == []
+    # The hold ran: it accepted a press rather than returning immediately.
+    assert node.await_new_run() is True

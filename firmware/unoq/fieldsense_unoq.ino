@@ -517,7 +517,11 @@ static bool contactInBar() {
   int32_t y = (int32_t)map((int32_t)raw, 200, 3700, (int32_t)PANEL_H, 0);
   if (y < 0) y = 0;
   if (y > PANEL_H) y = PANEL_H;
-  lastTouchY = (int16_t)y;
+  // Only report a landing position when the controller actually answered.
+  // With SPI silent the raw read is 0, which map() turns into a confident-
+  // looking 240 - a coordinate that is pure artifact. -1 says "unknown", which
+  // is the truth, and keeps TY usable as evidence if the wiring is ever fixed.
+  lastTouchY = spiAnswering ? (int16_t)y : (int16_t)-1;
   return y >= BAR_Y;
 }
 
