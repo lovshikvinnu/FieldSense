@@ -701,6 +701,50 @@ static bool     gpsDiscarding = false;  // dropping through to the next newline
 static uint32_t gpsOverflows  = 0;      // merged/overlong lines discarded
 static char     gpsLastLine[48];    // first 47 chars of the most recent line
 
+// Rolling window of the most recent raw bytes, and a count of how many bytes
+// ever arrived with bit 7 set.
+//
+// WHY THE COUNTERS ARE NOT ENOUGH
+//
+// rx>0 with lines=0 says "bytes arrive, no line ever completes" but not WHY,
+// and the two causes need opposite fixes: real NMEA at the wrong framing is a
+// baud or contention problem, while noise on a floating pin is a wire that is
+// not connected. gpsLastLine cannot separate them - it is only written when a
+// line COMPLETES, which is exactly what is not happening.
+//
+// This window is filled in serviceGPS() before any line assembly, so it
+// survives the overflow-discard path that is currently swallowing everything.
+//
+// hi is the decisive number, and it is one comparison against rx:
+//   hi=0            every byte is 7-bit. This is ASCII text - so it IS NMEA,
+//                   and the fault is framing: baud, or two drivers on the pin.
+//   hi ~ rx/2       half the bytes have the high bit set. No ASCII protocol
+//                   does that. The pin is floating and reading noise.
+static const size_t GPS_RAW_WINDOW = 48;
+static char     gpsRawWindow[GPS_RAW_WINDOW];
+static size_t   gpsRawHead   = 0;   // next write position
+static uint32_t gpsRawSeen   = 0;   // bytes ever written to the window
+static uint32_t gpsHighBit   = 0;   // bytes arriving with bit 7 set
+
+// Render the window oldest-to-newest, safe to put on the wire.
+//
+// Two escapes, both mandatory rather than cosmetic. Commas would split the CSV
+// the host parses. And a raw non-printable byte travelling up the Bridge breaks
+// its UTF-8 decode and kills the RPC channel for EVERY method, not just this
+// one - this project has already lost a debugging session to a stray 0x9b.
+static void renderRawWindow(char *out, size_t outLen) {
+  size_t n = gpsRawSeen < GPS_RAW_WINDOW ? (size_t)gpsRawSeen : GPS_RAW_WINDOW;
+  size_t start = (gpsRawHead + GPS_RAW_WINDOW - n) % GPS_RAW_WINDOW;
+  size_t w = 0;
+  for (size_t i = 0; i < n && w + 1 < outLen; i++) {
+    char ch = gpsRawWindow[(start + i) % GPS_RAW_WINDOW];
+    if (ch == ',')                     { out[w++] = ';'; }
+    else if (ch >= 0x20 && ch <= 0x7E) { out[w++] = ch;  }
+    else                               { out[w++] = '.'; }
+  }
+  out[w] = '\0';
+}
+
 // Satellite count and HDOP as text, for the panel's GPS strip.
 //
 // The panel reads these rather than re-parsing latest_gps_csv. Two parsers for
@@ -893,6 +937,14 @@ static void serviceGPS() {
     char c = (char)GPS_SERIAL.read();
     gpsBytes++;
 
+    // Before any line assembly: this has to see the bytes that the
+    // overflow-discard path below throws away, because on a broken link those
+    // are all of them.
+    gpsRawWindow[gpsRawHead] = c;
+    gpsRawHead = (gpsRawHead + 1) % GPS_RAW_WINDOW;
+    if (gpsRawSeen < 0xFFFFFFFFul) { gpsRawSeen++; }
+    if ((uint8_t)c & 0x80)         { gpsHighBit++; }
+
     if (c == '\n' || c == '\r') {
       gpsDiscarding = false;
       if (gpsLineLen > 0) {
@@ -998,6 +1050,12 @@ static void serviceGPS() {
 //   rx  raw bytes seen on Serial1.  lines  complete newline-terminated lines.
 //   csum  lines whose NMEA checksum validated.
 //   gga  GGA sentences handed to parseGGA.  ovf  merged/overlong lines discarded.
+//   hi   bytes that arrived with bit 7 set.  raw  the last 48 bytes, escaped.
+//       These two answer the question the counters cannot: rx>0 with lines=0
+//       means bytes without framing, but corrupted NMEA and a floating pin
+//       look identical in a count. hi=0 says the stream is 7-bit ASCII, so it
+//       is NMEA and the fault is framing; hi near rx/2 says it is noise and
+//       the wire is not connected. raw shows which, directly.
 //       The same argument as Z1/Z2, applied to the GPS. publishNoFix() already
 //       reports these, but it only runs once a line has COMPLETED - so in the
 //       one failure that most needs explaining, a receiver delivering nothing,
@@ -1015,11 +1073,15 @@ static void serviceGPS() {
 //       on ':' and skips what has none, so these stay diagnostics and can never
 //       be mistaken for an operator-control field.
 String get_gps_data() {
-  // 192, not 112: the five counters add up to 76 characters at UINT32_MAX.
-  char suffix[192];
+  char raw[GPS_RAW_WINDOW + 1];
+  renderRawWindow(raw, sizeof(raw));
+  // 288: the five counters are 76 characters at UINT32_MAX, hi= adds 13, and
+  // raw= adds the 48-byte window. raw goes LAST because it is the only
+  // free-form field - anything after it would be harder to find.
+  char suffix[288];
   snprintf(suffix, sizeof(suffix),
            ",UI:%lu,TP:%d,SA:%d,TZ:%u,Z1:%u,Z2:%u,TY:%d,IQ:%u,IL:%d,RC:%lu"
-           ",rx=%lu,lines=%lu,csum=%lu,gga=%lu,ovf=%lu",
+           ",rx=%lu,lines=%lu,csum=%lu,gga=%lu,ovf=%lu,hi=%lu,raw=%s",
            (unsigned long)pressCount, touchPresent ? 1 : 0, spiAnswering ? 1 : 0,
            (unsigned)lastTouchZ,
            (unsigned)lastTouchZ1, (unsigned)lastTouchZ2, (int)lastTouchY,
@@ -1027,7 +1089,7 @@ String get_gps_data() {
            (unsigned long)recordCount,
            (unsigned long)gpsBytes, (unsigned long)gpsLines,
            (unsigned long)gpsChecksumOk, (unsigned long)gpsGgaSeen,
-           (unsigned long)gpsOverflows);
+           (unsigned long)gpsOverflows, (unsigned long)gpsHighBit, raw);
   return latest_gps_csv + String(suffix);
 }
 
