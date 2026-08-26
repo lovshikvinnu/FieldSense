@@ -1,88 +1,136 @@
 <div align="center">
 
-# FieldSense AI
+# FieldSense
 
-### Edge-Native Soil Intelligence & Autonomous Spatial Agronomy System
+### A handheld instrument that reads soil at many points across a field, works out which patches need attention, and explains it in plain language — entirely offline, on a battery-powered board you can carry.
 
-<img src="docs/images/ui_panel_240x320.png" width="260" alt="FieldSense AI running on the 2.8-inch field panel">
+<img src="docs/images/ui_panel_240x320.png" width="250" alt="The FieldSense result screen: soil health score, colour-coded zone bar, field map and guidance">
 
-### A handheld, fully offline AI soil mapping system that helps farmers understand exactly where their field needs attention — before they leave the field.
+**Built by Neha Priya & Lovshik Vinnu** · Electronics & Communication Engineering
 
-**Built by Neha Priya & Lovshik Vinnu**
-*Electronics & Communication Engineering*
-
-![Tests](https://img.shields.io/badge/tests-294%20passing-10b981?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-552%20passing-10b981?style=flat-square)
 ![Dependencies](https://img.shields.io/badge/runtime%20dependencies-0-3b82f6?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.10%2B-f59e0b?style=flat-square)
 ![Offline](https://img.shields.io/badge/network-not%20required-8b5cf6?style=flat-square)
 ![Platform](https://img.shields.io/badge/target-Arduino%20UNO%20Q%20%C2%B7%20QRB2210-64748b?style=flat-square)
 
-*A portable instrument that reads soil at many points across a field, works out which patches need attention, and explains it in plain language — entirely offline, on a battery-powered board you can carry.*
-
 </div>
 
 ---
 
-## Why FieldSense AI?
+## What it does
 
-> ### Because fields are not uniform — one corner is nitrogen-starved while another is waterlogged, and single-point lab tests miss the spatial variations that dictate crop yield.
+A farmer fertilises at **one rate, everywhere** — so half the field is underfed
+and half is over-fertilised. The over-fertilised half is the expensive half:
+surplus nitrogen leaches into groundwater, salts build up, and next season needs
+*more* input for the same yield.
 
-A farmer fertilises at **one rate, everywhere**. So half the field is underfed and half is over-fertilised. The over-fertilised half is the expensive half: surplus nitrogen leaches into groundwater, salts build up, soil structure degrades — and next season needs *more* input for the same yield.
+Lab testing would catch it, but the economics don't work: 1–2 weeks for results,
+and cost-per-sample means 2–3 samples for an entire field. Far too coarse to see
+what matters.
 
-Lab testing would catch it, but the economics don't work: **1–2 weeks** for results, and cost-per-sample means 2–3 samples for an entire field. Far too coarse to see what matters.
+**FieldSense walks the field with you.** Push the probe in, press the button,
+walk to the next spot. After the last sample the device reconstructs the ground
+between your readings, cuts it into patches you can actually act on, and puts
+the answer on its own screen — before you leave the field.
 
-FieldSense takes **~25 GPS-tagged readings in one walk** and returns a zone map **before you leave the field**.
-
-|  | Lab testing | FieldSense AI |
+|  | Lab testing | FieldSense |
 | :--- | :--- | :--- |
 | **Turnaround** | 1–2 weeks | Seconds, in-field |
-| **Spatial resolution** | 2–3 points per field | ~25 points → continuous map |
-| **Connectivity** | Courier + lab | None. Fully offline |
-| **Output** | A number sheet | Colour-coded zones + guidance |
+| **Spatial resolution** | 2–3 points per field | Every sample you take → continuous map |
+| **Connectivity** | Courier and lab | None. Fully offline |
+| **Output** | A sheet of numbers | Colour-coded zones and guidance |
+
+Each zone gets **its own diagnosis** — *"Zone C: lower moisture than the
+surrounding area, high spatial confidence, review irrigation timing here"* —
+instead of one number for the whole field.
 
 ---
 
-## Soil → Decision
+## The device
 
-How a probe insertion becomes an actionable zone map. Every stage runs **on the board**.
+Everything below runs on one battery-powered unit. Nothing is in a data centre.
+
+| Part | What it is | What it does here |
+| :--- | :--- | :--- |
+| **Linux side** | Arduino UNO Q — Qualcomm QRB2210, Debian | Runs the whole measurement pipeline and the language model |
+| **MCU side** | STM32U585 on the same board | Draws the field panel, receives GPS, reads the START control |
+| **Display** | 2.8" ST7789V SPI TFT + XPT2046 touch | The only interface. 320 × 240 landscape, drawn by the MCU |
+| **Positioning** | NEO-M8N GNSS | Tags every sample with where it was taken |
+| **Probe** | JXBS 7-in-1, Modbus RTU over RS485 | N · P · K · pH · EC · moisture · temperature |
+| **Local AI** | Qwen2.5-0.5B-Instruct under `llama.cpp` | Turns the numbers into a sentence a person can read |
+| **Storage** | `artifacts/sessions/<id>/` on the board | Each sample written to disk the moment it is taken |
+
+The two halves of the board split the work along a hard line: **Linux measures
+and decides, the MCU draws and senses the operator.** They speak over
+Arduino RouterBridge, and one `Serial.available()` on that link costs about
+**595 ms** — measured, not estimated. That single number is why the MCU draws
+the panel itself from a ~135-byte record instead of receiving pixels: a full
+153,600-byte frame would take three minutes to cross.
+
+---
+
+## How it works
+
+```mermaid
+flowchart LR
+    OP(["👤 Operator"])
+    PROBE["🌱 JXBS probe<br/>N · P · K · pH · EC<br/>moisture · temp"]
+    SAT["📡 NEO-M8N<br/>position"]
+
+    subgraph MCU["STM32U585 · firmware/unoq/"]
+        direction TB
+        GPSRX["NMEA receiver"]
+        START["START control<br/>panel touch"]
+        PANEL["320 × 240<br/>field panel"]
+    end
+
+    subgraph LINUX["QRB2210 Linux · fieldsense/"]
+        direction TB
+        ACQ["Acquisition"]
+        PIPE["8-stage pipeline<br/>validate → score → interpolate<br/>→ cluster → recommend"]
+        AI["Local SLM<br/>+ NarrativeGuard"]
+        STORE[("Session store")]
+        ACQ --> PIPE --> AI
+        ACQ --> STORE
+    end
+
+    SAT --> GPSRX
+    OP -->|"presses START"| START
+    OP -->|"or the USER button"| ACQ
+    PROBE -->|"Modbus RTU"| ACQ
+    GPSRX -->|"RouterBridge RPC"| ACQ
+    START -->|"telemetry"| ACQ
+    AI -->|"FS record, ~135 B"| PANEL
+    AI --> HTML["Offline HTML<br/>dashboard"]
+    PANEL -->|"reads the result"| OP
+```
+
+Eight stages, every one of them on the board:
 
 ```
- ┌────────────────────────────────┐
- │  📍  PROBE SAMPLE + GPS TAG    │  7 parameters + position, ~2 s per point
- └───────────────┬────────────────┘  N · P · K · pH · EC · moisture · temp
-                 ▼
- ┌────────────────────────────────┐
- │  🛡️  INSERTION VALIDATION      │  physically impossible readings never
- └───────────────┬────────────────┘  reach the map — kept for audit
-                 ▼
- ┌────────────────────────────────┐
- │  🧮  DETERMINISTIC SCORING     │  raw units → 0–1 optimality
- └───────────────┬────────────────┘  weighted fusion → soil health index
-                 ▼
- ┌────────────────────────────────┐
- │  🗺️  SPATIAL IDW INTERPOLATION │  ~25 sparse points → continuous surface
- └───────────────┬────────────────┘  inverse-distance weighting, p = 2.0
-                 ▼
- ┌────────────────────────────────┐
- │  🧩  ZONE CLUSTERING  (A–D)    │  4-neighbour BFS groups touching cells
- └───────────────┬────────────────┘  into contiguous management zones
-                 ▼
- ┌────────────────────────────────┐
- │  🤖  GUARDED AI EXPLANATION    │  plain language, safety-filtered
- └───────────────┬────────────────┘  cannot invent a dosage or a number
-                 ▼
- ┌────────────────────────────────┐
- │  📱  ON-DEVICE 2.8" UI         │  score · zone bar · map · guidance
- └────────────────────────────────┘
+ 📍 PROBE SAMPLE + GPS TAG      7 parameters and a position, ~2 s per point
+        ▼
+ 🛡️  INSERTION VALIDATION       physically impossible readings never reach the
+        ▼                       map — but they are kept for audit
+ 🧮 DETERMINISTIC SCORING       raw units → 0–1 optimality → soil health index
+        ▼
+ 🗺️  SPATIAL IDW INTERPOLATION  sparse points → continuous surface, p = 2.0
+        ▼
+ 🧩 ZONE CLUSTERING  (A–D)      4-neighbour BFS groups touching cells into
+        ▼                       contiguous management zones
+ 🤖 GUARDED AI EXPLANATION      plain language, safety-filtered
+        ▼
+ 📱 ON-DEVICE PANEL             score · zone bar · map · guidance
 ```
 
-### From scattered points to contiguous zones
-
-The core trick: **you cannot walk every square metre**, so the field between your samples has to be reconstructed, then cut into patches a farmer can actually act on.
+**Why interpolation at all:** you cannot walk every square metre, so the ground
+*between* your samples has to be reconstructed before it can be cut into
+patches.
 
 ```
-   ~25 probe points              continuous surface             management zones
-   (what you measure)            (IDW interpolation)            (BFS clustering)
+   probe points                 continuous surface             management zones
+   (what you measure)           (IDW interpolation)            (BFS clustering)
 
       ·    ·    ·                  ▓▓▓▒▒▒░░░░░                   ┌──── A ────┐
                                    ▓▓▒▒▒▒░░░░░                   │  HEALTHY  │
@@ -92,162 +140,205 @@ The core trick: **you cannot walk every square metre**, so the field between you
                                    ░░░░░░░▒▒▒▒                   │    POOR    │
       ·    ·    ·                  ░░░░░░░░▒▒▒                   └────────────┘
 
-   sparse, unusable          every cell has a value        4 zones, each with
-   on its own                                              one primary issue
+   sparse, unusable          every cell has a value        each with one
+   on its own                                             primary issue
 ```
 
-Each zone gets **its own diagnosis** — *"Zone C: lower moisture than the surrounding area, high spatial confidence, review irrigation timing here"* — instead of one number for the whole field.
-
-> **What it deliberately does not do.** FieldSense never prescribes a dosage. No *"apply 25 kg/acre urea."* It says *"review nitrogen management in this zone."* A wrong number here damages real soil and real livelihoods, so quantities are **structurally impossible to emit**: the rule tables cannot produce one, and `NarrativeGuard` blocks the language model from inventing one.
+Full detail → **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
 
 ---
 
-## The Interface
+## Field workflow
 
-Compact-first. One HTML document serves the 240 × 320 panel and a laptop.
+What actually happens between switching the unit on and reading the answer. The
+device asks for one thing at a time and never advances on its own.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> BOOT
+    BOOT --> READY : gateway up, probe found
+    READY --> MEASURING : operator presses START
+    MEASURING --> SAMPLE_SAVED : reading valid, written to disk
+    MEASURING --> READY : rejected — retry, same index
+    SAMPLE_SAVED --> READY_NEXT_SAMPLE : samples remain
+    READY_NEXT_SAMPLE --> MEASURING : operator presses START
+    SAMPLE_SAVED --> PROCESSING : last sample stored
+    PROCESSING --> RESULT
+    RESULT --> [*]
+```
+
+| The panel says | You do |
+| :--- | :--- |
+| `FIELDSENSE` / `STARTING` | Wait. The probe and GPS are being found. |
+| `SAMPLE 1 / 5` · **`PLACE PROBE - PRESS START`** | Push the probe in. Press the **USER** button, or the green bar on the glass. |
+| `SAMPLE 1 / 5` · **`MEASURING - PLEASE WAIT`** | Hold still. |
+| `SAMPLE 1 / 5` · **`SAMPLE 1 SAVED`** | It is on disk. Live moisture, pH, EC and N-P-K are shown. |
+| `SAMPLE 2 / 5` · **`MOVE TO NEXT LOCATION`** | Walk. Press START at the next spot. |
+| **`PROCESSING - PLEASE WAIT`** | The map is being built. |
+| `FIELD STATUS` + score + zones | Read the result. |
+
+Three things this shape buys, which a plain `for` loop did not:
+
+- **The operator sets the pace.** Nothing measures until a person says the probe
+  is in the ground.
+- **A power cut costs one sample, not the walk.** Each sample is written under
+  its own index the moment it is taken.
+- **Position is judged, not assumed.** Every sample records whether the device
+  had actually moved far enough for this to be a *different* place, so GPS
+  jitter is never mistaken for a second sampling site.
+
+The full procedure, including what to do when a reading is rejected →
+**[docs/FIELD_SESSION.md](docs/FIELD_SESSION.md)**
+
+---
+
+## Offline operation
+
+Standalone field operation is the product goal, not a fallback mode.
+
+| | Needs a network? |
+| :--- | :--- |
+| Taking samples, scoring, interpolation, zones, recommendations | **No** |
+| GPS fix | **No** — the receiver is on the board |
+| The onboard language model | **No** — a GGUF file on local storage |
+| Writing and reading sessions | **No** — local disk |
+| Drawing the panel and the dashboard | **No** — all assets embedded, no CDN, no map tiles |
+| Fetching the model weights the first time | Yes, once |
+| Pinning the Arduino display libraries the first time | Yes, once |
+| Developer conveniences — SSH, `git pull` | Yes, obviously |
+
+`fieldsense-field.service` declares no network unit and no
+`network-online.target`, and `tests/test_field_node.py` asserts that a whole
+session opens no off-board socket. There is a procedure for testing this
+properly — radios off, cold boot, no laptop — in
+[docs/FIELD_SESSION.md](docs/FIELD_SESSION.md).
+
+---
+
+## AI safety
+
+The language model is the last stage of the pipeline and the **only** stage that
+cannot change a number. This is deliberate and it is enforced in code, not by
+prompt wording.
+
+| Rule | How it is enforced |
+| :--- | :--- |
+| **The model narrates; it never computes.** | Scores, zones and recommendations are finished before the model is called. It receives them as context and returns prose. |
+| **No dosages, ever.** | The rule tables cannot emit `kg/ha` or litres, and `NarrativeGuard` rejects dose units, agrochemical names and carbon claims in generated text. |
+| **No invented numbers.** | Any figure not present in the deterministic context is a guard violation. |
+| **Contradictions are caught.** | A fidelity check rejects text that disagrees with the numbers it is describing. |
+| **Rejection is not silence.** | Rejected output falls back to a deterministic template and the result is labelled `FALLBACK_TEMPLATE`. The device still produces a correct field result with the model switched off entirely. |
+| **Violations are recorded, not swallowed.** | They are kept on `AINarrative.guard_violations` for audit. |
+
+> **This is currently doing real work.** The field-summary section has
+> repeatedly failed fidelity on the board, so it is served by the deterministic
+> template today. *Model-generated* and *accepted* are different things, and the
+> device reports which one you are looking at.
+
+Detail and the measured evidence → **[docs/AI_DEPLOYMENT.md](docs/AI_DEPLOYMENT.md)** ·
+**[docs/evidence/SLM_V1_VALIDATION_REPORT.md](docs/evidence/SLM_V1_VALIDATION_REPORT.md)**
+
+---
+
+## The interface
+
+Two renderers, deliberately, because the panel and a laptop are different jobs.
 
 <div align="center">
 
-| Field panel — 240 × 320 | AI insights drawer |
+| Result screen | AI insights drawer |
 | :---: | :---: |
-| <img src="docs/images/ui_panel_240x320.png" width="240" alt="FieldSense on the 2.8 inch panel"> | <img src="docs/images/ui_panel_ai_drawer.png" width="240" alt="Plain-language summary drawer"> |
-| Score, colour-coded zone bar, field map and a one-line teaser — all above the fold | Tapping **Read More** slides the explanation up **without covering the map** |
+| <img src="docs/images/ui_panel_240x320.png" width="230" alt="Compact result screen"> | <img src="docs/images/ui_panel_ai_drawer.png" width="230" alt="Plain-language summary drawer"> |
+| Score, zone bar, field map and a one-line teaser, all above the fold | **Read More** slides the explanation up *without* covering the map |
 
 </div>
 
 ![FieldSense desktop dashboard](docs/images/ui_dashboard_desktop.png)
 
-**Open the live dashboard:** [`artifacts/fieldsense_competition_demo.html`](artifacts/fieldsense_competition_demo.html) — committed to the repo, a single self-contained file with zero external requests. Rebuild it any time with `python3 -m fieldsense.demo`. The panel images above are captured from that same renderer, so this is exactly what the hardware shows.
+- **The field panel** is drawn by the MCU with Adafruit_GFX, 320 × 240 landscape,
+  from a ~135-byte record. It is what an operator sees in the sun.
+- **The dashboard** above is one self-contained HTML file with zero external
+  requests, serving both a 240 px-wide kiosk view and a laptop.
+
+**Open it now:** [`artifacts/fieldsense_competition_demo.html`](artifacts/fieldsense_competition_demo.html) —
+committed to the repository, so it opens straight from a clone. Rebuild with
+`python3 -m fieldsense.demo`.
 
 ---
 
 ## Hardware
 
-![FieldSense Hardware Circuit Diagram](docs/images/hardware_circuit_diagram.png)
+![FieldSense hardware circuit diagram](docs/images/hardware_circuit_diagram.png)
 
-### Power — two isolated domains
-
-The single most important wiring rule in this build.
-
-| Domain | Source | Feeds |
+| Component | Part | Interface |
 | :--- | :--- | :--- |
-| **A — 5 V** | USB power bank → UNO Q USB-C | The board, GPS, display |
-| **B — 12 V** | 3S 18650 pack (3 × Li-ion + BMS) | **JXBS soil probe only** |
+| Compute | Arduino UNO Q — QRB2210 Linux MPU + STM32U585 MCU | — |
+| Soil probe | JXBS 7-in-1 | Modbus RTU / RS485, `9600 8-N-1`, slave `0x01` |
+| RS485 | USB-RS485 adapter → `/dev/ttyUSB0` | *(MAX485 on the MCU is the verified alternative)* |
+| GNSS | NEO-M8N | UART / NMEA 0183 on `Serial1` |
+| Display | 2.8" ST7789V + XPT2046 touch | SPI |
+| Power A | USB power bank → USB-C | Board, GPS, display — 5 V |
+| Power B | 3S 18650 pack with BMS | **Soil probe only** — 12 V |
 
-> ⚠️ **Never connect +12 V to any UNO Q pin.** The rails stay separate.
-> **Grounds must be tied together** — RS485 is differential and needs a shared reference. Without that link you get silence or nonsense.
+Three mistakes that cost real debugging time on this build:
 
-### Pinout
+> ⚠️ **Never connect +12 V to any UNO Q pin.** The two power domains stay
+> separate — but their **grounds must be tied together**, because RS485 is
+> differential and needs a shared reference.
+>
+> ⚠️ **The hardware SPI is on the ANALOG header, not D11–D13.** `arduino_spi`
+> is `spi2`: SCK on **A5**, MISO on **A4**, MOSI on **A3**. Touch `T_DO` wired
+> anywhere but A4 clocks out correctly and reads back zero on every channel —
+> indistinguishable from a panel with no touch controller fitted.
+>
+> ⚠️ **Backlight is D6, not D7.** D7 drives the MAX485's tied `DE`/`RE` line.
+> Both bench sketches claimed D7 and each worked alone; wired together, lighting
+> the screen would have jammed the Modbus bus.
 
-**🌱 JXBS soil probe — Modbus RTU / RS485**
-
-| Wire | Signal | Connects to |
-| :--- | :--- | :--- |
-| Brown | VCC | **+12 V** from the 18650 pack |
-| Black | GND | Pack −, tied to UNO Q GND |
-| Yellow | RS485 **A** (D+) | Adapter terminal A |
-| Blue / Green | RS485 **B** (D−) | Adapter terminal B |
-
-`JXBS → USB-RS485 adapter → UNO Q USB host → /dev/ttyUSB0` · `9600 8-N-1` · slave `0x01` · function `0x03`
-
-Alternatively the probe hangs off the **STM32** through a MAX485 breakout, which the bench sketch verified:
-
-| MAX485 pin | UNO Q | Note |
-| :--- | :--- | :--- |
-| VCC | 5 V | This breakout is a 5 V part; do not run it at 3.3 V |
-| GND | GND | Shared with the probe's 12 V pack ground |
-| DI | **TX — Pin 1** (Serial1) | |
-| RO | **RX — Pin 0** (Serial1) | |
-| **DE + RE** (tied) | **D7** | Exclusive to RS485. The STM32 owns this timing because Linux cannot meet the bus turnaround deadline |
-
-`JXBS → MAX485 → STM32 Serial1 → RouterBridge get_soil_data → Linux` · set `FIELDSENSE_SOURCE=BRIDGE`
-
-**📡 NEO-M8N GPS — UART / NMEA 0183**
-
-| Module pin | UNO Q |
-| :--- | :--- |
-| VCC | 5 V or 3.3 V |
-| GND | GND |
-| **TX** | **RX — Pin 0** (Serial1) |
-| **RX** | **TX — Pin 1** (Serial1) |
-
-> ⚠️ TX and RX **cross over**. Straight-through wiring is the most common reason a GPS looks dead.
-
-**🖥️ 2.8" SPI TFT — ST7789V + XPT2046 touch**
-
-| Display pin | UNO Q | | Display pin | UNO Q |
-| :--- | :--- | :--- | :--- | :--- |
-| VCC | 3.3 V | | SDI / MOSI | **D11** |
-| GND | GND | | SCK | **D13** |
-| CS | **D10** | | LED / BLK | **D6** (or 3.3 V) |
-| RESET | **D8** | | SDO / MISO | **D12** |
-| DC / RS | **D9** | | | |
-
-> ⚠️ **3.3 V logic only.** The power pin tolerates 5 V via an onboard LDO — the **signal** lines do not, and no level shifters are fitted.
-> ⚠️ Controller is **ST7789V**, not ILI9341. These boards are widely mislabelled; an ILI9341 driver will not initialise this panel.
-> ⚠️ **Backlight is D6, not D7.** D7 drives the MAX485's tied `DE`/`RE` line. The two bench sketches were validated separately and both claimed D7; wired together, the backlight would have jammed the RS485 bus. Tie `LED`/`BLK` straight to 3.3 V if you do not need software brightness control.
-
-Full electrical specs, verified register maps and datasheet references → **[docs/HARDWARE.md](docs/HARDWARE.md)**
+Full electrical specs, register maps and datasheet references →
+**[docs/HARDWARE.md](docs/HARDWARE.md)** · bench records → **[hardware/](hardware/)**
 
 ---
 
-## Architecture
+## Quick start
 
-![FieldSense signal chain](docs/images/pipeline_architecture.png)
+Python 3.10+. **No runtime dependencies** — standard library only.
 
-The hardware side and the software side are both **frozen**. An adapter layer is the only crossing point, and `FieldSample` is the only contract that crosses it.
+### Just looking at it
 
-| Principle | What it means |
-| :--- | :--- |
-| **Deterministic core** | Identical inputs → bit-identical outputs. Every number traces to an explicit formula. |
-| **No dosages, ever** | Rule tables structurally cannot emit `kg/ha` or litres. |
-| **AI cannot compute** | The model only narrates. `NarrativeGuard` blocks dose units, agrochemical names, carbon claims, and any number absent from the deterministic context. |
-| **One adapter boundary** | Unit conversion happens once, in `fieldsense/hardware/`. Adapters never validate or score. |
-| **Zero dependencies** | `dependencies = []`. Standard library only; `llama.cpp` and the browser are optional system assets. |
+Open [`artifacts/fieldsense_competition_demo.html`](artifacts/fieldsense_competition_demo.html)
+in any browser. It is committed to the repository and needs nothing installed.
 
-### Handbooks
-
-| Document | What it covers |
-| :--- | :--- |
-| 🏗️ **[Architecture](docs/ARCHITECTURE.md)** | Module contracts, algorithms, decision log, frozen contracts |
-| 🔌 **[Hardware Specs](docs/HARDWARE.md)** | Component specs, register maps, wiring, datasheet references |
-| 🚀 **[Integration Runbook](docs/INTEGRATION_RUNBOOK.md)** | Four-step bring-up: acquisition → contract → pipeline → display |
-| 🥾 **[Field Session](docs/FIELD_SESSION.md)** | The operator's procedure: multi-sample workflow, sample quality, GPS jitter, offline guarantees |
-| 🧪 **[Testing Guide](docs/TESTING_GUIDE.md)** | How to test every component, plus the test evidence register |
-| 🤖 **[AI Safety & Deployment](docs/AI_DEPLOYMENT.md)** | Local SLM setup, `NarrativeGuard`, and the display bridge |
-| 📋 [Status & Open Items](docs/STATUS.md) · [Project Handbook](docs/PROJECT_HANDBOOK.md) · [Demo Guide](docs/DEMO_GUIDE.md) | Requirements matrix, purpose, presentation walkthrough |
-
----
-
-## Quickstart
-
-Python 3.10+. **No runtime dependencies.**
+### Developing on it
 
 ```bash
 python3 -m pip install -e ".[dev]"
-```
-
-**Run the tests** — 529 should pass:
-
-```bash
 python3 -m pytest -q
 ```
 
-**Walk a field with the unit** (on the board, no network needed):
+552 tests, no hardware required. Then run the pipeline end to end:
+
+```bash
+python3 -m fieldsense.demo
+```
+
+### Running it in a field
+
+On the board — no laptop, no network:
 
 ```bash
 ./scripts/run_field_session.sh
 ```
 
-The panel says `READY — SAMPLE 1 / 5`. Place the probe, press START on the
-glass, and the device measures, judges, and stores that sample under its own
-index before telling you to move on. See **[docs/FIELD_SESSION.md](docs/FIELD_SESSION.md)**.
-
-**Execute the full pipeline:**
+To have it do that on every power-on instead:
 
 ```bash
-python3 -m fieldsense.demo
+sudo ./scripts/install_boot_service.sh
 ```
+
+
+`python3 -m fieldsense.demo` prints a summary and writes the dashboard:
 
 ```
 Samples:            25 Total | 24 Valid | 1 Rejected
@@ -257,57 +348,81 @@ Explanation Layer:  MOCK_TEMPLATE_v1 [FALLBACK_TEMPLATE] | Guard Blocks: 0
 Dashboard Artifact: artifacts/fieldsense_competition_demo.html
 ```
 
-The `1 Rejected` is deliberate — the dataset plants one unstable sample so you can watch the validation gatekeeper work.
+The `1 Rejected` is deliberate — the dataset plants one unstable sample so you
+can watch the validation gate work.
 
-**Launch the display:**
-
-```bash
-./scripts/launch_display.sh
-```
-
-Run `./scripts/launch_display.sh probe` first — it reports what your machine can do and changes nothing. Without the panel, `png` writes the exact 240 × 320 frame instead.
-
-If no Chromium-family browser is installed, the bridge draws a browser-free status panel instead of failing, so the screen is never blank. Force it with `--target panel`; require the graphical dashboard with `--no-fallback`.
-
-**Run standalone on the board** — no computer, no network, no operator:
-
-```bash
-sudo ./scripts/install_boot_service.sh
-```
-
-That installs `deploy/fieldsense.service`, which runs `scripts/boot_fieldsense.sh` on every power-on: acquire, validate, score, render, and push a frame to the SPI panel. Preview it with `--dry-run`, use `--refresh` for a continuously updating panel, and switch to live sensors by editing the `Environment=` lines:
-
-```ini
-Environment=FIELDSENSE_SOURCE=HARDWARE    # or BRIDGE (probe on the STM32)
-Environment=FIELDSENSE_SENSOR_PORT=/dev/ttyUSB0
-Environment=FIELDSENSE_REQUIRE_GPS_FIX=0  # a cold-start receiver degrades, never aborts
-```
-
-Details → **[docs/AI_DEPLOYMENT.md](docs/AI_DEPLOYMENT.md)** section D8.
+Bring-up on real hardware, step by step, is
+**[docs/INTEGRATION_RUNBOOK.md](docs/INTEGRATION_RUNBOOK.md)** followed by
+**[docs/FIELD_RUN.md](docs/FIELD_RUN.md)**.
 
 ---
 
-## Status
+## Repository structure
 
-| ✅ Complete | ⚠️ Pending hardware |
+| Path | What lives here |
 | :--- | :--- |
-| Deterministic pipeline · 294 tests | GPS wired to UNO Q (`HW-03`) |
-| Hardware → `FieldSample` adapter layer | Display on QRB2210 SPI (`DSP-01`/`DSP-02`) |
-| AI explanation + `NarrativeGuard` | Touch events reaching the UI (`DSP-05`) |
-| Offline dashboard · 240 × 320 + desktop | On-target timing benchmark (`PF-01`) |
-| Display bridge → RGB565 framebuffer | |
-| Probe → MAX485 → UNO Q, verified end-to-end | |
-| Standalone boot service + browser-free panel | |
+| **[`fieldsense/`](fieldsense/)** | The product. Every pipeline stage, the hardware boundary, the AI layer. |
+| **[`firmware/`](firmware/)** | The MCU sketch the field unit flashes. One sketch: panel, GPS and START control. |
+| **[`hardware/`](hardware/)** | The physical validation record — one directory per component, script plus measured result. |
+| **[`tests/`](tests/)** | 552 tests. No hardware required. |
+| **[`scripts/`](scripts/)** | Launchers: field session, standalone node, boot service, display. |
+| **[`deploy/`](deploy/)** | systemd units and the App Lab profile the panel is built from. |
+| **[`docs/`](docs/)** | Documentation. Start at [`docs/README.md`](docs/README.md). |
+| **[`tools/`](tools/)** | Diagnostics — SLM probe and bench, panel push, link probe. |
+| **[`artifacts/`](artifacts/)** | The committed dashboard, so it opens from a clone. Per-run sessions are ignored. |
+| `run_spatial_test.py` | The pipeline entry point the boot service invokes. Stays at the root because the installed systemd units resolve it there. |
+| `field_test_*.json` | The datasets those services read by name. Each carries its own provenance stamp. |
 
-**Honest limitation.** The scoring curves and MCDA weights are unvalidated prototype values at `methodology_version = "0.1"`. Every hardware test above can pass while the agronomic interpretation remains unproven — *"the sensor chain works"* and *"the soil advice is correct"* are different claims, and only the first is currently evidenced.
+---
+
+## Validation status
+
+What has actually been demonstrated, and what has not. This table is the honest
+one; nothing here is claimed on the strength of a passing unit test alone.
+
+| Capability | Status | Evidence |
+| :--- | :--- | :--- |
+| Deterministic pipeline — validate, score, interpolate, cluster, recommend | ✅ **Verified** | 552 automated tests |
+| Soil probe acquisition on the board | ✅ **Verified on hardware** | [`hardware/soil-probe-unoq/`](hardware/soil-probe-unoq/) |
+| GPS fix reaching the pipeline on the board | ✅ **Verified on hardware** | [`hardware/gps-unoq/`](hardware/gps-unoq/), `field_test_live_hardware.json` |
+| Panel transport, parser and renderer | ✅ **Verified on hardware** | [`docs/STATUS.md`](docs/STATUS.md) §6a |
+| Operator-driven multi-sample session with durable storage | ✅ **Implemented and tested** | [`docs/FIELD_SESSION.md`](docs/FIELD_SESSION.md) |
+| A session opening no off-board socket | ✅ **Asserted in test** | `tests/test_field_node.py` |
+| Language model executing on the board | ✅ **Measured on hardware** | [`docs/evidence/SLM_V1_VALIDATION_REPORT.md`](docs/evidence/SLM_V1_VALIDATION_REPORT.md) |
+| Model narrative *accepted* for the field summary | ❌ **Fails fidelity — served by template** | same report |
+| Multi-location spatial mapping on real coordinates | ⏳ **Not yet verified** | every run so far is single-location or synthetic |
+| Agronomic scoring curves and MCDA weights | ⚠️ **Prototype, unvalidated** | `methodology_version = "0.1"` |
+| On-target pipeline timing | ⏳ **Not measured** | host benchmark only (`PF-01`) |
+| Power draw and battery life | ⏳ **Never measured** | (`PF-02`) |
+
+> **The limitation that matters most.** Every hardware test above can pass while
+> the agronomic interpretation remains unproven. *"The sensor chain works"* and
+> *"the soil advice is correct"* are different claims, and only the first is
+> currently evidenced. The scoring curves and weights are prototype values
+> awaiting validation against field trial data.
 
 Full register of open items → **[docs/STATUS.md](docs/STATUS.md)**
-Verified submission report → **[docs/OFFICIAL_PROJECT_REPORT.md](docs/OFFICIAL_PROJECT_REPORT.md)**
+
+---
+
+## Documentation
+
+| | Document |
+| :--- | :--- |
+| 🗺️ | **[Documentation index](docs/README.md)** — start here |
+| 🏗️ | [Architecture](docs/ARCHITECTURE.md) — module contracts, algorithms, decisions, frozen contracts |
+| 🔌 | [Hardware](docs/HARDWARE.md) — specs, register maps, wiring, verification status |
+| 🥾 | [Field session](docs/FIELD_SESSION.md) — the operator's procedure |
+| 🚀 | [Integration runbook](docs/INTEGRATION_RUNBOOK.md) · [Field run](docs/FIELD_RUN.md) — bring-up |
+| 🤖 | [AI deployment & safety](docs/AI_DEPLOYMENT.md) |
+| 🧪 | [Testing guide](docs/TESTING_GUIDE.md) — every component, plus the evidence register |
+| 📋 | [Status & open items](docs/STATUS.md) · [Official report](docs/OFFICIAL_PROJECT_REPORT.md) |
+| 🔬 | [Evidence](docs/evidence/) — validation reports · [Archive](docs/archive/) — historical, not current |
 
 ---
 
 <div align="center">
 
-**FieldSense AI** · Built for farmers who need answers in the field, not in two weeks.
+**FieldSense** · Built for farmers who need answers in the field, not in two weeks.
 
 </div>

@@ -3,7 +3,16 @@
 What is built, what is verified, and what is still undecided. Consolidates the
 former `PROPOSAL_ALIGNMENT.md` and `SPECIFICATION_REGISTER.md`.
 
-**Regression baseline:** 371 tests passing (2026-08-25).
+**Regression baseline:** 552 tests passing (2026-08-26).
+
+> **Sections 4-6 predate the field-session work.** The `DSP-0x` entries below
+> were written on 2026-08-25, before the panel moved to 320x240 landscape,
+> before the touch controller was moved onto the pins the board's SPI actually
+> reads, and before the operator-driven session existed. Where this register
+> and [FIELD_SESSION.md](FIELD_SESSION.md) disagree about the panel or the
+> START control, `FIELD_SESSION.md` is the later document. These entries are
+> left as written rather than silently re-graded; re-verifying each one on the
+> assembled unit is an open task in its own right.
 
 ---
 
