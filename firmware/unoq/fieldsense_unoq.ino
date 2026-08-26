@@ -995,15 +995,39 @@ static void serviceGPS() {
 //       The raw pair is what separates "no controller" from "controller
 //       present but untouched" from "MISO stuck at a rail" - all three of
 //       which produce TZ:0 and need different fixes.
+//   rx  raw bytes seen on Serial1.  lines  complete newline-terminated lines.
+//   csum  lines whose NMEA checksum validated.
+//   gga  GGA sentences handed to parseGGA.  ovf  merged/overlong lines discarded.
+//       The same argument as Z1/Z2, applied to the GPS. publishNoFix() already
+//       reports these, but it only runs once a line has COMPLETED - so in the
+//       one failure that most needs explaining, a receiver delivering nothing,
+//       the payload is the cold-start default and carries no counters at all.
+//       "GPS unpowered", "TX not wired", "wrong baud" and "MCU wedged" then look
+//       identical from the host. Reported here they are one glance apart:
+//         rx=0                  nothing on the wire. Power or wiring.
+//         rx>0, lines=0         bytes but never a newline. Baud mismatch, or
+//                               two drivers contending on the RX pin.
+//         lines>0, csum=0       framing right, content corrupt - the drain is
+//                               losing characters mid-sentence.
+//         csum>0                receiver healthy; anything left is satellite
+//                               lock, which is sky and time, not wiring.
+//       Written with '=' rather than ':' deliberately: parse_ui_event() splits
+//       on ':' and skips what has none, so these stay diagnostics and can never
+//       be mistaken for an operator-control field.
 String get_gps_data() {
-  char suffix[112];
+  // 192, not 112: the five counters add up to 76 characters at UINT32_MAX.
+  char suffix[192];
   snprintf(suffix, sizeof(suffix),
-           ",UI:%lu,TP:%d,SA:%d,TZ:%u,Z1:%u,Z2:%u,TY:%d,IQ:%u,IL:%d,RC:%lu",
+           ",UI:%lu,TP:%d,SA:%d,TZ:%u,Z1:%u,Z2:%u,TY:%d,IQ:%u,IL:%d,RC:%lu"
+           ",rx=%lu,lines=%lu,csum=%lu,gga=%lu,ovf=%lu",
            (unsigned long)pressCount, touchPresent ? 1 : 0, spiAnswering ? 1 : 0,
            (unsigned)lastTouchZ,
            (unsigned)lastTouchZ1, (unsigned)lastTouchZ2, (int)lastTouchY,
            (unsigned)irqLevel, irqEverLow ? 1 : 0,
-           (unsigned long)recordCount);
+           (unsigned long)recordCount,
+           (unsigned long)gpsBytes, (unsigned long)gpsLines,
+           (unsigned long)gpsChecksumOk, (unsigned long)gpsGgaSeen,
+           (unsigned long)gpsOverflows);
   return latest_gps_csv + String(suffix);
 }
 
