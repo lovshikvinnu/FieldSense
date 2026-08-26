@@ -23,7 +23,7 @@ from fieldsense.field.panel import (
 )
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEPLOYED = os.path.join(REPO_ROOT, "firmware", "unoq", "fieldsense_unoq.ino")
+DEPLOYED = os.path.join(REPO_ROOT, "firmware", "fieldsense_unoq", "fieldsense_unoq.ino")
 DISPLAY_ONLY = os.path.join(REPO_ROOT, "hardware", "tft-unoq", "dashboard", "dashboard.ino")
 SKETCHES = (DEPLOYED, DISPLAY_ONLY)
 

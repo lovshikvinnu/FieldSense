@@ -79,7 +79,7 @@ flowchart LR
     PROBE["🌱 JXBS probe<br/>N · P · K · pH · EC<br/>moisture · temp"]
     SAT["📡 NEO-M8N<br/>position"]
 
-    subgraph MCU["STM32U585 · firmware/unoq/"]
+    subgraph MCU["STM32U585 · firmware/fieldsense_unoq/"]
         direction TB
         GPSRX["NMEA receiver"]
         START["START control<br/>panel touch"]

@@ -3,7 +3,7 @@
 tests/test_panel_values.py checks the record the host BUILDS. Nothing checked
 it against the sketch that READS it - the contract existed only as a comment,
 and the comment named dashboard.ino while the board actually runs
-firmware/unoq/fieldsense_unoq.ino.
+firmware/fieldsense_unoq/fieldsense_unoq.ino.
 
 That gap is expensive. The far side of this format is firmware: a mismatch is
 invisible until someone flashes a board and watches the panel not update, and
@@ -24,7 +24,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # The firmware actually flashed for field runs. dashboard.ino is the
 # display-only variant and must agree with it.
-DEPLOYED = os.path.join(REPO_ROOT, "firmware", "unoq", "fieldsense_unoq.ino")
+DEPLOYED = os.path.join(REPO_ROOT, "firmware", "fieldsense_unoq", "fieldsense_unoq.ino")
 DISPLAY_ONLY = os.path.join(REPO_ROOT, "hardware", "tft-unoq", "dashboard", "dashboard.ino")
 
 # 'o' is appended separately by build_panel_record, so it is not in

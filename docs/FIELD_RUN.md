@@ -71,8 +71,8 @@ receiver's output is corrupted and no position ever arrives.
 
 ```bash
 cd ~/FieldSense/FieldSense && git pull --ff-only origin main
-arduino-cli compile --fqbn arduino:zephyr:unoq firmware/unoq
-arduino-cli upload -p 172.17.0.1 --fqbn arduino:zephyr:unoq firmware/unoq
+arduino-cli compile --fqbn arduino:zephyr:unoq firmware/fieldsense_unoq
+arduino-cli upload -p 172.17.0.1 --fqbn arduino:zephyr:unoq firmware/fieldsense_unoq
 ```
 
 The upload asks for the board password. Expect roughly `110000 bytes (14%)` of

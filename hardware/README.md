@@ -5,7 +5,7 @@ component actually did. One directory per component, each holding the script or
 sketch that was run and a Markdown record of the result.
 
 > These are **bench experiments**, not the product. The firmware the field unit
-> flashes is [`firmware/unoq/`](../firmware/unoq/). The Python that talks to the
+> flashes is [`firmware/fieldsense_unoq/`](../firmware/fieldsense_unoq/). The Python that talks to the
 > hardware at runtime is `fieldsense/hardware/`.
 
 | Directory | Component | Contents |

@@ -4,8 +4,8 @@ MCU firmware for the assembled field unit.
 
 | Path | What it is |
 | :--- | :--- |
-| [`unoq/fieldsense_unoq.ino`](unoq/fieldsense_unoq.ino) | **The sketch the field unit runs.** Draws the 320 × 240 landscape panel, receives the NEO-M8N GPS stream and exposes it over `Bridge.provide("get_gps_data", …)`, and reads the operator's START control. |
-| [`unoq/main.py`](unoq/main.py) | The Linux-side half of the same App Lab app — the GPS gateway the Python pipeline connects to. |
+| [`fieldsense_unoq/fieldsense_unoq.ino`](fieldsense_unoq/fieldsense_unoq.ino) | **The sketch the field unit runs.** Draws the 320 × 240 landscape panel, receives the NEO-M8N GPS stream and exposes it over `Bridge.provide("get_gps_data", …)`, and reads the operator's START control. |
+| [`fieldsense_unoq/main.py`](fieldsense_unoq/main.py) | The Linux-side half of the same App Lab app — the GPS gateway the Python pipeline connects to. |
 
 Only one sketch can be on the STM32U585 at a time, which is why the panel, the
 GPS receiver and the START control all live in a single file rather than three.
@@ -15,8 +15,8 @@ that rules out pixel streaming, is documented at the top of the sketch itself.
 ## Building and flashing
 
 ```bash
-arduino-cli compile --fqbn arduino:zephyr:unoq firmware/unoq
-arduino-cli upload -p 172.17.0.1 --fqbn arduino:zephyr:unoq firmware/unoq
+arduino-cli compile --fqbn arduino:zephyr:unoq firmware/fieldsense_unoq
+arduino-cli upload -p 172.17.0.1 --fqbn arduino:zephyr:unoq firmware/fieldsense_unoq
 ```
 
 In normal operation the flash happens a different way: starting the App Lab app

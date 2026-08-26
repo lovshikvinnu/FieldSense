@@ -69,7 +69,7 @@ The audit answers the 16 core architectural questions:
 10. **Are there conflicting pin assignments or architecture decisions?**
     - **Pin Conflict 1 (GPIO 7):** `MAX485_RE_DE` (Soil Sensor sketch) vs `TFT_LED` (TFT sketch).
     - **Interface Conflict 2 (UART Serial1):** GPS (`Serial1`) vs MAX485 (`Serial1`). Both peripherals claim the single physical UART header of the UNO Q.
-    - > **RESOLVED — see `../docs/HARDWARE.md` section 9.1.** Backlight moved to D6, leaving D7 to RS485 direction control alone. `Serial1` awarded to the GPS; the soil probe moved to the Linux USB-RS485 port (`FIELDSENSE_SOURCE=HARDWARE`). Unified firmware lives in `firmware/unoq/`. This audit entry is kept as the record of how the conflicts were found.
+    - > **RESOLVED — see `../docs/HARDWARE.md` section 9.1.** Backlight moved to D6, leaving D7 to RS485 direction control alone. `Serial1` awarded to the GPS; the soil probe moved to the Linux USB-RS485 port (`FIELDSENSE_SOURCE=HARDWARE`). Unified firmware lives in `firmware/fieldsense_unoq/`. This audit entry is kept as the record of how the conflicts were found.
 
 11. **Are there duplicated implementations?**
     - Duplicate Modbus register addresses and scaling constants across Python and C++ files.
@@ -134,7 +134,7 @@ The actual file structure of the hardware testing directory and its associated f
 > **Directory names have since changed.** This audit was written against the
 > original `hardware_test/` layout. The bench material now lives in `hardware/`
 > with the spaces removed from directory names, and the unified production
-> sketch was promoted out to `firmware/unoq/`. Paths below are preserved as the
+> sketch was promoted out to `firmware/fieldsense_unoq/`. Paths below are preserved as the
 > audit recorded them; use this mapping to locate a file today:
 >
 > | Audit path | Today |
@@ -147,7 +147,7 @@ The actual file structure of the hardware testing directory and its associated f
 > | `soil sensor with Max485-RS485 UNO Q/` | `hardware/soil-probe-unoq/` |
 > | `TFT/` | `hardware/tft/` |
 > | `TFT UNO Q/` | `hardware/tft-unoq/` |
-> | *(unified sketch, added later)* | `firmware/unoq/` |
+> | *(unified sketch, added later)* | `firmware/fieldsense_unoq/` |
 
 ```text
 hardware/

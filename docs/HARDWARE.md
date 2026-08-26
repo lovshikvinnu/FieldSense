@@ -350,7 +350,7 @@ The Arduino UNO Q has successfully passed ground-level hardware validation for t
 >
 > **Resolution:** the backlight moves to **pin 6**. Pin 7 is reserved
 > exclusively for `MAX485_RE_DE`. Applied in
-> `firmware/unoq/fieldsense_unoq.ino` (`#define TFT_LED 6`). Re-flash the STM32
+> `firmware/fieldsense_unoq/fieldsense_unoq.ino` (`#define TFT_LED 6`). Re-flash the STM32
 > before wiring both
 > peripherals together, and confirm no other peripheral claims pin 6.
 
@@ -429,7 +429,7 @@ USB-RS485 adapter already provides an independent port:
 | JXBS probe | USB-RS485 → `/dev/ttyUSB0` | QRB2210 Linux | `FIELDSENSE_SOURCE=HARDWARE` |
 | ST7789 panel | Hardware SPI + D6 backlight | STM32U585 | `FS\|` value record over Monitor |
 
-Firmware: **`firmware/unoq/`** is the single flashable sketch for
+Firmware: **`firmware/fieldsense_unoq/`** is the single flashable sketch for
 the assembled unit — `dashboard.ino` verbatim plus non-blocking GPS in one
 `loop()`. The GPS read had to become non-blocking to get there: the bench
 sketch's blocking `readStringUntil` waits up to a second, and this loop also

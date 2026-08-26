@@ -1,6 +1,6 @@
 // FieldSense AI - display-only bench panel, 320x240 landscape.
 //
-// DERIVED FROM firmware/unoq/fieldsense_unoq.ino, which is the
+// DERIVED FROM firmware/fieldsense_unoq/fieldsense_unoq.ino, which is the
 // firmware the assembled unit actually runs. This variant drops the GPS
 // receiver and the operator's START control and keeps only the panel, so the
 // display path can be exercised on a bare board with no receiver attached and
