@@ -24,6 +24,16 @@ In normal operation the flash happens a different way: starting the App Lab app
 See [`deploy/applab/unified_v1/README.md`](../deploy/applab/unified_v1/README.md)
 for why, and [`docs/FIELD_RUN.md`](../docs/FIELD_RUN.md) for the full bring-up.
 
+## Known issue: Serial1 loses sentence tails
+
+The RX ring is 64 bytes and a GGA sentence is 74-82, so a sentence that arrives
+while the loop is blocked in `Serial.available()` (~595 ms) loses its tail --
+which is where the checksum and the newline are. The unit currently parses about
+one sentence in fifty.
+
+Measurements, the confirmed mechanism, what will not fix it, and three options
+that might: **[docs/GPS_LINK_ANALYSIS.md](../docs/GPS_LINK_ANALYSIS.md)**.
+
 ## Related, but not firmware
 
 Bench sketches written while bringing each component up — including
