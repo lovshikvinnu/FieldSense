@@ -21,9 +21,10 @@ lazily and stays None elsewhere — tests patch this module-level symbol.
 """
 
 import os
+import re
 import socket
-from dataclasses import dataclass
-from typing import Any, Optional
+from dataclasses import dataclass, replace
+from typing import Any, Dict, List, Optional
 
 from ..models import GPSPosition, HardwareError, HardwareErrorCode
 from .base import GPSAdapter
@@ -71,6 +72,31 @@ def parse_nmea_coord(coord_str: str, is_longitude: bool = False) -> float:
     return -decimal if hemisphere in ("S", "W") else decimal
 
 
+def _fix_quality(parts: List[str], payload: str) -> Dict[str, Any]:
+    """Build the quality dict for a FIX_OK payload, including the fix's age.
+
+    `age` is seconds since the firmware last parsed a GGA, or -1 when it never
+    has. It rides in `quality` rather than on GPSPosition itself because that
+    field is already a free-form dict, so nothing downstream has to change to
+    carry it.
+
+    A missing `age` means firmware older than this field. It is reported as
+    None rather than 0, because "unknown age" and "fresh" are different claims
+    and only one of them is safe to act on.
+    """
+    quality: Dict[str, Any] = {
+        "satellites": int(parts[3].split(":")[1]),
+        "hdop": float(parts[4].split(":")[1]),
+    }
+    match = re.search(r"\bage=(-?\d+)", payload)
+    if match is not None:
+        age = int(match.group(1))
+        quality["fix_age_s"] = age if age >= 0 else None
+    else:
+        quality["fix_age_s"] = None
+    return quality
+
+
 def parse_gps_telemetry(payload: str) -> GPSPosition:
     """Parse one STM32 GPS telemetry CSV line into a canonical GPSPosition.
 
@@ -91,10 +117,7 @@ def parse_gps_telemetry(payload: str) -> GPSPosition:
                 latitude=parse_nmea_coord(parts[1], is_longitude=False),
                 longitude=parse_nmea_coord(parts[2], is_longitude=True),
                 fix_valid=True,
-                quality={
-                    "satellites": int(parts[3].split(":")[1]),
-                    "hdop": float(parts[4].split(":")[1]),
-                },
+                quality=_fix_quality(parts, payload),
             )
         except HardwareError:
             raise
@@ -235,6 +258,7 @@ class BridgeGPSAdapter(GPSAdapter):
         timeout: float = 1.0,
         method: str = "get_gps_data",
         bridge_endpoint: Optional[str] = None,
+        max_fix_age_s: Optional[float] = None,
     ) -> None:
         """Configure the adapter. No transport is contacted until acquisition.
 
@@ -246,6 +270,10 @@ class BridgeGPSAdapter(GPSAdapter):
             timeout: Socket timeout in seconds.
             method: RouterBridge method name to call.
             bridge_endpoint: Alias for `method`, used by SensorAdapterFactory.
+            max_fix_age_s: Reject a position whose fix is older than this many
+                seconds. Defaults to environment variable
+                FIELDSENSE_GPS_MAX_FIX_AGE, or 120. Zero or negative disables
+                the check.
         """
         if host is None:
             host = os.environ.get("FIELDSENSE_GPS_GATEWAY_HOST", "127.0.0.1")
@@ -260,6 +288,10 @@ class BridgeGPSAdapter(GPSAdapter):
         self.timeout = timeout
         self.method = bridge_endpoint or method
         self.bridge_endpoint = self.method
+        if max_fix_age_s is None:
+            raw_age = os.environ.get("FIELDSENSE_GPS_MAX_FIX_AGE")
+            max_fix_age_s = float(raw_age) if raw_age and raw_age.strip() else 120.0
+        self.max_fix_age_s = float(max_fix_age_s)
         self._initialized = False
 
     def initialize(self) -> None:
@@ -273,10 +305,31 @@ class BridgeGPSAdapter(GPSAdapter):
     def read(self) -> GPSPosition:
         """Fetch and parse the latest GPS telemetry.
 
+        A fix older than `max_fix_age_s` is returned with `fix_valid` cleared.
+        The firmware's `latest_gps_csv` persists until the next successful
+        parse, so on a degraded link the newest payload can carry a position
+        from minutes ago. Stapled to a fresh soil sample that silently
+        mislocates it, which is worse than having no position at all: a wrong
+        coordinate is indistinguishable from a right one downstream.
+
+        Downgrading to `fix_valid=False` rather than raising deliberately
+        reuses the path a receiver with no lock already takes, so
+        `require_gps_fix` and the operator messaging behave exactly as they
+        already do for that case. The age stays in `quality` either way, so an
+        audit can tell "no lock" from "lock, but stale".
+
         Raises:
             HardwareError: No transport reachable, or the payload was malformed.
         """
-        return parse_gps_telemetry(self._read_payload())
+        position = parse_gps_telemetry(self._read_payload())
+        if not position.fix_valid or self.max_fix_age_s <= 0:
+            return position
+        age = (position.quality or {}).get("fix_age_s")
+        if age is None or age <= self.max_fix_age_s:
+            return position
+        quality = dict(position.quality or {})
+        quality["stale_fix"] = True
+        return replace(position, fix_valid=False, quality=quality)
 
     def read_raw(self) -> str:
         """Return the telemetry line verbatim, trailing diagnostics included.

@@ -726,6 +726,21 @@ static size_t   gpsRawHead   = 0;   // next write position
 static uint32_t gpsRawSeen   = 0;   // bytes ever written to the window
 static uint32_t gpsHighBit   = 0;   // bytes arriving with bit 7 set
 
+// millis() at the last parseGGA that published a position, and whether there
+// has ever been one.
+//
+// latest_gps_csv PERSISTS until the next successful parse. On a healthy link
+// that is invisible; on a degraded one the host can read a minutes-old
+// position and staple it to a fresh soil sample, which is the exact failure
+// this project keeps designing against - a value that reads like a
+// measurement and is not. Nothing on the wire carried the fix's age, so the
+// host had no way to tell a current position from a stale one.
+//
+// Unsigned subtraction, so the ~49.7-day millis() wrap is handled without a
+// special case.
+static uint32_t gpsLastFixMs = 0;
+static bool     gpsHaveFix   = false;
+
 // Render the window oldest-to-newest, safe to put on the wire.
 //
 // Two escapes, both mandatory rather than cosmetic. Commas would split the CSV
@@ -867,6 +882,8 @@ static void parseGGA(const char *s, size_t len) {
 
   latest_gps_csv = "FIX_OK," + lat + latDir + "," + lon + lonDir +
                    ",Sats:" + sats + ",HDOP:" + hdop;
+  gpsLastFixMs = millis();
+  gpsHaveFix = true;
 }
 
 // Drain whatever Serial1 has buffered without ever waiting for more. Safe to
@@ -1050,6 +1067,11 @@ static void serviceGPS() {
 //   rx  raw bytes seen on Serial1.  lines  complete newline-terminated lines.
 //   csum  lines whose NMEA checksum validated.
 //   gga  GGA sentences handed to parseGGA.  ovf  merged/overlong lines discarded.
+//   age  seconds since the last parseGGA that published a position, -1 if
+//       there has never been one. latest_gps_csv persists until the next
+//       successful parse, so without this the host cannot tell a current
+//       position from one minutes old - and a stale fix stapled to a fresh
+//       soil sample mislocates it silently.
 //   hi   bytes that arrived with bit 7 set.  raw  the last 48 bytes, escaped.
 //       These two answer the question the counters cannot: rx>0 with lines=0
 //       means bytes without framing, but corrupted NMEA and a floating pin
@@ -1081,7 +1103,7 @@ String get_gps_data() {
   char suffix[288];
   snprintf(suffix, sizeof(suffix),
            ",UI:%lu,TP:%d,SA:%d,TZ:%u,Z1:%u,Z2:%u,TY:%d,IQ:%u,IL:%d,RC:%lu"
-           ",rx=%lu,lines=%lu,csum=%lu,gga=%lu,ovf=%lu,hi=%lu,raw=%s",
+           ",rx=%lu,lines=%lu,csum=%lu,gga=%lu,ovf=%lu,hi=%lu,age=%ld,raw=%s",
            (unsigned long)pressCount, touchPresent ? 1 : 0, spiAnswering ? 1 : 0,
            (unsigned)lastTouchZ,
            (unsigned)lastTouchZ1, (unsigned)lastTouchZ2, (int)lastTouchY,
@@ -1089,7 +1111,8 @@ String get_gps_data() {
            (unsigned long)recordCount,
            (unsigned long)gpsBytes, (unsigned long)gpsLines,
            (unsigned long)gpsChecksumOk, (unsigned long)gpsGgaSeen,
-           (unsigned long)gpsOverflows, (unsigned long)gpsHighBit, raw);
+           (unsigned long)gpsOverflows, (unsigned long)gpsHighBit,
+           gpsHaveFix ? (long)((millis() - gpsLastFixMs) / 1000UL) : -1L, raw);
   return latest_gps_csv + String(suffix);
 }
 

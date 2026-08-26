@@ -129,6 +129,82 @@ def test_bridge_gps_adapter_fix_ok():
         assert gps_pos.quality["hdop"] == 1.61
 
 
+def test_a_stale_fix_is_not_a_fix():
+    """A position minutes old must not be handed to a fresh sample.
+
+    latest_gps_csv persists in the firmware until the next successful parse, so
+    on a degraded link the newest payload can carry a position from minutes
+    ago. Stapling that to a soil sample mislocates it silently, and a wrong
+    coordinate is indistinguishable from a right one downstream.
+    """
+    adapter = BridgeGPSAdapter(max_fix_age_s=120)
+    adapter._read_payload = lambda: (
+        "FIX_OK,1734.13114N,07826.17371E,Sats:12,HDOP:0.85,age=400,raw=x")
+
+    position = adapter.read()
+
+    assert position.fix_valid is False, "a 400s-old fix must not read as valid"
+    assert position.quality["fix_age_s"] == 400
+    assert position.quality["stale_fix"] is True
+    # The coordinates survive so an audit can see WHAT was rejected.
+    assert abs(position.latitude - 17.5688523) < 1e-6
+
+
+def test_a_fresh_fix_passes_the_age_gate():
+    adapter = BridgeGPSAdapter(max_fix_age_s=120)
+    adapter._read_payload = lambda: (
+        "FIX_OK,1734.13114N,07826.17371E,Sats:12,HDOP:0.85,age=4,raw=x")
+
+    position = adapter.read()
+
+    assert position.fix_valid is True
+    assert position.quality["fix_age_s"] == 4
+    assert "stale_fix" not in position.quality
+
+
+def test_firmware_without_an_age_field_still_reads_as_a_fix():
+    """Fail open for older firmware, but report the age as unknown.
+
+    A board flashed before `age=` existed reports nothing about staleness. That
+    is a different claim from "fresh", so it is None rather than 0 - but it
+    must not become a hard failure, or upgrading the host would brick every
+    unit that has not been reflashed yet.
+    """
+    adapter = BridgeGPSAdapter(max_fix_age_s=120)
+    adapter._read_payload = lambda: "FIX_OK,1734.18667N,07825.47349E,Sats:06,HDOP:1.61"
+
+    position = adapter.read()
+
+    assert position.fix_valid is True
+    assert position.quality["fix_age_s"] is None
+
+
+def test_the_age_gate_can_be_disabled():
+    adapter = BridgeGPSAdapter(max_fix_age_s=0)
+    adapter._read_payload = lambda: (
+        "FIX_OK,1734.13114N,07826.17371E,Sats:12,HDOP:0.85,age=99999,raw=x")
+
+    assert adapter.read().fix_valid is True
+
+
+def test_the_age_gate_reads_its_threshold_from_the_environment(monkeypatch):
+    monkeypatch.setenv("FIELDSENSE_GPS_MAX_FIX_AGE", "30")
+    adapter = BridgeGPSAdapter()
+    assert adapter.max_fix_age_s == 30.0
+    adapter._read_payload = lambda: (
+        "FIX_OK,1734.13114N,07826.17371E,Sats:12,HDOP:0.85,age=31,raw=x")
+    assert adapter.read().fix_valid is False
+
+
+def test_a_never_fixed_receiver_reports_unknown_age_not_zero():
+    """age=-1 means the firmware has never parsed a GGA. Zero would read as
+    'fixed one second ago', which is the opposite of the truth."""
+    from fieldsense.hardware.gps.bridge_gps import parse_gps_telemetry
+    position = parse_gps_telemetry(
+        "FIX_OK,1734.13114N,07826.17371E,Sats:12,HDOP:0.85,age=-1,raw=x")
+    assert position.quality["fix_age_s"] is None
+
+
 def test_bridge_gps_adapter_no_fix():
     """Test BridgeGPSAdapter handling NO_FIX status."""
     adapter = BridgeGPSAdapter()
