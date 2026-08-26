@@ -12,7 +12,7 @@
 
 The FieldSense AI codebase is in a **highly stable, production-ready state for Phase 1**. The core software is a 100% offline, zero-dependency Python edge-intelligence system designed for soil assessment on resource-constrained platforms (specifically the **Arduino UNO Q** — Qualcomm QRB2210 Linux MPU + STM32U585 MCU).
 
-Recent commits by team members restructured the documentation directory into a clean, 6-part modular specification framework and added extensive physical bench testing scripts under `hardware_test/`. The 8-stage deterministic software pipeline is fully operational with a **105-test automated regression suite passing in 0.60 seconds**.
+Recent commits by team members restructured the documentation directory into a clean, 6-part modular specification framework and added extensive physical bench testing scripts under `hardware/`. The 8-stage deterministic software pipeline is fully operational with a **105-test automated regression suite passing in 0.60 seconds**.
 
 ---
 
@@ -136,7 +136,7 @@ FieldSense/
 │       ├── SPECIFICATION_REGISTER.md
 │       └── validation_and_limitations.md
 │
-├── hardware_test/                            # Bench integration scripts & physical hardware tests
+├── hardware/                            # Bench integration scripts & physical hardware tests
 │   ├── GPS/                                  # Basic GPS test scripts & Markdown record
 │   ├── GPS_UNO Q/                            # NEO-M8N GPS UART integration on Arduino UNO Q [UNTRACKED]
 │   ├── RS485/                                # MAX485 RS485 transceiver bench tests
@@ -202,22 +202,22 @@ FieldSense/
 Inspection of the git commit history (`git log -n 5`) reveals that commit `97f0f30` (dated **Aug 23, 2026**) introduced major hardware integration and documentation restructuring:
 
 ### Change 1: Documentation Restructure & Modularization
-- **File(s):** `docs/` -> `docs/archive/`, `docs/PROJECT_HANDBOOK.md`, `docs/SYSTEM_ARCHITECTURE.md`, `docs/HARDWARE_SPEC.md`, `docs/SOFTWARE_SPEC.md`, `docs/TEST_AND_VALIDATION.md`, `docs/DECISION_LOG.md`
+- **File(s):** `docs/` -> `docs/archive/`, `docs/PROJECT_HANDBOOK.md`, `docs/archive/SYSTEM_ARCHITECTURE.md`, `docs/HARDWARE_SPEC.md`, `docs/archive/SOFTWARE_SPEC.md`, `docs/evidence/TEST_AND_VALIDATION.md`, `docs/archive/DECISION_LOG.md`
 - **What changed:** Legacy monolith documents (`01_SOFTWARE_WORKPLAN.md`, `02_PROJECT_HANDBOOK.md`, `03_ARCHITECTURE.md`, `DEMO_GUIDE.md`, etc.) were moved to `docs/archive/`. Six new clean, modular markdown specification files were created in `docs/`.
 - **Why / apparent purpose:** To establish clear architectural specifications, record formal decision logs (`D-001` to `D-009`), and provide concise documentation for human and AI developers.
 - **Impact:** High improvement in document maintainability.
 - **Architectural significance:** Formalizes frozen layer contracts, scientific boundaries (no chemical dosage prescriptions), and hardware specs.
 
 ### Change 2: Addition of Physical Hardware Test Suite
-- **File(s):** `hardware_test/` (including subdirectories for GPS, RS485, TFT, Arduino UNO Q, Soil Sensor)
+- **File(s):** `hardware/` (including subdirectories for GPS, RS485, TFT, Arduino UNO Q, Soil Sensor)
 - **What changed:** Added physical bench integration test scripts (Python + Arduino C++ `.ino` sketches) to test physical communication with JXBS 7-in-1 Modbus RS485 sensors, NEO-M8N GPS UART modules, and TFT displays on the Arduino UNO Q.
 - **Why / apparent purpose:** Validating hardware communication and baud rates directly on the Arduino UNO Q Linux MPU / STM32 MCU bridge.
 - **Impact:** Provides empirical test scripts and wiring diagrams for physical hardware setup.
 - **Architectural significance:** Prepares the boundary drivers required to connect `fieldsense.hardware` to real microcontrollers.
 
 ### Change 3: Working Directory Cleanup (Unstaged Changes)
-- **File(s):** `hardware_test/soil sensor with Max485-RS485/` (deleted), `hardware_test/GPS_UNO Q/` (untracked), `hardware_test/soil sensor with Max485-RS485 UNO Q/` (untracked)
-- **What changed:** Directory rename/restructure within `hardware_test/` to organize Arduino UNO Q specific sketches.
+- **File(s):** `hardware/soil-probe-unoq/` (deleted), `hardware/gps-unoq/` (untracked), `hardware/soil-probe-unoq/` (untracked)
+- **What changed:** Directory rename/restructure within `hardware/` to organize Arduino UNO Q specific sketches.
 - **Why / apparent purpose:** RefResource naming to explicitly highlight UNO Q integration.
 - **Impact:** Minor working tree delta.
 - **Architectural significance:** None (contained within hardware test folder).
@@ -331,7 +331,7 @@ Audit of the major system data contracts:
 - **Dependencies**: 0 AI dependencies (No OpenAI, Anthropic, Gemini SDKs, or local llama.cpp bindings installed or imported).
 
 ### AI Data Flow
-AI is **not present** in the active execution pipeline. In current documentation (`docs/SYSTEM_ARCHITECTURE.md`), AI is specified exclusively as a Phase 3 extension:
+AI is **not present** in the active execution pipeline. In current documentation (`docs/archive/SYSTEM_ARCHITECTURE.md`), AI is specified exclusively as a Phase 3 extension:
 $$\text{Deterministic Core Results} \longrightarrow \text{Structured JSON Context} \longrightarrow \text{Edge LLM Explainer}$$
 
 ### AI Boundary Safety
@@ -407,7 +407,7 @@ dev = [
 - **Development/Test Dependencies**: `pytest>=8.0.0`.
 - **Optional Dependencies**: None.
 - **AI Dependencies**: None.
-- **Hardware Dependencies**: Physical test scripts in `hardware_test/` use `pyserial` for bench testing, but `fieldsense` core has zero hard external requirements.
+- **Hardware Dependencies**: Physical test scripts in `hardware/` use `pyserial` for bench testing, but `fieldsense` core has zero hard external requirements.
 
 ---
 
@@ -415,13 +415,13 @@ dev = [
 
 | Documentation | Code Reality | Severity |
 | ------------- | ------------ | -------- |
-| `docs/01_SOFTWARE_WORKPLAN.md` | Archived into `docs/archive/`. Superceded by `docs/SOFTWARE_SPEC.md`. | ℹ️ Low (Intended archive) |
+| `docs/01_SOFTWARE_WORKPLAN.md` | Archived into `docs/archive/`. Superceded by `docs/archive/SOFTWARE_SPEC.md`. | ℹ️ Low (Intended archive) |
 | `docs/02_PROJECT_HANDBOOK.md` | Archived into `docs/archive/`. Superceded by active `docs/PROJECT_HANDBOOK.md`. | ℹ️ Low (Intended archive) |
-| `docs/03_ARCHITECTURE.md` | Archived into `docs/archive/`. Superceded by active `docs/SYSTEM_ARCHITECTURE.md`. | ℹ️ Low (Intended archive) |
-| `docs/04_HARDWARE_INTEGRATION.md` | Superceded by active `docs/HARDWARE_SPEC.md` and `hardware_test/` suite. | ℹ️ Low (Intended archive) |
+| `docs/03_ARCHITECTURE.md` | Archived into `docs/archive/`. Superceded by active `docs/archive/SYSTEM_ARCHITECTURE.md`. | ℹ️ Low (Intended archive) |
+| `docs/04_HARDWARE_INTEGRATION.md` | Superceded by active `docs/HARDWARE_SPEC.md` and `hardware/` suite. | ℹ️ Low (Intended archive) |
 | `README.md` | Updated on Aug 23, 2026. Accurately links to active specs in `docs/`. | 🟢 Consistent |
-| `docs/SOFTWARE_SPEC.md` | Matches exact method signatures and data structures in `fieldsense/`. | 🟢 Consistent |
-| `docs/SYSTEM_ARCHITECTURE.md` | Accurately reflects 8-stage data flow and Arduino UNO Q MPU/MCU split. | 🟢 Consistent |
+| `docs/archive/SOFTWARE_SPEC.md` | Matches exact method signatures and data structures in `fieldsense/`. | 🟢 Consistent |
+| `docs/archive/SYSTEM_ARCHITECTURE.md` | Accurately reflects 8-stage data flow and Arduino UNO Q MPU/MCU split. | 🟢 Consistent |
 
 ---
 
@@ -455,7 +455,7 @@ NONE FOUND
 | **Zones** | 🟢 IMPLEMENTED | `ZoneDetectionEngine` with 4-neighbor BFS graph connectivity & small cell merging. |
 | **Recommendations** | 🟢 IMPLEMENTED | `RecommendationEngine` with 6 category rule modules, priority mapping & zero dosage restriction. |
 | **Presentation** | 🟢 IMPLEMENTED | `UIViewAdapter` & `LocalUIRenderer` generating 100% offline SVG/HTML dashboards in < 50ms. |
-| **Hardware boundary** | 🟡 PARTIAL | `HardwareSensorAdapter`, Mock transport & Virtual GPS implemented; physical serial/UART drivers undergoing bench testing in `hardware_test/`. |
+| **Hardware boundary** | 🟡 PARTIAL | `HardwareSensorAdapter`, Mock transport & Virtual GPS implemented; physical serial/UART drivers undergoing bench testing in `hardware/`. |
 | **Storage** | ⚪ NOT PRESENT | Package `fieldsense/storage/` exists as placeholder; persistence planned for Phase 3 (SQLite). |
 | **AI/LLM** | ⚪ NOT PRESENT | Package `fieldsense/ai/` exists as placeholder; isolated edge LLM explainer planned for Phase 3. |
 | **Testing** | 🟢 IMPLEMENTED | **294/294 tests passing in 35.84s** (verified 2026-08-24) covering unit, integration, golden datasets, fault injection, hardware adapters, and standalone deployment. *This report's original figure of 105 was correct at the time of writing; the count is reconciled here so the submission carries one number.* |
@@ -469,31 +469,31 @@ NONE FOUND
 
 Before modifying anything, an AI agent must:
 
-1. **Read Authoritative Documents**: Read `docs/SOFTWARE_SPEC.md`, `docs/SYSTEM_ARCHITECTURE.md`, and `docs/DECISION_LOG.md` before making architectural suggestions.
+1. **Read Authoritative Documents**: Read `docs/archive/SOFTWARE_SPEC.md`, `docs/archive/SYSTEM_ARCHITECTURE.md`, and `docs/archive/DECISION_LOG.md` before making architectural suggestions.
 2. **Respect Frozen Contracts**: Never alter the field definitions of `FieldSample` ([sample.py](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/domain/models/sample.py#L11)) or `FieldIntelligenceResult` ([models.py](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/intelligence/scoring/models.py#L155)).
 3. **Follow the Canonical Data Flow**: Data MUST flow unidirectionally: `Hardware/Virtual Adapter` $\rightarrow$ `Validation` $\rightarrow$ `Intelligence` $\rightarrow$ `Spatial` $\rightarrow$ `Zones` $\rightarrow$ `Recommendations` $\rightarrow$ `Presentation`.
 4. **Know Allowed Modules**: Agents may add new transport classes in `fieldsense.hardware.transport` or new recommendation rules in `fieldsense.recommendations.rules`.
 5. **Know Frozen Modules**: Do NOT edit scoring math in `fieldsense/intelligence/scoring/functions.py` or validation rules in `fieldsense/intelligence/validation/config.py` without HQ approval.
 6. **Know How to Run Tests**: Execute `pytest` from the root directory. All 105 tests MUST pass before submitting changes.
 7. **Maintain Zero-Dependency Constraint**: Core `fieldsense` code MUST NOT depend on external packages (`numpy`, `pandas`, `scipy`, `requests`, etc.).
-8. **Know Hardware Status**: Physical Modbus RTU serial parsing is being bench-tested in `hardware_test/`.
+8. **Know Hardware Status**: Physical Modbus RTU serial parsing is being bench-tested in `hardware/`.
 9. **Know AI/LLM Isolation**: Generative AI/LLM modules belong strictly downstream as passive text explainers. AI MUST NEVER compute, modify, or replace soil scores or recommendations.
-10. **Documentation Update Rule**: Any change to layer contracts requires an update to `docs/DECISION_LOG.md`.
+10. **Documentation Update Rule**: Any change to layer contracts requires an update to `docs/archive/DECISION_LOG.md`.
 
 ---
 
 # 13. RECOMMENDED NEXT ACTION
 
 ### Immediate Next Task
-- **Wire Physical RS485 Modbus RTU Transport**: Integrate the validated serial byte parsing logic from `hardware_test/soil sensor/jxbs_test.py` into a concrete `SerialRS485Transport` class inside `fieldsense.hardware.transport.serial_transport`.
+- **Wire Physical RS485 Modbus RTU Transport**: Integrate the validated serial byte parsing logic from `hardware/soil-probe/jxbs_test.py` into a concrete `SerialRS485Transport` class inside `fieldsense.hardware.transport.serial_transport`.
 
 ### Tasks That Should NOT Be Started Yet
 - **Do NOT begin Phase 3 LLM integration**: Edge LLM explainer requires physical hardware deployment on Arduino UNO Q first.
-- **Do NOT implement physical TFT touchscreen drivers in Python**: Handled on MCU side via Arduino C++ sketch (`hardware_test/TFT/`).
+- **Do NOT implement physical TFT touchscreen drivers in Python**: Handled on MCU side via Arduino C++ sketch (`hardware/tft/`).
 - **Do NOT refactor core scoring or spatial IDW math**: Baseline is verified and 100% covered by regression tests.
 
 ### Potential Risks
-- Untracked directories in working tree (`hardware_test/GPS_UNO Q/` and `hardware_test/soil sensor with Max485-RS485 UNO Q/`) should be staged or cleaned up before next commit.
+- Untracked directories in working tree (`hardware/gps-unoq/` and `hardware/soil-probe-unoq/`) should be staged or cleaned up before next commit.
 
 ---
 
@@ -508,13 +508,13 @@ Repository Status:      HEALTHY & RELEASE READY (PHASE 1)
 Architecture Status:    STRICTLY DECOUPLED & DETERMINISTIC
 Phase Status:           PHASE 1 COMPLETE / PHASE 2 HARDWARE BENCH TESTING
 Test Status:            105 / 105 PASSED (0.60s runtime)
-Hardware Status:        BENCH TESTED IN hardware_test/
+Hardware Status:        BENCH TESTED IN hardware/
 AI/LLM Status:          PASSED BOUNDARY CHECK (0 code in core; isolated for Phase 3)
 Documentation Status:   100% CONSISTENT (6 modular specs active in docs/)
 
 Major Changes Since Phase 1:
 - Restructured documentation into 6 active modular specification documents.
-- Added comprehensive physical hardware test suite in hardware_test/.
+- Added comprehensive physical hardware test suite in hardware/.
 - Verified 8-stage pipeline performance (< 50ms) and 105-test regression suite.
 
 Critical Findings:
@@ -524,7 +524,7 @@ Critical Findings:
 
 Recommended Next Step:
 - Implement concrete SerialRS485Transport class in fieldsense.hardware.transport
-  using verified Modbus RTU byte stream parser from hardware_test/ bench scripts.
+  using verified Modbus RTU byte stream parser from hardware/ bench scripts.
 
 ==================================================
 ```

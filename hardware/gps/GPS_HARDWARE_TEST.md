@@ -39,7 +39,7 @@ NEO-M8N
 | GPS Breakout | `GY-GPSV3-NEO` | Breakout board featuring u-blox `NEO-M8N-0-10` GNSS receiver |
 | USB-UART Adapter | CH340 USB-to-TTL | Serial interface on COM10 supplying 3.3V power |
 | Antenna | Onboard Ceramic Patch | Ceramic patch antenna connected via U.FL provision |
-| Host Computer | Windows Laptop | Running Python serial verification script [`test_gps.py`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware_test/GPS/test_gps.py) |
+| Host Computer | Windows Laptop | Running Python serial verification script [`test_gps.py`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware/gps/test_gps.py) |
 
 ---
 
@@ -66,7 +66,7 @@ Inspection of the `GY-GPSV3-NEO` breakout board confirmed:
 
 ## 6. Software / Tools
 
-* **Python Script:** [`hardware_test/GPS/test_gps.py`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware_test/GPS/test_gps.py)
+* **Python Script:** [`hardware/gps/test_gps.py`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware/gps/test_gps.py)
 * **Python Libraries:** `serial` (`pyserial`), `time`
 
 ---

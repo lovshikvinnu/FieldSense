@@ -3,7 +3,7 @@
 On the Arduino UNO Q the QRB2210 routes no SPI to the external headers, so
 /dev/fbN can never reach this panel and the frame has to cross to the STM32.
 These tests guard the wire protocol shared with
-hardware_test/TFT_UNOQ/frame_receiver/frame_receiver.ino.
+hardware/tft-unoq/frame_receiver/frame_receiver.ino.
 
 The MockSTM32 below parses the byte stream from the protocol SPEC rather than
 by calling the production helpers, so agreement between the two is real

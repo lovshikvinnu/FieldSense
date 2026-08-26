@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Feed a known byte pattern to the UNO Q monitor proxy and report progress.
 
-Pairs with hardware_test/TFT_UNOQ/link_probe/link_probe.ino, which displays
+Pairs with hardware/tft-unoq/link_probe/link_probe.ino, which displays
 what actually arrives. This side controls the ONE variable that has never been
 isolated: how fast the host pushes.
 

@@ -7,7 +7,7 @@ over 247 seconds - about 860 B/s. A 153,600-byte frame would take three
 minutes. So the host sends values and the MCU draws the dashboard.
 
 These tests pin the record format against the parser in
-hardware_test/TFT_UNOQ/dashboard/dashboard.ino. If you change the keys on one
+hardware/tft-unoq/dashboard/dashboard.ino. If you change the keys on one
 side, these fail until you change the other.
 
 Hardware-free: nothing opens a socket.

@@ -5,7 +5,7 @@ register addressing, scaling, and the uS/cm -> dS/m conversion live in
 `fieldsense.hardware.soil_adapter` and are NOT reimplemented here. This script
 only opens a port, calls the adapter, and prints what it got.
 
-    python3 "hardware_test/soil sensor/jxbs_test.py"
+    python3 "hardware/soil-probe/jxbs_test.py"
 
 Windows:  defaults to COM8 (or specify via --port COM8)
 Linux:    defaults to /dev/ttyUSB0 (ls /dev/ttyUSB*)

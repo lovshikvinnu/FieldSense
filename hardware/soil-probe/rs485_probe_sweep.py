@@ -11,16 +11,16 @@ than reimplementing it, so a CRC disagreement here is a real bus fault and not
 a second, divergent implementation. Standard library only, per `dependencies = []`.
 
     # single shot at the documented defaults
-    python3 "hardware_test/soil sensor/rs485_probe_sweep.py" --port /dev/ttyUSB0
+    python3 "hardware/soil-probe/rs485_probe_sweep.py" --port /dev/ttyUSB0
 
     # sweep the plausible baud rates when nothing answers
-    python3 "hardware_test/soil sensor/rs485_probe_sweep.py" --port /dev/ttyUSB0 --baud 9600,4800,19200,2400
+    python3 "hardware/soil-probe/rs485_probe_sweep.py" --port /dev/ttyUSB0 --baud 9600,4800,19200,2400
 
     # find a probe whose slave id was changed away from 0x01
-    python3 "hardware_test/soil sensor/rs485_probe_sweep.py" --port /dev/ttyUSB0 --scan-slaves
+    python3 "hardware/soil-probe/rs485_probe_sweep.py" --port /dev/ttyUSB0 --scan-slaves
 
     # verify this script's own logic with no hardware attached
-    python3 "hardware_test/soil sensor/rs485_probe_sweep.py" --selftest
+    python3 "hardware/soil-probe/rs485_probe_sweep.py" --selftest
 """
 
 import argparse
@@ -181,7 +181,7 @@ def sweep(port: str, bauds, slaves, register: int, timeout: float, settle: float
         print("  baud {:<6} slave 0x{:02X}   {}  {}".format(baud, slave, verdict, detail))
     best = working[0]
     print("\nRun the decoder against it:")
-    print('  python3 "hardware_test/soil sensor/jxbs_test.py" --port {} --baud {} --slave {}'
+    print('  python3 "hardware/soil-probe/jxbs_test.py" --port {} --baud {} --slave {}'
           .format(port, best[0], best[1]))
     print("\nThen point the pipeline at it:")
     print("  export FIELDSENSE_SOURCE=HARDWARE")

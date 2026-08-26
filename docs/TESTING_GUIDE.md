@@ -2,7 +2,7 @@
 
 How to test FieldSense, from pure software up to the fully assembled instrument.
 
-Every hardware procedure here is derived from a test that was **actually performed** and recorded in `hardware_test/*/`. Where something has not been done yet, this guide says so rather than guessing.
+Every hardware procedure here is derived from a test that was **actually performed** and recorded in `hardware/*/`. Where something has not been done yet, this guide says so rather than guessing.
 
 ---
 
@@ -162,7 +162,7 @@ Each component is tested alone, on a laptop, using a USB adapter. No UNO Q invol
 #### Run
 
 ```bash
-python3 "hardware_test/soil sensor/jxbs_test.py"
+python3 "hardware/soil-probe/jxbs_test.py"
 ```
 
 #### Verified register map
@@ -189,7 +189,7 @@ Each reply is 7 bytes: `01 03 02 DATA_H DATA_L CRC_L CRC_H`. The script recomput
 
 **The moisture check is the important one.** A probe that returns a constant plausible number is not necessarily working — it may be echoing a default. Physically changing the environment and seeing the number move is what proves the measurement chain.
 
-📄 Full record: `hardware_test/soil sensor/JXBS_HARDWARE_TEST.md`
+📄 Full record: `hardware/soil-probe/JXBS_HARDWARE_TEST.md`
 
 ---
 
@@ -222,8 +222,8 @@ RS485 is a **differential pair**: the receiver reads the *difference* between A 
 #### Run
 
 ```bash
-python3 hardware_test/RS485/rs485_test1.py    # transmit / driver test
-python3 hardware_test/RS485/rs485_test2.py    # receive / receiver test
+python3 hardware/rs485/rs485_test1.py    # transmit / driver test
+python3 hardware/rs485/rs485_test2.py    # receive / receiver test
 ```
 
 #### Pass criteria
@@ -235,7 +235,7 @@ python3 hardware_test/RS485/rs485_test2.py    # receive / receiver test
 
 The board already carries its own 120 Ω termination resistor (`R7`) across A/B, so no external terminator is needed on a short bench bus.
 
-📄 Full record: `hardware_test/RS485/RS485_HARDWARE_TEST.md`
+📄 Full record: `hardware/rs485/RS485_HARDWARE_TEST.md`
 
 ---
 
@@ -264,7 +264,7 @@ The board already carries its own 120 Ω termination resistor (`R7`) across A/B,
 #### Run
 
 ```bash
-python3 hardware_test/GPS/test_gps.py
+python3 hardware/gps/test_gps.py
 ```
 
 #### Pass criteria
@@ -275,7 +275,7 @@ python3 hardware_test/GPS/test_gps.py
 
 **Cold start takes minutes, not seconds.** The onboard backup battery makes later restarts much faster. Sentences flowing with `fix quality = 0` means the receiver is fine and simply cannot see enough satellites — go outdoors before you suspect the hardware.
 
-📄 Full record: `hardware_test/GPS/GPS_HARDWARE_TEST.md`
+📄 Full record: `hardware/gps/GPS_HARDWARE_TEST.md`
 
 ---
 
@@ -303,8 +303,8 @@ python3 hardware_test/GPS/test_gps.py
 
 Open in Arduino IDE and upload:
 
-- `hardware_test/TFT/display_test_notouch.ino` — display only
-- `hardware_test/TFT/display_test_touch.ino` — display + touch
+- `hardware/tft/display_test_notouch.ino` — display only
+- `hardware/tft/display_test_touch.ino` — display + touch
 
 #### Pass criteria
 
@@ -315,7 +315,7 @@ Open in Arduino IDE and upload:
 
 Controller is **ST7789V** (not ILI9341 — a common mislabel for this board), touch is **XPT2046/HR2046**.
 
-📄 Full record: `hardware_test/TFT/TFT_HARDWARE_TEST.md`
+📄 Full record: `hardware/tft/TFT_HARDWARE_TEST.md`
 
 ---
 
@@ -340,7 +340,7 @@ Linux cannot meet hard microsecond deadlines, so the MCU owns anything timing-cr
 
 #### Run
 
-Open `hardware_test/arduino uno q/` as an app in **Arduino App Lab**. It uploads `sketch.ino` to the STM32 and runs `main.py` on the Linux side.
+Open `hardware/unoq-bringup/` as an app in **Arduino App Lab**. It uploads `sketch.ino` to the STM32 and runs `main.py` on the Linux side.
 
 > ⚠️ `UNO_Q_HARDWARE_TEST.md` calls these files `test_q.py` and `test_q.ino`. The actual files are **`main.py`** and **`sketch.ino`**. The document is out of date, not the code.
 
@@ -351,7 +351,7 @@ Open `hardware_test/arduino uno q/` as an app in **Arduino App Lab**. It uploads
 - `main.py` calls `Bridge.call("get_uart_status")` and receives a reply — this proves the IPC link.
 - Physical UART loopback passes, and **unplugging the loopback wire is detected**. Negative-case detection matters as much as the positive case; a test that passes when disconnected is testing nothing.
 
-📄 Full record: `hardware_test/arduino uno q/UNO_Q_HARDWARE_TEST.md`
+📄 Full record: `hardware/unoq-bringup/UNO_Q_HARDWARE_TEST.md`
 
 ---
 
@@ -406,7 +406,7 @@ Flipping to receive before the last bit has physically left the shift register t
 
 #### Run
 
-Open `hardware_test/soil sensor with Max485-RS485/` in Arduino App Lab.
+Open `hardware/soil-probe-unoq/` in Arduino App Lab.
 
 #### Pass criteria
 
@@ -416,7 +416,7 @@ Live telemetry on the Linux console every 2 seconds:
 T: 24.3°C | M: 31.2% | pH: 6.8 | EC: 210 µS/cm | NPK: 12-8-45
 ```
 
-📄 Full record: `hardware_test/soil sensor with Max485-RS485/JXBS_MAX485_UNOQ_INTEGRATION.md`
+📄 Full record: `hardware/soil-probe-unoq/JXBS_MAX485_UNOQ_INTEGRATION.md`
 
 ---
 
@@ -536,7 +536,7 @@ The last one deserves emphasis: the scoring curves and MCDA weights are **unvali
 
 ## 9. Test evidence register
 
-Formal evidence for each verified capability, software and hardware. Previously `docs/TEST_AND_VALIDATION.md`, merged here.
+Formal evidence for each verified capability, software and hardware. Previously `docs/evidence/TEST_AND_VALIDATION.md`, merged here.
 
 **STATUS:** DRAFT  
 **VERSION:** 0.1  
@@ -694,7 +694,7 @@ tests/test_zones.py ...                                                   [100%]
 #### Test ID: `TST-010` — Physical Hardware Serial Modbus & UART Communication
 - **Objective**: Validate RS485 Modbus RTU communication with physical JXBS 7-in-1 sensor probe and UART serial connection to NEO-M8N GPS module.
 - **Setup**: Physical connection of JXBS 7-in-1 sensor to 12.24V DC supply and FTDI USB-RS485 adapter (COM8, 9600 8N1).
-- **Procedure**: Execute `hardware_test/soil sensor/jxbs_test.py` Modbus RTU query sequence across air/foam baseline and physical soil positions.
+- **Procedure**: Execute `hardware/soil-probe/jxbs_test.py` Modbus RTU query sequence across air/foam baseline and physical soil positions.
 - **Expected Result**: Serial Modbus frames read without CRC error; all 7 parameters ($N, P, K, \text{pH}, \text{EC}, \text{Moisture}, \text{Temp}$) parsed correctly.
 - **Actual Result**: 100% Modbus response length match (7 bytes), 0 CRC failures observed, distinct physical parameter responses for air/foam vs. soil positions.
 - **Status**: PASSED (BENCH VERIFIED)
@@ -737,9 +737,9 @@ tests/test_zones.py ...                                                   [100%]
 - **Setup**: Physical MAX485 interface module (`HW-097`, transceiver `MAX485CSA +DNHK`). Powered via 5.0V DC. COM10 (CH340 USB-TTL) connected to TTL side (DI, RO, DE, RE); COM8 (FT232 USB-RS485) / JXBS sensor connected to differential A/B lines. Format 9600 8-N-1.
 - **Procedure**:
   1. Apply 5.0V DC power to VCC and GND.
-  2. Execute `hardware_test/RS485/rs485_test1.py` with `DE=5V, RE=5V` to test TTL UART $\rightarrow$ RS485 transmission.
-  3. Execute `hardware_test/RS485/rs485_test2.py` with `DE=0V, RE=0V` to test RS485 $\rightarrow$ TTL UART reception.
-  4. Transmit valid Modbus RTU query/response traffic across MAX485 interface to JXBS 7-in-1 soil sensor using `hardware_test/soil sensor/jxbs_test.py`.
+  2. Execute `hardware/rs485/rs485_test1.py` with `DE=5V, RE=5V` to test TTL UART $\rightarrow$ RS485 transmission.
+  3. Execute `hardware/rs485/rs485_test2.py` with `DE=0V, RE=0V` to test RS485 $\rightarrow$ TTL UART reception.
+  4. Transmit valid Modbus RTU query/response traffic across MAX485 interface to JXBS 7-in-1 soil sensor using `hardware/soil-probe/jxbs_test.py`.
 - **Expected Result**: 5V supply operation, UART $\rightarrow$ RS485 transmission, RS485 $\rightarrow$ UART reception, half-duplex operation, DE//RE direction control, and JXBS communication through MAX485 all PASS with zero byte errors and zero communication instability.
 - **Actual Result**:
   - 5 V operation: PASS

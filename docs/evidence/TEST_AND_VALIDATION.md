@@ -156,7 +156,7 @@ tests/test_zones.py ...                                                   [100%]
 ### Test ID: `TST-010` — Physical Hardware Serial Modbus & UART Communication
 - **Objective**: Validate RS485 Modbus RTU communication with physical JXBS 7-in-1 sensor probe and UART serial connection to NEO-M8N GPS module.
 - **Setup**: Physical connection of JXBS 7-in-1 sensor to 12.24V DC supply and FTDI USB-RS485 adapter (COM8, 9600 8N1).
-- **Procedure**: Execute `hardware_test/soil sensor/jxbs_test.py` Modbus RTU query sequence across air/foam baseline and physical soil positions.
+- **Procedure**: Execute `hardware/soil-probe/jxbs_test.py` Modbus RTU query sequence across air/foam baseline and physical soil positions.
 - **Expected Result**: Serial Modbus frames read without CRC error; all 7 parameters ($N, P, K, \text{pH}, \text{EC}, \text{Moisture}, \text{Temp}$) parsed correctly.
 - **Actual Result**: 100% Modbus response length match (7 bytes), 0 CRC failures observed, distinct physical parameter responses for air/foam vs. soil positions.
 - **Status**: PASSED (BENCH VERIFIED)
@@ -199,9 +199,9 @@ tests/test_zones.py ...                                                   [100%]
 - **Setup**: Physical MAX485 interface module (`HW-097`, transceiver `MAX485CSA +DNHK`). Powered via 5.0V DC. COM10 (CH340 USB-TTL) connected to TTL side (DI, RO, DE, RE); COM8 (FT232 USB-RS485) / JXBS sensor connected to differential A/B lines. Format 9600 8-N-1.
 - **Procedure**:
   1. Apply 5.0V DC power to VCC and GND.
-  2. Execute `hardware_test/RS485/rs485_test1.py` with `DE=5V, RE=5V` to test TTL UART $\rightarrow$ RS485 transmission.
-  3. Execute `hardware_test/RS485/rs485_test2.py` with `DE=0V, RE=0V` to test RS485 $\rightarrow$ TTL UART reception.
-  4. Transmit valid Modbus RTU query/response traffic across MAX485 interface to JXBS 7-in-1 soil sensor using `hardware_test/soil sensor/jxbs_test.py`.
+  2. Execute `hardware/rs485/rs485_test1.py` with `DE=5V, RE=5V` to test TTL UART $\rightarrow$ RS485 transmission.
+  3. Execute `hardware/rs485/rs485_test2.py` with `DE=0V, RE=0V` to test RS485 $\rightarrow$ TTL UART reception.
+  4. Transmit valid Modbus RTU query/response traffic across MAX485 interface to JXBS 7-in-1 soil sensor using `hardware/soil-probe/jxbs_test.py`.
 - **Expected Result**: 5V supply operation, UART $\rightarrow$ RS485 transmission, RS485 $\rightarrow$ UART reception, half-duplex operation, DE//RE direction control, and JXBS communication through MAX485 all PASS with zero byte errors and zero communication instability.
 - **Actual Result**:
   - 5 V operation: PASS

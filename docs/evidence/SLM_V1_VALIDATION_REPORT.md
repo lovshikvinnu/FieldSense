@@ -69,7 +69,7 @@ Recorded in `docs/STATUS.md` `AI-01` and `docs/AI_DEPLOYMENT.md` §7; commit `3a
 | Headroom vs Qwen 469 MB | ~7× | derived from the above |
 | Headroom vs TinyLlama 638 MB | ~4× | derived from the above |
 | Headroom vs Phi-3-mini 2.3 GB | ~1.2× — on the probe's WARN threshold; would load and then page | derived from the above |
-| Disk | gated at **≥ 2 GB free** on the home filesystem via `df -h ~` before download; the check passed | `docs/SLM_VALIDATION.md` §2 |
+| Disk | gated at **≥ 2 GB free** on the home filesystem via `df -h ~` before download; the check passed | `docs/evidence/SLM_VALIDATION.md` §2 |
 
 **Not measured:** an exact free-disk figure was not captured as a numbered
 result. The gate was pass/fail and it passed.
@@ -127,7 +127,7 @@ first version of the bench reported a ~500 MB model as using 7.8 GB (commit
 `f21f322`).
 
 **A caution on one figure:** the `wall clock: 18342.7 ms` block in
-`docs/SLM_VALIDATION.md` gate 2 is an **illustrative example**, written on
+`docs/evidence/SLM_VALIDATION.md` gate 2 is an **illustrative example**, written on
 2026-08-24 in commit `6723394` before any model existed on the board. It is not a
 measurement and must not be quoted as one. The measured wall-clock figure for
 Qwen is the 28.2 s mean above.

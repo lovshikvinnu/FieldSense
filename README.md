@@ -123,7 +123,7 @@ Compact-first. One HTML document serves the 240 × 320 panel and a laptop.
 
 ## Hardware
 
-![FieldSense Hardware Circuit Diagram](docs/hardware_circuit_diagram.png)
+![FieldSense Hardware Circuit Diagram](docs/images/hardware_circuit_diagram.png)
 
 ### Power — two isolated domains
 
@@ -213,7 +213,7 @@ The hardware side and the software side are both **frozen**. An adapter layer is
 | 🔌 **[Hardware Specs](docs/HARDWARE.md)** | Component specs, register maps, wiring, datasheet references |
 | 🚀 **[Integration Runbook](docs/INTEGRATION_RUNBOOK.md)** | Four-step bring-up: acquisition → contract → pipeline → display |
 | 🥾 **[Field Session](docs/FIELD_SESSION.md)** | The operator's procedure: multi-sample workflow, sample quality, GPS jitter, offline guarantees |
-| 🧪 **[Testing Guide](TESTING_GUIDE.md)** | How to test every component, plus the test evidence register |
+| 🧪 **[Testing Guide](docs/TESTING_GUIDE.md)** | How to test every component, plus the test evidence register |
 | 🤖 **[AI Safety & Deployment](docs/AI_DEPLOYMENT.md)** | Local SLM setup, `NarrativeGuard`, and the display bridge |
 | 📋 [Status & Open Items](docs/STATUS.md) · [Project Handbook](docs/PROJECT_HANDBOOK.md) · [Demo Guide](docs/DEMO_GUIDE.md) | Requirements matrix, purpose, presentation walkthrough |
 

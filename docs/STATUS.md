@@ -26,7 +26,7 @@ former `PROPOSAL_ALIGNMENT.md` and `SPECIFICATION_REGISTER.md`.
 | **Display Bridge** | HTML dashboard → RGB565 → PNG / framebuffer | `IMPLEMENTED` | `fieldsense/hardware/display_bridge.py` |
 | **Panel Value Link** | Summary → `FS\|` record → router → MCU → `renderValues()` | `VERIFIED` | see §6a |
 | **Hardware Boundary** | `HardwareSensorAdapter`, `SensorTransport`, `GPSAdapter` | `IMPLEMENTED` | `fieldsense/hardware/` |
-| **Physical Acquisition** | JXBS → MAX485 → UNO Q → RouterBridge → Python | `VERIFIED` | `hardware_test/soil sensor with Max485-RS485/` |
+| **Physical Acquisition** | JXBS → MAX485 → UNO Q → RouterBridge → Python | `VERIFIED` | `hardware/soil-probe-unoq/` |
 | **GPS on UNO Q** | NEO-M8N wired to the board | `PENDING_HARDWARE` | verified standalone only |
 | **Display on UNO Q** | Panel driven by the STM32, not the QRB2210 | `VERIFIED` | 2026-08-24 on hardware; see §6a |
 

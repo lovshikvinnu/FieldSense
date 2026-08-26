@@ -17,7 +17,7 @@ This is an actual FieldSense V1 hardware integration record, NOT a generic TFT t
 The integration folder already exists:
 
 ```text
-hardware_test/
+hardware/
 └── TFT UNO Q/
     └── sketch.ino
 ```
@@ -37,7 +37,7 @@ must NOT be modified.
 Create:
 
 ```text
-hardware_test/TFT UNO Q/TFT_UNOQ_INTEGRATION.md
+hardware/tft UNO Q/TFT_UNOQ_INTEGRATION.md
 ```
 
 If a suitable documentation file already exists in the folder, update it instead of creating a duplicate.

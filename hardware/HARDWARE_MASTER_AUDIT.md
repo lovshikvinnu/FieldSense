@@ -28,7 +28,7 @@ The audit answers the 16 core architectural questions:
 
 3. **What exact code was used?**
    - 6 standalone test scripts (`jxbs_test.py`, `rs485_test1.py`, `rs485_test2.py`, `test_gps.py`, `display_test_notouch.ino`, `display_test_touch.ino`).
-   - 4 Arduino UNO Q MCU sketches and 3 Linux MPU Python scripts (`hardware_test/arduino uno q/`, `hardware_test/GPS_UNO Q/`, `hardware_test/soil sensor with Max485-RS485 UNO Q/`, `hardware_test/TFT UNO Q/`).
+   - 4 Arduino UNO Q MCU sketches and 3 Linux MPU Python scripts (`hardware/unoq-bringup/`, `hardware/gps-unoq/`, `hardware/soil-probe-unoq/`, `hardware/tft UNO Q/`).
 
 4. **What parts of that code are reusable?**
    - Modbus register scaling and query logic from `jxbs_test.py` and `sketch.ino`.
@@ -69,7 +69,7 @@ The audit answers the 16 core architectural questions:
 10. **Are there conflicting pin assignments or architecture decisions?**
     - **Pin Conflict 1 (GPIO 7):** `MAX485_RE_DE` (Soil Sensor sketch) vs `TFT_LED` (TFT sketch).
     - **Interface Conflict 2 (UART Serial1):** GPS (`Serial1`) vs MAX485 (`Serial1`). Both peripherals claim the single physical UART header of the UNO Q.
-    - > **RESOLVED — see `docs/HARDWARE.md` section 9.1.** Backlight moved to D6, leaving D7 to RS485 direction control alone. `Serial1` awarded to the GPS; the soil probe moved to the Linux USB-RS485 port (`FIELDSENSE_SOURCE=HARDWARE`). Unified firmware lives in `hardware_test/fieldsense_unoq/`. This audit entry is kept as the record of how the conflicts were found.
+    - > **RESOLVED — see `../docs/HARDWARE.md` section 9.1.** Backlight moved to D6, leaving D7 to RS485 direction control alone. `Serial1` awarded to the GPS; the soil probe moved to the Linux USB-RS485 port (`FIELDSENSE_SOURCE=HARDWARE`). Unified firmware lives in `firmware/unoq/`. This audit entry is kept as the record of how the conflicts were found.
 
 11. **Are there duplicated implementations?**
     - Duplicate Modbus register addresses and scaling constants across Python and C++ files.
@@ -106,7 +106,7 @@ The audit answers the 16 core architectural questions:
 This audit covers all hardware testing code, scripts, configuration files, and documentation across the repository, including:
 
 ```text
-hardware_test/
+hardware/
 ├── arduino uno q/
 ├── GPS/
 ├── GPS_UNO Q/
@@ -131,8 +131,26 @@ In addition, the following repository specification and code files were inspecte
 
 The actual file structure of the hardware testing directory and its associated files:
 
+> **Directory names have since changed.** This audit was written against the
+> original `hardware_test/` layout. The bench material now lives in `hardware/`
+> with the spaces removed from directory names, and the unified production
+> sketch was promoted out to `firmware/unoq/`. Paths below are preserved as the
+> audit recorded them; use this mapping to locate a file today:
+>
+> | Audit path | Today |
+> | :--- | :--- |
+> | `arduino uno q/` | `hardware/unoq-bringup/` |
+> | `GPS/` | `hardware/gps/` |
+> | `GPS_UNO Q/` | `hardware/gps-unoq/` |
+> | `RS485/` | `hardware/rs485/` |
+> | `soil sensor/` | `hardware/soil-probe/` |
+> | `soil sensor with Max485-RS485 UNO Q/` | `hardware/soil-probe-unoq/` |
+> | `TFT/` | `hardware/tft/` |
+> | `TFT UNO Q/` | `hardware/tft-unoq/` |
+> | *(unified sketch, added later)* | `firmware/unoq/` |
+
 ```text
-hardware_test/
+hardware/
 ├── arduino uno q/
 │   ├── main.py                        # Linux MPU bridge reader script
 │   ├── sketch.ino                     # STM32 MCU UART loopback sketch
@@ -232,7 +250,7 @@ hardware_test/
 | `0x0006` | Soil pH | uint16 | $\div 100$ | `01 03 00 06 00 01 64 0B` | 7 bytes: `01 03 02 DH DL CL CH` | `jxbs_test.py`: L130<br>`sketch.ino`: L35 | 6.89 pH |
 | `0x0012` | Moisture | uint16 | $\div 10$ | `01 03 00 12 00 01 24 0F` | 7 bytes: `01 03 02 DH DL CL CH` | `jxbs_test.py`: L147<br>`sketch.ino`: L40 | 0.0 – 22.9 % |
 | `0x0013` | Temperature | int16 | $\div 10$ | `01 03 00 13 00 01 75 CF` | 7 bytes: `01 03 02 DH DL CL CH` | `jxbs_test.py`: L165<br>`sketch.ino`: L40 | 27.7 °C |
-| `0x0015` | EC | uint16 | $\times 1$ | `01 03 00 15 00 01 95 CD` | 7 bytes: `01 03 02 DH DL CL CH` | `jxbs_test.py`: L181<br>`sketch.ino`: L40 | 603 µS/cm |
+| `0x0015` | EC | uint16 | $\times 1$ | `01 03 00 15 00 01 95 CE` | 7 bytes: `01 03 02 DH DL CL CH` | `jxbs_test.py`: L181<br>`sketch.ino`: L40 | 603 µS/cm |
 | `0x001E` | Nitrogen (N) | uint16 | $\times 1$ | `01 03 00 1E 00 01 E4 0C` | 7 bytes: `01 03 02 DH DL CL CH` | `jxbs_test.py`: L198<br>`sketch.ino`: L48 | 43 mg/kg |
 | `0x001F` | Phosphorus (P)| uint16 | $\times 1$ | `01 03 00 1F 00 01 B5 CC` | 7 bytes: `01 03 02 DH DL CL CH` | `jxbs_test.py`: L215<br>`sketch.ino`: L48 | 60 mg/kg |
 | `0x0020` | Potassium (K) | uint16 | $\times 1$ | `01 03 00 20 00 01 85 C0` | 7 bytes: `01 03 02 DH DL CL CH` | `jxbs_test.py`: L232<br>`sketch.ino`: L48 | 120 mg/kg |
@@ -698,18 +716,18 @@ FieldSense/
 
 | File | Relative Path | Language | Purpose | Execution Host | Classification |
 | :--- | :--- | :--- | :--- | :--- | :---: |
-| `sketch.ino` | `hardware_test/soil sensor with.../` | C++ | Modbus RTU & JSON framing | STM32 MCU | 🟢 KEEP / REUSABLE |
-| `main.py` | `hardware_test/soil sensor with.../` | Python | JSON telemetry subscriber | Linux MPU | 🟢 KEEP / REUSABLE |
-| `sketch.ino` | `hardware_test/GPS_UNO Q/` | C++ | NMEA reception & GGA parsing | STM32 MCU | 🟡 REUSE LOGIC |
-| `main.py` | `hardware_test/GPS_UNO Q/` | Python | GPS telemetry logger | Linux MPU | 🟡 REUSE LOGIC |
-| `sketch.ino` | `hardware_test/TFT UNO Q/` | C++ | ST7789 & XPT2046 SPI driver | STM32 MCU | 🟡 REUSE LOGIC |
-| `jxbs_test.py` | `hardware_test/soil sensor/` | Python | Standalone PC Modbus test | Windows PC | 🔵 TEST-ONLY |
-| `rs485_test1.py`| `hardware_test/RS485/` | Python | Standalone PC MAX485 TX test | Windows PC | 🔵 TEST-ONLY |
-| `rs485_test2.py`| `hardware_test/RS485/` | Python | Standalone PC MAX485 RX test | Windows PC | 🔵 TEST-ONLY |
-| `test_gps.py` | `hardware_test/GPS/` | Python | Standalone PC GPS test | Windows PC | 🔵 TEST-ONLY |
-| `display_...ino`| `hardware_test/TFT/` | C++ | Standalone ESP32 TFT tests | ESP32 DevKit | 🔵 TEST-ONLY |
-| `sketch.ino` | `hardware_test/arduino uno q/` | C++ | Basic UART loopback | STM32 MCU | 🔴 DEPRECATED |
-| `main.py` | `hardware_test/arduino uno q/` | Python | Basic bridge caller | Linux MPU | 🔴 DEPRECATED |
+| `sketch.ino` | `hardware/soil-probe with.../` | C++ | Modbus RTU & JSON framing | STM32 MCU | 🟢 KEEP / REUSABLE |
+| `main.py` | `hardware/soil-probe with.../` | Python | JSON telemetry subscriber | Linux MPU | 🟢 KEEP / REUSABLE |
+| `sketch.ino` | `hardware/gps-unoq/` | C++ | NMEA reception & GGA parsing | STM32 MCU | 🟡 REUSE LOGIC |
+| `main.py` | `hardware/gps-unoq/` | Python | GPS telemetry logger | Linux MPU | 🟡 REUSE LOGIC |
+| `sketch.ino` | `hardware/tft UNO Q/` | C++ | ST7789 & XPT2046 SPI driver | STM32 MCU | 🟡 REUSE LOGIC |
+| `jxbs_test.py` | `hardware/soil-probe/` | Python | Standalone PC Modbus test | Windows PC | 🔵 TEST-ONLY |
+| `rs485_test1.py`| `hardware/rs485/` | Python | Standalone PC MAX485 TX test | Windows PC | 🔵 TEST-ONLY |
+| `rs485_test2.py`| `hardware/rs485/` | Python | Standalone PC MAX485 RX test | Windows PC | 🔵 TEST-ONLY |
+| `test_gps.py` | `hardware/gps/` | Python | Standalone PC GPS test | Windows PC | 🔵 TEST-ONLY |
+| `display_...ino`| `hardware/tft/` | C++ | Standalone ESP32 TFT tests | ESP32 DevKit | 🔵 TEST-ONLY |
+| `sketch.ino` | `hardware/unoq-bringup/` | C++ | Basic UART loopback | STM32 MCU | 🔴 DEPRECATED |
+| `main.py` | `hardware/unoq-bringup/` | Python | Basic bridge caller | Linux MPU | 🔴 DEPRECATED |
 
 ---
 

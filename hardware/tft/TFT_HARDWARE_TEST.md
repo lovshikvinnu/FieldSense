@@ -99,7 +99,7 @@ The ST7789V display subsystem uses a 4-wire hardware SPI interface (`CS`, `DC`, 
 ## 7. Test 1 — Display Subsystem Verification
 
 ### Test Sketch
-[`hardware_test/TFT/display_test_notouch.ino`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware_test/TFT/display_test_notouch.ino)
+[`hardware/tft/display_test_notouch.ino`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware/tft/display_test_notouch.ino)
 
 ### Objective
 Verify ST7789V display initialization, SPI communication, landscape rotation, geometry rendering, boundary alignment, and color rendering independently of the touch controller.
@@ -107,7 +107,7 @@ Verify ST7789V display initialization, SPI communication, landscape rotation, ge
 ### Test Procedure
 1. Connect TFT display pins to ESP32 hardware SPI controller (`GPIO 23`, `18`, `15`, `2`, `4`).
 2. Connect VCC and LED backlight pins to ESP32 3.3 V output rail; connect GND to common ground.
-3. Flash and execute [`display_test_notouch.ino`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware_test/TFT/display_test_notouch.ino).
+3. Flash and execute [`display_test_notouch.ino`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware/tft/display_test_notouch.ino).
 4. Verify ST7789V controller initialization via standard `Adafruit_ST7789` driver.
 5. Apply landscape rotation (`setRotation(1)`).
 6. Perform full-screen refresh to solid black (`ST77XX_BLACK`).
@@ -141,7 +141,7 @@ During initial bench setup, a generic ILI9341 driver library was evaluated:
 ## 8. Test 2 — Touch Controller Subsystem Verification
 
 ### Test Sketch
-[`hardware_test/TFT/display_test_touch.ino`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware_test/TFT/display_test_touch.ino)
+[`hardware/tft/display_test_touch.ino`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware/tft/display_test_touch.ino)
 
 ### Objective
 Verify XPT2046 / HR2046 resistive touch controller operation, SPI command execution, raw 12-bit ADC measurement, dynamic coordinate tracking, and active-low interrupt line (`T_IRQ`) response.
@@ -165,7 +165,7 @@ During initial bench integration, an attempt was made to share SPI bus lines bet
 > **INTEGRATION LESSON:** The XPT2046 touch interface should use an electrically clean or dedicated SPI arrangement unless verified MISO tri-state bus isolation hardware is implemented.
 
 ### Protocol Verification & Direct Bit-Bang Diagnostic
-Direct 8-bit SPI control bytes were issued to the XPT2046 controller via bit-banging in [`display_test_touch.ino`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware_test/TFT/display_test_touch.ino):
+Direct 8-bit SPI control bytes were issued to the XPT2046 controller via bit-banging in [`display_test_touch.ino`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware/tft/display_test_touch.ino):
 * `0x90` — X-Axis differential position conversion command frame
 * `0xD0` — Y-Axis differential position conversion command frame
 
@@ -185,8 +185,8 @@ The `T_IRQ` line was physically tested under tactile stylus pressure:
 
 | Subsystem | Controller IC | Physical Interface | Test Sketch | Result |
 | :--- | :--- | :--- | :--- | :--- |
-| **Display** | ST7789V | 4-Wire Hardware SPI | [`display_test_notouch.ino`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware_test/TFT/display_test_notouch.ino) | **PASS** |
-| **Touch** | XPT2046 / HR2046 | Dedicated SPI + Active-LOW IRQ | [`display_test_touch.ino`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware_test/TFT/display_test_touch.ino) | **PASS** |
+| **Display** | ST7789V | 4-Wire Hardware SPI | [`display_test_notouch.ino`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware/tft/display_test_notouch.ino) | **PASS** |
+| **Touch** | XPT2046 / HR2046 | Dedicated SPI + Active-LOW IRQ | [`display_test_touch.ino`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware/tft/display_test_touch.ino) | **PASS** |
 
 ---
 
@@ -216,7 +216,7 @@ Raw ADC Dynamic Range: ~500 to ~3500
 ## 11. System Integration Warnings & Mandates
 
 1. **Strict 3.3 V Logic Requirement:** Treat all TFT display and touch signal lines as **3.3 V logic**. Do not connect directly to 5 V microcontrollers without bidirectional logic level shifters.
-2. **Do Not Rely on ESP32 Bench Pinout:** The GPIO pins used in [`display_test_notouch.ino`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware_test/TFT/display_test_notouch.ino) and [`display_test_touch.ino`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware_test/TFT/display_test_touch.ino) were selected for ESP32 bench testing only. Production mapping for FieldSense hardware must be explicitly assigned.
+2. **Do Not Rely on ESP32 Bench Pinout:** The GPIO pins used in [`display_test_notouch.ino`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware/tft/display_test_notouch.ino) and [`display_test_touch.ino`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware/tft/display_test_touch.ino) were selected for ESP32 bench testing only. Production mapping for FieldSense hardware must be explicitly assigned.
 3. **SPI Bus Isolation Required:** Do NOT share the XPT2046 touch SPI lines directly on the main display SPI bus without verifying MISO bus isolation, as bus contention will saturate touch output (`Z=4095`, `X=0`, `Y=0`).
 4. **ADC Calibration Matrix Needed:** The raw 12-bit ADC values (`~500–3500`) must be mapped through a 2-point or 3-point calibration matrix before being passed as screen coordinates (`0..319`, `0..239`).
 5. **Controller Distinction:** The display driver MUST be instantiated as **ST7789V**, NOT ILI9341.

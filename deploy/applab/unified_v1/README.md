@@ -28,7 +28,7 @@ firmware and the panel went dark. The app cannot simply be removed: its containe
 owns the GPS gateway that `run_standalone_node.sh` reads.
 
 The resolution is to let the app carry the *unified* sketch, because
-`hardware_test/fieldsense_unoq/fieldsense_unoq.ino` is a strict superset — it
+`firmware/unoq/fieldsense_unoq.ino` is a strict superset — it
 provides the same `Bridge.provide("get_gps_data", ...)` endpoint the container's
 only RPC calls, and it drives the panel. App Lab's flash-on-start then becomes
 the deployment mechanism instead of the thing that breaks the panel.
@@ -39,7 +39,7 @@ The sketch is **not duplicated here** — a second copy would drift from the one
 that is actually built and verified. Copy it, and App Lab requires the
 `sketch.ino` basename:
 
-    cp hardware_test/fieldsense_unoq/fieldsense_unoq.ino \
+    cp firmware/unoq/fieldsense_unoq.ino \
        ~/ArduinoApps/unified_v1/sketch/sketch.ino
     cp deploy/applab/unified_v1/sketch.yaml \
        ~/ArduinoApps/unified_v1/sketch/sketch.yaml

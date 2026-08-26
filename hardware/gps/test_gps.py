@@ -4,7 +4,7 @@ Thin console wrapper over the shared adapter layer. NMEA checksum validation,
 sentence parsing, and DDMM.MMMM -> decimal degrees conversion live in
 `fieldsense.hardware.gps_adapter` and are NOT reimplemented here.
 
-    python3 hardware_test/GPS/test_gps.py --port /dev/ttyUSB0 --samples 30
+    python3 hardware/gps/test_gps.py --port /dev/ttyUSB0 --samples 30
 
 Note: the original version of this script reported raw NMEA coordinate fields
 (e.g. '1258.2960N') without converting them. It now prints decimal degrees,

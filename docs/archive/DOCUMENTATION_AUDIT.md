@@ -1,7 +1,7 @@
 # FieldSense AI — Documentation & Testing Audit
 
 **Date:** 2026-08-23
-**Scope:** `README.md`, `docs/**`, `PROPOSAL_ALIGNMENT.md`, `SPECIFICATION_REGISTER.md`, `DEMO_GUIDE.md`, `hardware_test/**`, cross-checked against the code and a live test run.
+**Scope:** `README.md`, `docs/**`, `PROPOSAL_ALIGNMENT.md`, `SPECIFICATION_REGISTER.md`, `DEMO_GUIDE.md`, `hardware/**`, cross-checked against the code and a live test run.
 **Baseline at audit time:** 147 tests passing.
 
 ---
@@ -26,9 +26,9 @@ At commit `97f0f30` the README was 112 lines with Overview, Key Capabilities, Ar
 
 ### 🔴 A-2 · Stale regression baseline in five documents
 
-`105 tests` is claimed in `docs/01_SOFTWARE_WORKPLAN.md` (×3), `docs/02_PROJECT_HANDBOOK.md` (×4), `docs/TEST_AND_VALIDATION.md` (×2), and `docs/CCR-001`. Actual: **147**.
+`105 tests` is claimed in `docs/01_SOFTWARE_WORKPLAN.md` (×3), `docs/02_PROJECT_HANDBOOK.md` (×4), `docs/evidence/TEST_AND_VALIDATION.md` (×2), and `docs/CCR-001`. Actual: **147**.
 
-`docs/TEST_AND_VALIDATION.md` reproduces a pytest transcript reading `collected 105 items`, which now misrepresents the suite.
+`docs/evidence/TEST_AND_VALIDATION.md` reproduces a pytest transcript reading `collected 105 items`, which now misrepresents the suite.
 
 **Action:** update `TEST_AND_VALIDATION.md` §2 to 147 and regenerate the transcript. The `CCR-001` reference is historically correct (it recorded the pre-change baseline) and should stay.
 
@@ -133,7 +133,7 @@ All four hardcode `COM8` / `COM10`. They cannot run on the UNO Q's Debian target
 
 ### 🟡 C-7 · Windows-local absolute paths leak into six documents
 
-`file:///C:/Users/lovsh/Desktop/FieldSense/...` appears in `docs/PROJECT_HANDBOOK.md` and all five `hardware_test/*/*.md` files. These are dead links for everyone else. Replace with repository-relative paths.
+`file:///C:/Users/lovsh/Desktop/FieldSense/...` appears in `docs/PROJECT_HANDBOOK.md` and all five `hardware/*/*.md` files. These are dead links for everyone else. Replace with repository-relative paths.
 
 ### 🟡 C-8 · Inconsistent component naming
 
@@ -175,7 +175,7 @@ then `git rm -r --cached` the tracked `__pycache__` directories. Not performed h
 
 Worth recording, so the next audit does not re-litigate it.
 
-- **Evidence classification.** `hardware_test/*` documents separate `DATASHEET` / `PHYSICALLY VERIFIED` / `MEASURED` / `SOFTWARE VERIFIED` / `ASSUMED` / `PENDING`. This is unusually disciplined and should be preserved.
+- **Evidence classification.** `hardware/*` documents separate `DATASHEET` / `PHYSICALLY VERIFIED` / `MEASURED` / `SOFTWARE VERIFIED` / `ASSUMED` / `PENDING`. This is unusually disciplined and should be preserved.
 - **File references.** Exactly one broken reference (C-5) across every document checked.
 - **Negative-case testing.** The UNO Q UART test verifies *disconnect detection*, not just loopback success.
 - **Honest boundary language.** `PROTOTYPE_ONLY`, `PENDING_HARDWARE`, `HARDWARE_SPEC_REQUIRED`, `decision_support_only` are used consistently across code and documentation.
@@ -213,8 +213,8 @@ Items 2 and 7–10 are mechanical and safe. Items 3–6 change meaning and deser
 | 4 | Add `ai/` to the module list (**C-2**, **C-3**) | ✅ In `README.md`, `STATUS.md`, `PROJECT_HANDBOOK.md` §7b |
 | 5 | `NarrativeGuard` as a logged decision (**C-3**) | ⬜ Still open — add as `D-011` in `ARCHITECTURE.md` Part III |
 | 6 | Refresh open-items register (**C-4**) | ✅ `docs/STATUS.md`: `HW-01`/`HW-02` resolved, `AI-0x` and `DSP-0x` added |
-| 7 | `test_q.*` → `main.py`/`sketch.ino` (**C-5**) | ⬜ Still open — in `hardware_test/arduino uno q/` |
-| 8 | Strip Windows absolute paths (**C-7**) | 🔶 Partial — fixed in `PROJECT_HANDBOOK.md`; `hardware_test/*.md` still affected |
+| 7 | `test_q.*` → `main.py`/`sketch.ino` (**C-5**) | ⬜ Still open — in `hardware/unoq-bringup/` |
+| 8 | Strip Windows absolute paths (**C-7**) | 🔶 Partial — fixed in `PROJECT_HANDBOOK.md`; `hardware/*.md` still affected |
 | 9 | Delete `fieldsense/transport/` (**C-10**) | ✅ Removed; all 78 modules now import cleanly |
 | 10 | Canonical sensor name, TFT vendor (**C-8**, **C-9**) | ⬜ Still open — in `docs/HARDWARE.md` |
 | 11 | `.gitignore`, untrack `__pycache__` (**C-11**) | ✅ Added; 181 bytecode files untracked |
@@ -230,6 +230,6 @@ Content preservation was verified line-by-line before every deletion (843 conten
 | :--- | :--- |
 | `README.md` | Rewritten. Directory map covering every directory, quick start, architecture, hardware BOM, documentation index, known gaps. |
 | `TESTING_GUIDE.md` | New. Four-level test ladder, per-component standalone procedures with wiring and pass criteria, integration procedures, troubleshooting table, explicit not-yet-testable list. |
-| `docs/DOCUMENTATION_AUDIT.md` | This document. |
+| `docs/archive/DOCUMENTATION_AUDIT.md` | This document. |
 
 No source code was modified. Test baseline unchanged at 147 passing.

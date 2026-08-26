@@ -178,7 +178,7 @@ bit-exact guarantee of `docs/archive/03_ARCHITECTURE.md` section 25 when produce
 model backend. `MockAIAdapter` is bit-exact and reports
 `generation_time_ms = 0.0` rather than a measured value, so all golden scenario,
 determinism, and benchmark tests remain valid. See
-`docs/CCR-001_UIFieldView_Narrative.md`.
+`docs/archive/CCR-001_UIFieldView_Narrative.md`.
 
 ---
 
@@ -230,7 +230,7 @@ absent by default — the same discipline used for `llama.cpp`.
 > [!IMPORTANT]
 > **The panel must be wired to the QRB2210 (Linux) SPI bus.**
 > Bench verification to date drove it from the **STM32 MCU** with Arduino
-> firmware (`hardware_test/TFT/display_test_*.ino`). Linux cannot expose a
+> firmware (`hardware/tft/display_test_*.ino`). Linux cannot expose a
 > framebuffer for a display it has no SPI connection to. Exact pin assignment is
 > `HW-04` / `PENDING HARDWARE`.
 

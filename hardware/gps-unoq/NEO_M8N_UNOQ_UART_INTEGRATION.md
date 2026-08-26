@@ -17,7 +17,7 @@ This is an actual FieldSense V1 hardware integration record, NOT a generic GPS t
 The GPS integration folder has already been created:
 
 ```text
-hardware_test/
+hardware/
 └── GPS_UART_Serial1/
     ├── main.py
     └── sketch.ino
@@ -41,7 +41,7 @@ Do NOT create, modify, rename, or overwrite those files.
 Create:
 
 ```text
-hardware_test/GPS_UART_Serial1/NEO_M8N_UNOQ_UART_INTEGRATION.md
+hardware/gps_UART_Serial1/NEO_M8N_UNOQ_UART_INTEGRATION.md
 ```
 
 If a suitable documentation file already exists, update it instead of creating a duplicate.

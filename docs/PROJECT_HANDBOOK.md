@@ -224,7 +224,7 @@ End-to-end validation
 - **Backends**: `MockAIAdapter` (deterministic templates, always available, no weights required) and `LlamaCppAdapter` (quantized GGUF via a `llama.cpp` binary). `AIAdapterFactory` resolves between them; absent weights is a normal condition, not an error.
 - **Safety Gate**: `NarrativeGuard` deterministically rejects generated text containing dose units, agrochemical names, carbon credit or sequestration claims, or any number absent from the `ExplanationContext`. Rejected sections degrade to deterministic templates. This is the language-side counterpart to the data-side `ValidationEngine`.
 - **Timing Boundary**: Real model inference costs tens of seconds, far exceeding the `< 500 ms` deterministic pipeline budget. The layer therefore runs **after** the pipeline completes and is always discardable — the dashboard renders fully when `narrative` is `None`.
-- **Determinism**: `AINarrative` is **non-normative presentation text**, excluded from the bit-exact guarantee when produced by a model. `MockAIAdapter` is bit-exact and is used by all golden scenario and benchmark tests. See [CCR-001_UIFieldView_Narrative.md](CCR-001_UIFieldView_Narrative.md).
+- **Determinism**: `AINarrative` is **non-normative presentation text**, excluded from the bit-exact guarantee when produced by a model. `MockAIAdapter` is bit-exact and is used by all golden scenario and benchmark tests. See [CCR-001_UIFieldView_Narrative.md](archive/CCR-001_UIFieldView_Narrative.md).
 - **Dependencies**: None added. `llama.cpp` is invoked as an external binary via stdlib `subprocess`, so `dependencies` remains `[]`.
 
 Deployment: [AI_DEPLOYMENT.md](AI_DEPLOYMENT.md).
@@ -262,7 +262,7 @@ Designed for technical showcases, hackathon judging, and peer review during the 
 | Document | Contents |
 | :--- | :--- |
 | [../README.md](../README.md) | Entry point, directory map, quick start |
-| [../TESTING_GUIDE.md](../TESTING_GUIDE.md) | How to test every component + the test evidence register |
+| [TESTING_GUIDE.md](TESTING_GUIDE.md) | How to test every component + the test evidence register |
 | [PROJECT_HANDBOOK.md](PROJECT_HANDBOOK.md) | *(this document)* Purpose, objectives, constraints |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture, software specification, decision log |
 | [HARDWARE.md](HARDWARE.md) | Component specs, register maps, wiring, verification |

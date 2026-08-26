@@ -54,7 +54,7 @@ Power the probe from **12 V** (brown +, black −), RS485 yellow → A, blue →
 and tie the 12 V supply ground to the board ground.
 
 ```bash
-python3 "hardware_test/soil sensor/jxbs_test.py" --port /dev/ttyUSB0
+python3 "hardware/soil-probe/jxbs_test.py" --port /dev/ttyUSB0
 ```
 
 Expected:
@@ -78,7 +78,7 @@ proof of measurement — only a responding value is.
 ### 1b. GPS
 
 ```bash
-python3 hardware_test/GPS/test_gps.py --port /dev/ttyUSB0 --samples 5
+python3 hardware/gps/test_gps.py --port /dev/ttyUSB0 --samples 5
 ```
 
 Expected:
@@ -316,8 +316,8 @@ python3 -m fieldsense.hardware.display_bridge --target png
 | Step | Command | Pass criterion |
 | :--- | :--- | :--- |
 | 0 | `PYTHONPATH=. python3 -m pytest -q` | 294 passed |
-| 1a | `python3 "hardware_test/soil sensor/jxbs_test.py" --port /dev/ttyUSB0` | 7/7 parameters, moisture responds |
-| 1b | `python3 hardware_test/GPS/test_gps.py --port /dev/ttyUSB0` | decimal fix, sats ≥ 5, hdop ≤ 2 |
+| 1a | `python3 "hardware/soil-probe/jxbs_test.py" --port /dev/ttyUSB0` | 7/7 parameters, moisture responds |
+| 1b | `python3 hardware/gps/test_gps.py --port /dev/ttyUSB0` | decimal fix, sats ≥ 5, hdop ≤ 2 |
 | 2 | contract snippet above | `VALID`, quality ≥ 0.70 |
 | 3 | pipeline snippet above | zones ≥ 1, dashboard written |
 | 4 | `./scripts/launch_display.sh fb` | dashboard visible on the panel |

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Push dashboard VALUES to the UNO Q panel instead of pixels.
 
-Pairs with hardware_test/TFT_UNOQ/dashboard/dashboard.ino.
+Pairs with hardware/tft-unoq/dashboard/dashboard.ino.
 
 WHY VALUES AND NOT PIXELS
 

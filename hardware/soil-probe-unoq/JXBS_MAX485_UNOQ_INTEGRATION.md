@@ -16,7 +16,7 @@ This technical Markdown document describes exactly how this integration was perf
 The integration files exist inside the Soil Sensor hardware-testing area:
 
 ```text
-hardware_test/
+hardware/
 └── soil sensor with Max485-RS485/
     ├── main.py
     ├── sketch.ino
