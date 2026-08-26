@@ -8,7 +8,7 @@
 
 **Built by Neha Priya & Lovshik Vinnu** · Electronics & Communication Engineering
 
-![Tests](https://img.shields.io/badge/tests-552%20passing-10b981?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-565%20passing-10b981?style=flat-square)
 ![Dependencies](https://img.shields.io/badge/runtime%20dependencies-0-3b82f6?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.10%2B-f59e0b?style=flat-square)
 ![Offline](https://img.shields.io/badge/network-not%20required-8b5cf6?style=flat-square)
@@ -158,25 +158,37 @@ stateDiagram-v2
     direction LR
     [*] --> BOOT
     BOOT --> READY : gateway up, probe found
-    READY --> MEASURING : operator presses START
+    READY --> MEASURING : press START
     MEASURING --> SAMPLE_SAVED : reading valid, written to disk
     MEASURING --> READY : rejected — retry, same index
     SAMPLE_SAVED --> READY_NEXT_SAMPLE : samples remain
-    READY_NEXT_SAMPLE --> MEASURING : operator presses START
+    READY_NEXT_SAMPLE --> MEASURING : press START
     SAMPLE_SAVED --> PROCESSING : last sample stored
     PROCESSING --> RESULT
-    RESULT --> [*]
+    PROCESSING --> ERROR : nothing usable for a map
+    RESULT --> READY : tap for a new run
+    ERROR --> READY : tap for a new run
 ```
+
+The transition table is in `fieldsense/field/states.py`, and an illegal edge
+**raises** rather than being absorbed — a device that quietly ends up in the
+wrong state stores samples under the wrong index, and nobody finds out until
+the session is inspected.
 
 | The panel says | You do |
 | :--- | :--- |
 | `FIELDSENSE` / `STARTING` | Wait. The probe and GPS are being found. |
-| `SAMPLE 1 / 5` · **`PLACE PROBE - PRESS START`** | Push the probe in. Press the **USER** button, or the green bar on the glass. |
-| `SAMPLE 1 / 5` · **`MEASURING - PLEASE WAIT`** | Hold still. |
+| `SAMPLE 1 / 5` · **`PLACE PROBE - PRESS START`** | Push the probe in, then press START — the board's **USER** button, or a tap on the glass. |
+| `SAMPLE 1 / 5` · **`MEASURING - PLEASE WAIT`** | Hold still. Taps during a measurement are discarded, not banked. |
 | `SAMPLE 1 / 5` · **`SAMPLE 1 SAVED`** | It is on disk. Live moisture, pH, EC and N-P-K are shown. |
+| `SAMPLE 1 / 5` · **`RESEAT PROBE - RETRY SAMPLE 1`** | That reading was rejected. Reseat the probe and press START — same index, nothing lost. |
 | `SAMPLE 2 / 5` · **`MOVE TO NEXT LOCATION`** | Walk. Press START at the next spot. |
 | **`PROCESSING - PLEASE WAIT`** | The map is being built. |
-| `FIELD STATUS` + score + zones | Read the result. |
+| `FIELD STATUS` + score + zones · **`COMPLETE - TAP FOR NEW RUN`** | Read the result. It holds until you tap — including when a run failed, because a failed walk's screen carries the reason. |
+
+A whole session runs from the glass: start, retry, advance, begin again. No
+laptop, no SSH, and no board button required — though the USER button still
+works and feeds the same press.
 
 Three things this shape buys, which a plain `for` loop did not:
 
@@ -317,7 +329,7 @@ python3 -m pip install -e ".[dev]"
 python3 -m pytest -q
 ```
 
-552 tests, no hardware required. Then run the pipeline end to end:
+565 tests, no hardware required. Then run the pipeline end to end:
 
 ```bash
 python3 -m fieldsense.demo
@@ -364,7 +376,7 @@ Bring-up on real hardware, step by step, is
 | **[`fieldsense/`](fieldsense/)** | The product. Every pipeline stage, the hardware boundary, the AI layer. |
 | **[`firmware/`](firmware/)** | The MCU sketch the field unit flashes. One sketch: panel, GPS and START control. |
 | **[`hardware/`](hardware/)** | The physical validation record — one directory per component, script plus measured result. |
-| **[`tests/`](tests/)** | 552 tests. No hardware required. |
+| **[`tests/`](tests/)** | 565 tests. No hardware required. |
 | **[`scripts/`](scripts/)** | Launchers: field session, standalone node, boot service, display. |
 | **[`deploy/`](deploy/)** | systemd units and the App Lab profile the panel is built from. |
 | **[`docs/`](docs/)** | Documentation. Start at [`docs/README.md`](docs/README.md). |
@@ -382,12 +394,14 @@ one; nothing here is claimed on the strength of a passing unit test alone.
 
 | Capability | Status | Evidence |
 | :--- | :--- | :--- |
-| Deterministic pipeline — validate, score, interpolate, cluster, recommend | ✅ **Verified** | 552 automated tests |
+| Deterministic pipeline — validate, score, interpolate, cluster, recommend | ✅ **Verified** | 565 automated tests |
 | Soil probe acquisition on the board | ✅ **Verified on hardware** | [`hardware/soil-probe-unoq/`](hardware/soil-probe-unoq/) |
 | GPS fix reaching the pipeline on the board | ✅ **Verified on hardware** | [`hardware/gps-unoq/`](hardware/gps-unoq/), `field_test_live_hardware.json` |
 | Panel transport, parser and renderer | ✅ **Verified on hardware** | [`docs/STATUS.md`](docs/STATUS.md) §6a |
 | Operator-driven multi-sample session with durable storage | ✅ **Implemented and tested** | [`docs/FIELD_SESSION.md`](docs/FIELD_SESSION.md) |
 | A session opening no off-board socket | ✅ **Asserted in test** | `tests/test_field_node.py` |
+| Operator running a whole session from the glass | ✅ **Verified on hardware** | five-sample run driven from the panel |
+| Touch *coordinates* on this unit | ❌ **Unavailable — SPI fault, not firmware** | `PENIRQ` tracks a finger; `Z1`/`Z2` read zero, so `T_CS`/`T_CLK`/`T_DIN`/`T_DO` is a wiring fault. Press detection works; hit-testing is disabled and re-enables itself if the wiring is repaired |
 | Language model executing on the board | ✅ **Measured on hardware** | [`docs/evidence/SLM_V1_VALIDATION_REPORT.md`](docs/evidence/SLM_V1_VALIDATION_REPORT.md) |
 | Model narrative *accepted* for the field summary | ❌ **Fails fidelity — served by template** | same report |
 | Multi-location spatial mapping on real coordinates | ⏳ **Not yet verified** | every run so far is single-location or synthetic |

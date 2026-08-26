@@ -3,7 +3,7 @@
 What is built, what is verified, and what is still undecided. Consolidates the
 former `PROPOSAL_ALIGNMENT.md` and `SPECIFICATION_REGISTER.md`.
 
-**Regression baseline:** 552 tests passing (2026-08-26).
+**Regression baseline:** 565 tests passing (2026-08-26).
 
 > **Sections 4-6 predate the field-session work.** The `DSP-0x` entries below
 > were written on 2026-08-25, before the panel moved to 320x240 landscape,
