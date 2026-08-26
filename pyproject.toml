@@ -10,6 +10,17 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
 
+# Without this, setuptools falls back to flat-layout auto-discovery, sees
+# `fieldsense`, `deploy`, `artifacts`, `firmware` and `hardware` as five
+# candidate top-level packages, and refuses to build at all:
+#
+#   error: Multiple top-level packages discovered in a flat-layout
+#
+# Only `fieldsense` is importable code. The rest are firmware, bench records,
+# systemd units and generated output that happen to live beside it.
+[tool.setuptools.packages.find]
+include = ["fieldsense*"]
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
