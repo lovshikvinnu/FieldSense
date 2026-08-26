@@ -1,5 +1,10 @@
 # FieldSense AI — Documentation & Testing Audit
 
+> **ARCHIVED — a dated snapshot, not current.** This audit was written on
+> 2026-08-23 and its recommendations have since been carried out. It is kept as
+> the record of why `docs/` is shaped the way it is.
+
+
 **Date:** 2026-08-23
 **Scope:** `README.md`, `docs/**`, `PROPOSAL_ALIGNMENT.md`, `SPECIFICATION_REGISTER.md`, `DEMO_GUIDE.md`, `hardware/**`, cross-checked against the code and a live test run.
 **Baseline at audit time:** 147 tests passing.

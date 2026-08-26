@@ -1,5 +1,11 @@
 # FieldSense AI — Master Repository & Architecture Audit Report
 
+> **ARCHIVED — a dated snapshot, not current.** This audit describes the
+> repository as it stood on 2026-08-23: 105 tests, `hardware_test/` still in
+> place, and no `firmware/` directory. Its findings were acted on. For the
+> current state read [`../STATUS.md`](../STATUS.md) and the root `README.md`.
+
+
 **Audit Conducted:** August 23, 2026  
 **Auditor Role:** Senior Software Architect  
 **Audit Scope:** Full read-only code, test, documentation, and hardware integration audit  

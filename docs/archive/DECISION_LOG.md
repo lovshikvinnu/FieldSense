@@ -1,5 +1,9 @@
 # FieldSense AI — Official Decision Log
 
+> **ARCHIVED — superseded by [`../ARCHITECTURE.md`](../ARCHITECTURE.md) Part III,**
+> which contains this document in full. Kept for its history only.
+
+
 **STATUS:** DRAFT  
 **VERSION:** 0.1.1  
 **LAST UPDATED:** 2026-08-23  

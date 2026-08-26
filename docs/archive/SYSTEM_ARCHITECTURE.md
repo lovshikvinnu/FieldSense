@@ -1,5 +1,11 @@
 # FieldSense AI — System Architecture Specification
 
+> **ARCHIVED — superseded by [`../ARCHITECTURE.md`](../ARCHITECTURE.md) Part I.**
+> Kept because its *Verified Hardware Communication Architecture* section (§4)
+> was added after the consolidation and has not been folded upstream yet.
+> Everything else here is duplicated in `ARCHITECTURE.md`.
+
+
 **STATUS:** DRAFT  
 **VERSION:** 0.1  
 **LAST UPDATED:** 2026-08-22  

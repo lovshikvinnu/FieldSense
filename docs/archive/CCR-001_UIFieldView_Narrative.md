@@ -1,5 +1,10 @@
 # Contract Change Request CCR-001
 
+> **ARCHIVED — process record.** The contract change described here has shipped;
+> `UIFieldView` carries the AI narrative today. Kept as the record of how the
+> change was raised and reviewed, not as a pending item.
+
+
 **Status:** `PENDING_ARCHITECT_SIGNOFF`
 **Raised:** 2026-08-23
 **Protocol:** `docs/archive/03_ARCHITECTURE.md` section 30
