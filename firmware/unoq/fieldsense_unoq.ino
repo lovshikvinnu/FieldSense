@@ -582,7 +582,21 @@ static void serviceOperatorInput() {
     dirty = true;
   }
 
-  bool contact = (z >= TOUCH_Z_MIN && z <= TOUCH_Z_MAX);
+  // What counts as contact depends on which signal this unit actually has.
+  //
+  // Pressure is the better test when it is available: it rejects the rail
+  // readings a floating input produces, and it scales with how hard the glass
+  // was pressed. But keying on pressure UNCONDITIONALLY was a bug - on a unit
+  // whose controller does not answer over SPI, z is permanently 0, so `contact`
+  // was never true and notePress() was unreachable. PENIRQ fired, touchPresent
+  // latched, and the press counter never moved: touch that looked alive in the
+  // telemetry and did nothing at all.
+  //
+  // Reaching this line already means irqLevel == LOW - the gate above returned
+  // otherwise - so pen-detect alone is a complete contact signal, and the only
+  // honest one when the pressure channel is silent.
+  bool contact = spiAnswering ? (z >= TOUCH_Z_MIN && z <= TOUCH_Z_MAX)
+                              : (irqLevel == LOW);
 
   if (!contact) {
     contactActive = false;
