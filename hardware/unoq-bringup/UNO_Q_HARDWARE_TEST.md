@@ -101,7 +101,7 @@ hardware/
    ```bash
    uname -a
    ```
-3. Execute standard Python interpreter check and execute the project test script [`test_q.py`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware/arduino%20uno%20q/test_q.py).
+3. Execute standard Python interpreter check and execute the project test script [`main.py`](main.py).
 
 **Verification Criteria:**
 * `uname -a` returns valid Linux kernel information for the QRB2210 architecture.
@@ -115,7 +115,7 @@ hardware/
 
 **Procedure:**
 1. Open Arduino App Lab (or standard Arduino IDE setup configured for UNO Q).
-2. Connect to the board and compile/upload [`test_q.ino`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware/arduino%20uno%20q/test_q.ino).
+2. Connect to the board and compile/upload [`sketch.ino`](sketch.ino).
 3. Confirm firmware upload completes successfully without flashing errors.
 4. Verify execution of uploaded code on the STM32 MCU core.
 

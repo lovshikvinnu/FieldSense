@@ -86,7 +86,23 @@
 // jumpers physically connected and this still at 0. That order matters: it is
 // the only way to tell a wiring fault from a bus-contention fault, and the two
 // need opposite fixes.
-#define TOUCH_ENABLED 0
+// Touch is IRQ-GATED, which is what makes it safe to enable at all.
+//
+// The previous attempt polled the XPT2046 over SPI on every pass of the 2 ms
+// drain loop - hundreds of controller reconfigurations a second on the bus the
+// ST7789 drives at 24 MHz, for data that is meaningless unless a finger is
+// actually down. The panel went white.
+//
+// PENIRQ makes that unnecessary. It is an open-drain line, active low on
+// pen-down, readable with a bare digitalRead, and it costs nothing. So the
+// driver below polls the GPIO and touches the SPI bus ONLY while that line is
+// low, at most once per TOUCH_SAMPLE_MS. With nobody touching the glass the
+// touch subsystem issues no SPI at all, which is the normal case by a very
+// wide margin.
+//
+// This is also simply how an XPT2046 is meant to be driven; the earlier polling
+// loop was the anomaly.
+#define TOUCH_ENABLED 1
 
 // LANDSCAPE. The glass is 240x320; setRotation(1) presents it as 320x240 and
 // every coordinate in this file is written against that.

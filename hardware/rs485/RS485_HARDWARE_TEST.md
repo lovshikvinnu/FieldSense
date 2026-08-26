@@ -95,8 +95,8 @@ Inspection of the MAX485 breakout board confirmed the following components onboa
 * **Python Version:** Python 3.x
 * **Serial Library:** `pyserial`
 * **Test Scripts:**
-  * [`hardware/rs485/rs485_test1.py`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware/rs485/rs485_test1.py) (MAX485 Transmit / Driver Test)
-  * [`hardware/rs485/rs485_test2.py`](file:///C:/Users/lovsh/Desktop/FieldSense/hardware/rs485/rs485_test2.py) (MAX485 Receive / Receiver Test)
+  * [`hardware/rs485/rs485_test1.py`](rs485_test1.py) (MAX485 Transmit / Driver Test)
+  * [`hardware/rs485/rs485_test2.py`](rs485_test2.py) (MAX485 Receive / Receiver Test)
 
 ---
 

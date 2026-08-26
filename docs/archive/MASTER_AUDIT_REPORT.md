@@ -186,20 +186,20 @@ FieldSense/
 
 | Module | Responsibility | Important Components | Depends On | Used By |
 | ------ | -------------- | -------------------- | ---------- | ------- |
-| **`fieldsense.domain`** | Defines immutable core domain entities, value objects, enums, and sensor adapter interfaces. | [FieldSample](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/domain/models/sample.py#L11), [FieldSession](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/domain/models/session.py#L12), [SensorAdapter](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/domain/contracts/sensor.py#L7), [ValidationState](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/domain/models/enums.py#L12) | Standard Library | All modules |
-| **`fieldsense.hardware`** | Hardware boundary for acquiring raw physical sensor readings via RS485 Modbus RTU and NMEA GPS. | [HardwareSensorAdapter](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/hardware/sensor_adapter.py#L18), `SensorTransport`, `GPSAdapter`, [SensorAdapterFactory](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/hardware/factory.py#L17) | `domain` | `application`, `demo` |
-| **`fieldsense.input`** | Deterministic synthetic field generator for offline simulation, unit testing, and benchmarking. | [VirtualSensorAdapter](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/input/virtual_sensor.py#L26), `FieldScenario` | `domain` | `hardware.factory`, `tests` |
-| **`fieldsense.intelligence`** | Data validation gatekeeper, unit normalization, parameter scoring, MCDA Soil Health & Carbon Readiness proxy calculation. | [FieldIntelligenceEngine](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/intelligence/engine.py#L27), [ValidationEngine](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/intelligence/validation/engine.py), [StandardNormalizer](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/intelligence/normalization/normalizer.py) | `domain` | `spatial`, `presentation`, `demo` |
-| **`fieldsense.spatial`** | Projects GPS coordinates to Cartesian meters ($x,y$), builds regular grid, and performs 2D IDW raster interpolation ($p=2.0$). | [SpatialEngine](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/spatial/engine.py#L22), [IDWInterpolator](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/spatial/idw.py), `LocalCoordinateConverter` | `domain`, `intelligence` | `zones`, `presentation`, `demo` |
-| **`fieldsense.zones`** | Segments continuous spatial layers into contiguous management zones (`HEALTHY`, `MODERATE`, `POOR`) via 4-neighbor BFS graph connectivity. | [ZoneDetectionEngine](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/zones/engine.py#L11), [Zone](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/zones/models.py#L10) | `spatial` | `recommendations`, `presentation`, `demo` |
-| **`fieldsense.recommendations`** | Evaluates non-prescriptive, qualitative management actions based on management zone health and primary issues. | [RecommendationEngine](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/recommendations/engine.py#L24), `NutrientRule`, `MoistureRule`, `CarbonReadinessRule` | `zones` | `presentation`, `demo` |
-| **`fieldsense.presentation`** | Transforms backend intelligence into passive UI view objects and renders 100% offline interactive SVG/HTML field dashboards. | [UIViewAdapter](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/presentation/adapter.py#L23), [LocalUIRenderer](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/presentation/renderer.py) | `domain`, `spatial`, `zones`, `recommendations` | `demo` |
-| **`fieldsense.testing`** | Harness for benchmarking execution speed and managing golden dataset test scenarios. | [GoldenDatasetRegistry](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/testing/golden.py), `BenchmarkRunner` | `domain` | `tests`, `demo` |
+| **`fieldsense.domain`** | Defines immutable core domain entities, value objects, enums, and sensor adapter interfaces. | [FieldSample](../../fieldsense/domain/models/sample.py#L11), [FieldSession](../../fieldsense/domain/models/session.py#L12), [SensorAdapter](../../fieldsense/domain/contracts/sensor.py#L7), [ValidationState](../../fieldsense/domain/models/enums.py#L12) | Standard Library | All modules |
+| **`fieldsense.hardware`** | Hardware boundary for acquiring raw physical sensor readings via RS485 Modbus RTU and NMEA GPS. | [HardwareSensorAdapter](../../fieldsense/hardware/sensor_adapter.py#L18), `SensorTransport`, `GPSAdapter`, [SensorAdapterFactory](../../fieldsense/hardware/factory.py#L17) | `domain` | `application`, `demo` |
+| **`fieldsense.input`** | Deterministic synthetic field generator for offline simulation, unit testing, and benchmarking. | [VirtualSensorAdapter](../../fieldsense/input/virtual_sensor.py#L26), `FieldScenario` | `domain` | `hardware.factory`, `tests` |
+| **`fieldsense.intelligence`** | Data validation gatekeeper, unit normalization, parameter scoring, MCDA Soil Health & Carbon Readiness proxy calculation. | [FieldIntelligenceEngine](../../fieldsense/intelligence/engine.py#L27), [ValidationEngine](../../fieldsense/intelligence/validation/engine.py), [StandardNormalizer](../../fieldsense/intelligence/normalization/normalizer.py) | `domain` | `spatial`, `presentation`, `demo` |
+| **`fieldsense.spatial`** | Projects GPS coordinates to Cartesian meters ($x,y$), builds regular grid, and performs 2D IDW raster interpolation ($p=2.0$). | [SpatialEngine](../../fieldsense/spatial/engine.py#L22), [IDWInterpolator](../../fieldsense/spatial/idw.py), `LocalCoordinateConverter` | `domain`, `intelligence` | `zones`, `presentation`, `demo` |
+| **`fieldsense.zones`** | Segments continuous spatial layers into contiguous management zones (`HEALTHY`, `MODERATE`, `POOR`) via 4-neighbor BFS graph connectivity. | [ZoneDetectionEngine](../../fieldsense/zones/engine.py#L11), [Zone](../../fieldsense/zones/models.py#L10) | `spatial` | `recommendations`, `presentation`, `demo` |
+| **`fieldsense.recommendations`** | Evaluates non-prescriptive, qualitative management actions based on management zone health and primary issues. | [RecommendationEngine](../../fieldsense/recommendations/engine.py#L24), `NutrientRule`, `MoistureRule`, `CarbonReadinessRule` | `zones` | `presentation`, `demo` |
+| **`fieldsense.presentation`** | Transforms backend intelligence into passive UI view objects and renders 100% offline interactive SVG/HTML field dashboards. | [UIViewAdapter](../../fieldsense/presentation/adapter.py#L23), [LocalUIRenderer](../../fieldsense/presentation/renderer.py) | `domain`, `spatial`, `zones`, `recommendations` | `demo` |
+| **`fieldsense.testing`** | Harness for benchmarking execution speed and managing golden dataset test scenarios. | [GoldenDatasetRegistry](../../fieldsense/testing/golden.py), `BenchmarkRunner` | `domain` | `tests`, `demo` |
 | **`fieldsense.ai`** | Placeholder package for Phase 3 Edge LLM natural language summary explainer. | Empty `__init__.py` | None | None |
 | **`fieldsense.storage`** | Placeholder package for Phase 3 SQLite session persistence. | Empty `__init__.py` | None | None |
 | **`fieldsense.transport`** | Reserved for high-level transport abstractions. | Empty `__init__.py` | None | None |
 | **`fieldsense.application`** | Reserved for high-level application orchestration workflows. | Empty `__init__.py` | None | None |
-| **`fieldsense.demo`** | Executable demonstration script running the full 8-stage pipeline to produce self-contained HTML dashboards. | [run_demo()](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/demo.py#L18) | All core modules | CLI / User execution |
+| **`fieldsense.demo`** | Executable demonstration script running the full 8-stage pipeline to produce self-contained HTML dashboards. | [run_demo()](../../fieldsense/demo.py#L18) | All core modules | CLI / User execution |
 
 ---
 
@@ -312,24 +312,24 @@ Audit of the major system data contracts:
 
 | Contract | Exists? | Current Location | Current Fields / API Summary | Frozen? | Changed? |
 | -------- | ------- | ---------------- | ---------------------------- | ------- | -------- |
-| **`FieldSample`** | Yes | [fieldsense.domain.models.sample](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/domain/models/sample.py#L11) | `sample_id, timestamp, latitude, longitude, nitrogen, phosphorus, potassium, ph, ec, moisture, temperature, measurement_quality, source, validation_state`. `to_dict()`, `from_dict()`. | **YES** (`@dataclass(frozen=True)`) | Unchanged |
-| **`FieldSession`** | Yes | [fieldsense.domain.models.session](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/domain/models/session.py#L12) | `session_id, created_at, status, field_name, samples, field_result, spatial_result, zones, recommendations`. `add_sample()`, `to_dict()`, `from_dict()`. | Status: NOT EXPLICITLY FROZEN (`@dataclass`) | Unchanged |
-| **`SensorAdapter`** | Yes | [fieldsense.domain.contracts.sensor](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/domain/contracts/sensor.py#L7) | Abstract contract: `initialize()`, `acquire_sample() -> FieldSample`, `shutdown()`. Supports `with` context manager. | **YES** (Abstract interface) | Unchanged |
-| **`ValidationResult`** | Yes | [fieldsense.intelligence.validation.result](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/intelligence/validation/result.py#L10) | `sample_id, state, pipeline_eligible, reasons`. `to_dict()`. | **YES** (`@dataclass(frozen=True)`) | Unchanged |
-| **`NormalizedSample`** | Yes | [fieldsense.intelligence.normalization.sample](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/intelligence/normalization/sample.py#L8) | `sample_id, nitrogen, phosphorus, potassium, ph, ec, moisture, temperature, methodology_version`. `to_dict()`. | **YES** (`@dataclass(frozen=True)`) | Unchanged |
-| **`FieldIntelligenceResult`** | Yes | [fieldsense.intelligence.scoring.models](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/intelligence/scoring/models.py#L155) | `sample_id, parameter_scores, soil_health, nitrogen, moisture, carbon_readiness, methodology_version`. `to_dict()`, `from_dict()`. | **YES** (`@dataclass(frozen=True)`) | Unchanged |
-| **`SpatialFieldResult`** | Yes | [fieldsense.spatial.grid](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/spatial/grid.py) | `bounds, grid_points, layers, source_sample_ids, coverage, methodology_version`. `to_dict()`. | Status: NOT EXPLICITLY FROZEN (`@dataclass`) | Unchanged |
-| **`Zone`** | Yes | [fieldsense.zones.models](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/zones/models.py#L10) | `zone_id, status, severity, affected_parameters, primary_issue, confidence, grid_points, sample_ids, centroid, area_estimate, recommendation_reference`. `to_dict()`. | Status: NOT EXPLICITLY FROZEN (`@dataclass`) | Unchanged |
-| **`Recommendation`** | Yes | [fieldsense.recommendations.models](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/recommendations/models.py#L42) | `recommendation_id, zone_id, category, priority, action_id, action, reason, affected_parameters, confidence`. `to_dict()`. | **YES** (`@dataclass(frozen=True)`) | Unchanged |
-| **`UIFieldView`** | Yes | [fieldsense.presentation.models](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/presentation/models.py#L141) | `field, gps_status, sampling_status, health_summary, map, zones, recommendations, system_status`. `to_dict()`. | Status: NOT EXPLICITLY FROZEN (`@dataclass`) | Unchanged |
-| **`HardwareSensorAdapter`** | Yes | [fieldsense.hardware.sensor_adapter](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/hardware/sensor_adapter.py#L18) | Implements `SensorAdapter`. `acquire_sample()`, `get_sample()`, `get_all_samples()`, `collect_session()`. | Status: NOT EXPLICITLY FROZEN | Unchanged |
+| **`FieldSample`** | Yes | [fieldsense.domain.models.sample](../../fieldsense/domain/models/sample.py#L11) | `sample_id, timestamp, latitude, longitude, nitrogen, phosphorus, potassium, ph, ec, moisture, temperature, measurement_quality, source, validation_state`. `to_dict()`, `from_dict()`. | **YES** (`@dataclass(frozen=True)`) | Unchanged |
+| **`FieldSession`** | Yes | [fieldsense.domain.models.session](../../fieldsense/domain/models/session.py#L12) | `session_id, created_at, status, field_name, samples, field_result, spatial_result, zones, recommendations`. `add_sample()`, `to_dict()`, `from_dict()`. | Status: NOT EXPLICITLY FROZEN (`@dataclass`) | Unchanged |
+| **`SensorAdapter`** | Yes | [fieldsense.domain.contracts.sensor](../../fieldsense/domain/contracts/sensor.py#L7) | Abstract contract: `initialize()`, `acquire_sample() -> FieldSample`, `shutdown()`. Supports `with` context manager. | **YES** (Abstract interface) | Unchanged |
+| **`ValidationResult`** | Yes | [fieldsense.intelligence.validation.result](../../fieldsense/intelligence/validation/result.py#L10) | `sample_id, state, pipeline_eligible, reasons`. `to_dict()`. | **YES** (`@dataclass(frozen=True)`) | Unchanged |
+| **`NormalizedSample`** | Yes | [fieldsense.intelligence.normalization.sample](../../fieldsense/intelligence/normalization/sample.py#L8) | `sample_id, nitrogen, phosphorus, potassium, ph, ec, moisture, temperature, methodology_version`. `to_dict()`. | **YES** (`@dataclass(frozen=True)`) | Unchanged |
+| **`FieldIntelligenceResult`** | Yes | [fieldsense.intelligence.scoring.models](../../fieldsense/intelligence/scoring/models.py#L155) | `sample_id, parameter_scores, soil_health, nitrogen, moisture, carbon_readiness, methodology_version`. `to_dict()`, `from_dict()`. | **YES** (`@dataclass(frozen=True)`) | Unchanged |
+| **`SpatialFieldResult`** | Yes | [fieldsense.spatial.grid](../../fieldsense/spatial/grid.py) | `bounds, grid_points, layers, source_sample_ids, coverage, methodology_version`. `to_dict()`. | Status: NOT EXPLICITLY FROZEN (`@dataclass`) | Unchanged |
+| **`Zone`** | Yes | [fieldsense.zones.models](../../fieldsense/zones/models.py#L10) | `zone_id, status, severity, affected_parameters, primary_issue, confidence, grid_points, sample_ids, centroid, area_estimate, recommendation_reference`. `to_dict()`. | Status: NOT EXPLICITLY FROZEN (`@dataclass`) | Unchanged |
+| **`Recommendation`** | Yes | [fieldsense.recommendations.models](../../fieldsense/recommendations/models.py#L42) | `recommendation_id, zone_id, category, priority, action_id, action, reason, affected_parameters, confidence`. `to_dict()`. | **YES** (`@dataclass(frozen=True)`) | Unchanged |
+| **`UIFieldView`** | Yes | [fieldsense.presentation.models](../../fieldsense/presentation/models.py#L141) | `field, gps_status, sampling_status, health_summary, map, zones, recommendations, system_status`. `to_dict()`. | Status: NOT EXPLICITLY FROZEN (`@dataclass`) | Unchanged |
+| **`HardwareSensorAdapter`** | Yes | [fieldsense.hardware.sensor_adapter](../../fieldsense/hardware/sensor_adapter.py#L18) | Implements `SensorAdapter`. `acquire_sample()`, `get_sample()`, `get_all_samples()`, `collect_session()`. | Status: NOT EXPLICITLY FROZEN | Unchanged |
 
 ---
 
 # 6. AI / LLM AUDIT
 
 ### AI Components Found
-- **Files**: [fieldsense/ai/__init__.py](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/ai/__init__.py)
+- **Files**: [fieldsense/ai/__init__.py](../../fieldsense/ai/__init__.py)
 - **Classes**: None
 - **Providers**: None
 - **Prompts**: None
@@ -391,7 +391,7 @@ Runtime: 0.60 seconds
 
 # 8. DEPENDENCY AUDIT
 
-Inspection of [pyproject.toml](file:///C:/Users/lovsh/Desktop/FieldSense/pyproject.toml):
+Inspection of [pyproject.toml](../../pyproject.toml):
 
 ```toml
 [project]
@@ -476,7 +476,7 @@ NONE FOUND
 Before modifying anything, an AI agent must:
 
 1. **Read Authoritative Documents**: Read `docs/archive/SOFTWARE_SPEC.md`, `docs/archive/SYSTEM_ARCHITECTURE.md`, and `docs/archive/DECISION_LOG.md` before making architectural suggestions.
-2. **Respect Frozen Contracts**: Never alter the field definitions of `FieldSample` ([sample.py](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/domain/models/sample.py#L11)) or `FieldIntelligenceResult` ([models.py](file:///C:/Users/lovsh/Desktop/FieldSense/fieldsense/intelligence/scoring/models.py#L155)).
+2. **Respect Frozen Contracts**: Never alter the field definitions of `FieldSample` ([sample.py](../../fieldsense/domain/models/sample.py#L11)) or `FieldIntelligenceResult` ([models.py](../../fieldsense/intelligence/scoring/models.py#L155)).
 3. **Follow the Canonical Data Flow**: Data MUST flow unidirectionally: `Hardware/Virtual Adapter` $\rightarrow$ `Validation` $\rightarrow$ `Intelligence` $\rightarrow$ `Spatial` $\rightarrow$ `Zones` $\rightarrow$ `Recommendations` $\rightarrow$ `Presentation`.
 4. **Know Allowed Modules**: Agents may add new transport classes in `fieldsense.hardware.transport` or new recommendation rules in `fieldsense.recommendations.rules`.
 5. **Know Frozen Modules**: Do NOT edit scoring math in `fieldsense/intelligence/scoring/functions.py` or validation rules in `fieldsense/intelligence/validation/config.py` without HQ approval.
