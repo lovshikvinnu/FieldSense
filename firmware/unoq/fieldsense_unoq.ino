@@ -173,7 +173,23 @@
 // jumpers physically connected and this still at 0. That order matters: it is
 // the only way to tell a wiring fault from a bus-contention fault, and the two
 // need opposite fixes.
-#define TOUCH_ENABLED 0
+// Touch is IRQ-GATED, which is what makes it safe to enable at all.
+//
+// The previous attempt polled the XPT2046 over SPI on every pass of the 2 ms
+// drain loop - hundreds of controller reconfigurations a second on the bus the
+// ST7789 drives at 24 MHz, for data that is meaningless unless a finger is
+// actually down. The panel went white.
+//
+// PENIRQ makes that unnecessary. It is an open-drain line, active low on
+// pen-down, readable with a bare digitalRead, and it costs nothing. So the
+// driver below polls the GPIO and touches the SPI bus ONLY while that line is
+// low, at most once per TOUCH_SAMPLE_MS. With nobody touching the glass the
+// touch subsystem issues no SPI at all, which is the normal case by a very
+// wide margin.
+//
+// This is also simply how an XPT2046 is meant to be driven; the earlier polling
+// loop was the anomaly.
+#define TOUCH_ENABLED 1
 
 // LANDSCAPE. The glass is 240x320; setRotation(1) presents it as 320x240 and
 // every coordinate in this file is written against that.
@@ -343,14 +359,36 @@ static bool workflowArmed() {
 // the display runs the same bus at 24 MHz. Both sides use SPI transactions, so
 // the speeds do not collide.
 static const uint32_t TOUCH_SPI_HZ  = 2000000;
-static const uint8_t  CMD_Z1        = 0xB1;
-static const uint8_t  CMD_Z2        = 0xC1;
+
+// CONTROL BYTES USE PD = 00, NOT PD = 01.
+//
+// The low two bits are the power-down mode, and PD = 00 is the only setting
+// that leaves PENIRQ enabled between conversions. The earlier 0xB1/0xC1 used
+// PD = 01 - "reference off, ADC on" - which switches pen detection OFF the
+// moment the first conversion is issued. That is self-defeating for an
+// IRQ-gated driver: the first read would kill the very signal that decides when
+// to read next, and touch would work exactly once.
+//
+//   0xB0  Z1     0xC0  Z2     0x90  Y     0xD0  X
+static const uint8_t  CMD_Z1        = 0xB0;
+static const uint8_t  CMD_Z2        = 0xC0;
+static const uint8_t  CMD_Y         = 0x90;
+
+//: Minimum gap between IRQ-gated SPI reads. Even while a finger is down, the
+//: panel does not need sampling faster than this, and every sample is a
+//: reconfiguration of a controller the display shares.
+static const uint32_t TOUCH_SAMPLE_MS = 40;
 static const uint16_t TOUCH_Z_MIN   = 400;   // below this is noise or no contact
 static const uint16_t TOUCH_Z_MAX   = 4000;  // above this is a rail, not a finger
 static const uint32_t TOUCH_HOLD_MS = 180;   // deliberate press, not a phantom
 static const uint32_t PRESS_LOCKOUT_MS = 1200;  // one press per press
 
 static bool     touchPresent   = false;
+// True once the controller has answered an SPI read with anything non-zero.
+// Separate from touchPresent, because on this unit the panel detects touch
+// (PENIRQ) while the SPI side stays silent - two different facts that were
+// previously conflated into one flag.
+static bool     spiAnswering   = false;
 static uint16_t lastTouchZ     = 0;
 // Raw ADC from both pressure channels, refreshed every pass whether or not the
 // boot probe found a controller.
@@ -369,6 +407,39 @@ static uint16_t lastTouchZ2    = 0;
 // if a press on the bottom bar reports a small TY, the axis is inverted for
 // this panel and the map() in contactInBar() needs its ends swapped.
 static int16_t  lastTouchY     = -1;
+// PENIRQ state, sampled with digitalRead and NOTHING ELSE.
+//
+// This is the one touch measurement that costs no SPI, and it is therefore the
+// only one that can run while TOUCH_ENABLED is 0 - which matters, because
+// polling the bus is what whitened the panel.
+//
+// The XPT2046's PENIRQ is an open-drain output, active LOW on pen-down, and it
+// is ENABLED BY DEFAULT: the chip powers up with PD1:PD0 = 00, and only a
+// conversion issued with PD != 00 disables it. With touch compiled out no
+// conversion is ever issued, so the chip is sitting in exactly the state where
+// PENIRQ works.
+//
+// That makes this decisive for the audit, in a way the SPI reads were not:
+//
+//   IL goes 1 when touched  -> the controller is POWERED and its IRQ line is
+//                              wired. A zero SPI read is then a SPI wiring or
+//                              protocol fault, not a dead chip.
+//   IL stays 0 forever      -> nothing is pulling the line down. The controller
+//                              is unpowered, absent, or IRQ is not connected -
+//                              and no amount of SPI work will fix that.
+//
+// IQ is the instantaneous level; IL latches whether it has EVER read low, so a
+// touch does not have to coincide with the host's ~1 Hz poll to be seen.
+static bool     irqEverLow     = false;
+static uint8_t  irqLevel       = 1;
+
+static void serviceTouchIrq() {
+  irqLevel = (uint8_t)digitalRead(TOUCH_IRQ);
+  if (irqLevel == LOW) {
+    irqEverLow = true;
+  }
+}
+
 static uint32_t pressCount     = 0;    // monotonic; the host diffs it
 static uint32_t lastPressMs    = 0;
 static uint32_t contactBeganMs = 0;
@@ -413,21 +484,15 @@ static void probeTouch() {
   digitalWrite(TOUCH_CS, HIGH);
   pinMode(TOUCH_IRQ, INPUT_PULLUP);
 
-  if (!TOUCH_ENABLED) {
-    touchPresent = false;
-    return;
-  }
-
-  bool sawSpread = false;
-  for (uint8_t attempt = 0; attempt < 6; attempt++) {
-    uint16_t z1 = readTouchChannel(CMD_Z1);
-    uint16_t z2 = readTouchChannel(CMD_Z2);
-    if (z2 > 1000 && z2 > z1 + 500) {
-      sawSpread = true;
-    }
-    delay(5);
-  }
-  touchPresent = sawSpread;
+  // NO SPI PROBE AT BOOT.
+  //
+  // The old probe clocked the controller six times during setup() to guess
+  // whether it existed. That guess is now unnecessary and was never reliable:
+  // presence is established by PENIRQ going low under a real finger and the
+  // controller answering that read, which is direct evidence rather than an
+  // inference from an untouched panel's idle levels. Leaving it out also keeps
+  // setup() free of bus traffic that competes with the display's first paint.
+  touchPresent = false;
 }
 
 // Is the contact inside the bottom bar?
@@ -440,7 +505,7 @@ static void probeTouch() {
 static bool contactInBar() {
   SPI.beginTransaction(SPISettings(TOUCH_SPI_HZ, MSBFIRST, SPI_MODE0));
   digitalWrite(TOUCH_CS, LOW);
-  SPI.transfer(0x91);                 // Y channel, differential
+  SPI.transfer(CMD_Y);                // Y channel, differential, PD=00
   uint8_t hi = SPI.transfer(0x00);
   uint8_t lo = SPI.transfer(0x00);
   digitalWrite(TOUCH_CS, HIGH);
@@ -474,19 +539,47 @@ static void serviceOperatorInput() {
 
   uint32_t now = millis();
 
+  // THE GATE. No finger, no SPI - the whole reason the display survives this.
+  // irqLevel is refreshed by serviceTouchIrq(), which is a bare digitalRead.
+  if (irqLevel != LOW) {
+    contactActive = false;
+    return;
+  }
+
+  // Finger is down. Sample the bus, but not faster than necessary.
+  static uint32_t lastSampleMs = 0;
+  if (now - lastSampleMs < TOUCH_SAMPLE_MS) {
+    return;
+  }
+  lastSampleMs = now;
+
   uint16_t z = readTouchZ();
   lastTouchZ = z;
 
+  // Does this controller answer over SPI at all?
+  //
+  // On the assembled unit it does not. PENIRQ tracks a finger perfectly - that
+  // circuit needs only VCC, GND and the panel itself - while every SPI read
+  // returns zero, which places the fault on T_CS/T_CLK/T_DIN/T_DO. Firmware
+  // cannot repair a wire.
+  //
+  // So the driver works from whichever signal it actually has. Coordinates are
+  // used when the controller answers; pen-detect alone drives the workflow when
+  // it does not. This is not a fallback bolted on to rescue a demo: every state
+  // in this workflow offers EXACTLY ONE action - START, or NEXT, or RETRY, or
+  // NEW RUN - so a press with no coordinate is unambiguous. Position buys
+  // safety against stray contact, not capability.
+  //
+  // It also upgrades itself. The moment those four wires are fixed, a read
+  // returns non-zero, spiAnswering latches true, and the hit-testing path below
+  // takes over with no reflash.
+  if (!spiAnswering && (lastTouchZ1 > 0 || lastTouchZ2 > 0)) {
+    spiAnswering = true;
+    dirty = true;
+  }
   if (!touchPresent) {
-    // Keep reading anyway. A controller that was mis-probed at boot - a slow
-    // power rail, a cold start - would otherwise be written off for the life
-    // of the session with no evidence on the wire to say so. Re-arm the
-    // moment it starts answering like a real one.
-    if (lastTouchZ2 > 1000 && lastTouchZ2 > lastTouchZ1 + 500) {
-      touchPresent = true;
-      dirty = true;
-    }
-    return;
+    touchPresent = true;   // PENIRQ under a real finger is proof enough
+    dirty = true;
   }
 
   bool contact = (z >= TOUCH_Z_MIN && z <= TOUCH_Z_MAX);
@@ -501,12 +594,22 @@ static void serviceOperatorInput() {
     contactInBar();      // for its side effect: record where this landed
     return;
   }
-  // Held long enough to be deliberate. The lamination pinch on this panel
-  // produces brief phantom contacts near the centre; requiring both a sustained
-  // hold and a position inside the bottom bar is what rejects them.
-  if ((now - contactBeganMs) >= TOUCH_HOLD_MS && contactInBar()) {
-    notePress();
-    contactActive = false;
+  // Held long enough to be deliberate.
+  //
+  // Two filters reject the phantom contacts this panel's lamination pinch
+  // produces near the centre: a sustained hold, which brief phantoms do not
+  // survive, and - only when the controller answers over SPI - a position
+  // inside the bottom bar.
+  //
+  // With no coordinates available the hold and the press lockout are the whole
+  // defence. That is weaker than hold-plus-position and is stated plainly
+  // rather than papered over; it is also why TOUCH_HOLD_MS is not shortened to
+  // make the panel feel snappier.
+  if ((now - contactBeganMs) >= TOUCH_HOLD_MS) {
+    if (!spiAnswering || contactInBar()) {
+      notePress();
+      contactActive = false;
+    }
   }
 }
 
@@ -841,6 +944,13 @@ static void serviceGPS() {
 //       dashes - and a counter the parser increments is the only evidence on
 //       the wire that a push actually landed.
 //   TZ  last derived contact pressure.
+//   SA  1 once the controller has answered an SPI read. TP without SA is this
+//       unit's actual state: the panel detects touch but the SPI wires do not
+//       carry, so presses work and coordinates do not.
+//   IQ  live PENIRQ level.   IL  1 once PENIRQ has ever read low.
+//       These two cost no SPI, so they work with touch compiled out. IL going
+//       to 1 on a finger proves the controller is powered and its IRQ is wired;
+//       IL stuck at 0 proves it is not, and no SPI change would help.
 //   TY  panel Y of the last contact, -1 if there has been none. The bottom bar
 //       starts at y=182, so a press on it should report TY in the 180s-230s; a
 //       small TY means the axis is inverted on this panel.
@@ -849,10 +959,13 @@ static void serviceGPS() {
 //       present but untouched" from "MISO stuck at a rail" - all three of
 //       which produce TZ:0 and need different fixes.
 String get_gps_data() {
-  char suffix[96];
-  snprintf(suffix, sizeof(suffix), ",UI:%lu,TP:%d,TZ:%u,Z1:%u,Z2:%u,TY:%d,RC:%lu",
-           (unsigned long)pressCount, touchPresent ? 1 : 0, (unsigned)lastTouchZ,
+  char suffix[112];
+  snprintf(suffix, sizeof(suffix),
+           ",UI:%lu,TP:%d,SA:%d,TZ:%u,Z1:%u,Z2:%u,TY:%d,IQ:%u,IL:%d,RC:%lu",
+           (unsigned long)pressCount, touchPresent ? 1 : 0, spiAnswering ? 1 : 0,
+           (unsigned)lastTouchZ,
            (unsigned)lastTouchZ1, (unsigned)lastTouchZ2, (int)lastTouchY,
+           (unsigned)irqLevel, irqEverLow ? 1 : 0,
            (unsigned long)recordCount);
   return latest_gps_csv + String(suffix);
 }
@@ -1148,7 +1261,7 @@ static void renderValues() {
       // Say so on the glass. A unit whose touch is not answering must not
       // look identical to one where it is - the operator would keep pressing
       // a target that does nothing instead of reaching for the board keys.
-      const char *note = "USE BOARD BTN";
+      const char *note = "NO TOUCH";
       label(PANEL_W - MARGIN - 8 - (int16_t)(strlen(note) * CHAR_W),
             BAR_Y + 34, note, COL_WARN, 1);
     }
@@ -1212,6 +1325,7 @@ void loop() {
   uint32_t drainUntil = millis() + GPS_DRAIN_MS;
   while ((int32_t)(millis() - drainUntil) < 0) {
     serviceGPS();
+    serviceTouchIrq();
     serviceOperatorInput();
     delay(2);
   }

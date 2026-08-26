@@ -136,6 +136,17 @@ class UIEvent:
     #: y=182, so a press there should land in the 180s-230s; a small value means
     #: the touch axis is inverted on this panel.
     touch_y: Optional[int] = None
+    #: Live PENIRQ level, and whether it has ever read low. These come from a
+    #: bare digitalRead, so they are meaningful even when the SPI side of the
+    #: touch controller is disabled: `irq_ever_low` True proves the chip is
+    #: powered and its interrupt line is wired.
+    irq_level: Optional[int] = None
+    irq_ever_low: Optional[bool] = None
+    #: True once the controller has answered an SPI read. Distinct from
+    #: `touch_present`: a panel can pen-detect (PENIRQ, which needs only power
+    #: and the panel) while its SPI wires carry nothing. Presses work in that
+    #: state; coordinates do not.
+    spi_answering: Optional[bool] = None
 
     @property
     def reported(self) -> bool:
@@ -174,6 +185,9 @@ def parse_ui_event(payload: str) -> UIEvent:
     raw_z2: Optional[int] = None
     records: Optional[int] = None
     touch_y: Optional[int] = None
+    irq_level: Optional[int] = None
+    irq_ever_low: Optional[bool] = None
+    spi_answering: Optional[bool] = None
 
     for part in str(payload or "").strip().split(","):
         key, sep, value = part.partition(":")
@@ -196,12 +210,19 @@ def parse_ui_event(payload: str) -> UIEvent:
                 records = int(value)
             elif key == "TY":
                 touch_y = int(value)
+            elif key == "IQ":
+                irq_level = int(value)
+            elif key == "IL":
+                irq_ever_low = bool(int(value))
+            elif key == "SA":
+                spi_answering = bool(int(value))
         except ValueError:
             continue
     raw = (raw_z1, raw_z2) if raw_z1 is not None and raw_z2 is not None else None
     return UIEvent(press_count=press, touch_present=present,
                    touch_pressure=pressure, touch_raw=raw, records_parsed=records,
-                   touch_y=touch_y)
+                   touch_y=touch_y, irq_level=irq_level, irq_ever_low=irq_ever_low,
+                   spi_answering=spi_answering)
 
 
 class BridgeGPSAdapter(GPSAdapter):
