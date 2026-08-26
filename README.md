@@ -8,7 +8,8 @@
 
 **Built by Neha Priya & Lovshik Vinnu** · Electronics & Communication Engineering
 
-![Tests](https://img.shields.io/badge/tests-565%20passing-10b981?style=flat-square)
+[![tests](https://github.com/lovshikvinnu/FieldSense/actions/workflows/pytest.yml/badge.svg?branch=main)](https://github.com/lovshikvinnu/FieldSense/actions/workflows/pytest.yml)
+![Suite](https://img.shields.io/badge/suite-565%20tests-10b981?style=flat-square)
 ![Dependencies](https://img.shields.io/badge/runtime%20dependencies-0-3b82f6?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.10%2B-f59e0b?style=flat-square)
 ![Offline](https://img.shields.io/badge/network-not%20required-8b5cf6?style=flat-square)
