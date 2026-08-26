@@ -376,7 +376,7 @@ def panel_lines(summary: Dict[str, Any]) -> List[str]:
 #
 # Keys stay single-character because at ~860 B/s every byte is real time on the
 # wire. The sketch ignores keys it does not know, so this tuple can grow without
-# a reflash. Its parser lives in hardware_test/TFT_UNOQ/dashboard/dashboard.ino.
+# a reflash. Its parser lives in hardware/tft-unoq/dashboard/dashboard.ino.
 PANEL_RECORD_FIELDS = (
     ("f", "field_name"),
     ("s", "soil_health_status"),

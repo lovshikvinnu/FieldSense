@@ -4,18 +4,18 @@ Component specifications, electrical requirements, wiring, and physical
 verification status.
 
 Empirical bench-test records for each component live alongside their scripts in
-`hardware_test/`:
+`hardware/`:
 
 | Record | Component |
 | :--- | :--- |
-| `hardware_test/soil sensor/JXBS_HARDWARE_TEST.md` | JXBS-3001-TR 7-in-1 soil probe |
-| `hardware_test/RS485/RS485_HARDWARE_TEST.md` | MAX485 transceiver |
-| `hardware_test/GPS/GPS_HARDWARE_TEST.md` | u-blox NEO-M8N |
-| `hardware_test/TFT/TFT_HARDWARE_TEST.md` | 2.8" ST7789V display + XPT2046 touch |
-| `hardware_test/arduino uno q/UNO_Q_HARDWARE_TEST.md` | Arduino UNO Q platform |
-| `hardware_test/soil sensor with Max485-RS485/JXBS_MAX485_UNOQ_INTEGRATION.md` | Full acquisition chain |
+| `hardware/soil-probe/JXBS_HARDWARE_TEST.md` | JXBS-3001-TR 7-in-1 soil probe |
+| `hardware/rs485/RS485_HARDWARE_TEST.md` | MAX485 transceiver |
+| `hardware/gps/GPS_HARDWARE_TEST.md` | u-blox NEO-M8N |
+| `hardware/tft/TFT_HARDWARE_TEST.md` | 2.8" ST7789V display + XPT2046 touch |
+| `hardware/unoq-bringup/UNO_Q_HARDWARE_TEST.md` | Arduino UNO Q platform |
+| `hardware/soil-probe-unoq/JXBS_MAX485_UNOQ_INTEGRATION.md` | Full acquisition chain |
 
-Step-by-step test procedures: [../TESTING_GUIDE.md](../TESTING_GUIDE.md).
+Step-by-step test procedures: [TESTING_GUIDE.md](TESTING_GUIDE.md).
 
 ---
 
@@ -350,7 +350,8 @@ The Arduino UNO Q has successfully passed ground-level hardware validation for t
 >
 > **Resolution:** the backlight moves to **pin 6**. Pin 7 is reserved
 > exclusively for `MAX485_RE_DE`. Applied in
-> `hardware_test/New folder/sketch.ino`. Re-flash the STM32 before wiring both
+> `firmware/unoq/fieldsense_unoq.ino` (`#define TFT_LED 6`). Re-flash the STM32
+> before wiring both
 > peripherals together, and confirm no other peripheral claims pin 6.
 
 ### 8.4 Power Domain Isolation
@@ -428,7 +429,7 @@ USB-RS485 adapter already provides an independent port:
 | JXBS probe | USB-RS485 → `/dev/ttyUSB0` | QRB2210 Linux | `FIELDSENSE_SOURCE=HARDWARE` |
 | ST7789 panel | Hardware SPI + D6 backlight | STM32U585 | `FS\|` value record over Monitor |
 
-Firmware: **`hardware_test/fieldsense_unoq/`** is the single flashable sketch for
+Firmware: **`firmware/unoq/`** is the single flashable sketch for
 the assembled unit — `dashboard.ino` verbatim plus non-blocking GPS in one
 `loop()`. The GPS read had to become non-blocking to get there: the bench
 sketch's blocking `readStringUntil` waits up to a second, and this loop also
@@ -585,10 +586,10 @@ sizing any on-device model — see [AI_DEPLOYMENT.md](AI_DEPLOYMENT.md) Part I.
 
 | Specification | Implementation | Never duplicated in |
 | :--- | :--- | :--- |
-| Modbus framing, CRC-16, register map, scaling | `fieldsense/hardware/soil_adapter.py` | `hardware_test/` scripts |
-| NMEA parsing, checksum, DDMM → decimal | `fieldsense/hardware/gps_adapter.py` | `hardware_test/` scripts |
+| Modbus framing, CRC-16, register map, scaling | `fieldsense/hardware/soil_adapter.py` | `hardware/` scripts |
+| NMEA parsing, checksum, DDMM → decimal | `fieldsense/hardware/gps_adapter.py` | `hardware/` scripts |
 | Serial 8-N-1 device access | `fieldsense/hardware/transport/serial_port.py` | anywhere else |
 | Telemetry → `FieldSample` contract | `fieldsense/hardware/hardware_sample_adapter.py` | the pipeline |
 
-One implementation per specification. Bench scripts in `hardware_test/` are
+One implementation per specification. Bench scripts in `hardware/` are
 thin console harnesses over these adapters and hold no protocol logic.

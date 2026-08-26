@@ -1,33 +1,78 @@
+# ---------------------------------------------------------------------------
 # Python
+# ---------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *.egg-info/
 .eggs/
-build/
-dist/
+/build/
+/dist/
 
-# Test / tooling
+# ---------------------------------------------------------------------------
+# Test and tooling caches
+# ---------------------------------------------------------------------------
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
 .coverage
+coverage.xml
 htmlcov/
 
+# ---------------------------------------------------------------------------
 # Virtual environments
+# ---------------------------------------------------------------------------
 .venv/
 venv/
 env/
 
-# OS
+# ---------------------------------------------------------------------------
+# OS and editors
+# ---------------------------------------------------------------------------
 .DS_Store
 Thumbs.db
-
-# Editors
 .idea/
 .vscode/
+*.swp
 
+# ---------------------------------------------------------------------------
+# Local scratch — one-off scripts that are not part of the project
+# ---------------------------------------------------------------------------
+scratch/
+
+# ---------------------------------------------------------------------------
+# Field session output
+#
+# Each run of the field node writes artifacts/sessions/<session_id>/ with that
+# walk's samples. That is operational data belonging to one outing on one
+# board, not repository content: it changes on every power-on and would make
+# the working tree dirty after every field test. A session worth keeping as
+# evidence is committed deliberately, under docs/evidence/.
+# ---------------------------------------------------------------------------
+artifacts/sessions/
+
+# ---------------------------------------------------------------------------
 # Generated dashboard output IS committed on purpose: judges and teammates
 # should be able to open the live UI straight from the repo without running
 # anything. Rebuild any time with:  python3 -m fieldsense.demo
+#
+# That is why artifacts/ is not ignored wholesale — only the per-run session
+# directory above.
+# ---------------------------------------------------------------------------
 
-# Local model weights (see docs/AI_DEPLOYMENT.md)
-models/
+# ---------------------------------------------------------------------------
+# Local model weights — several hundred MB each, fetched per board.
+# See docs/AI_DEPLOYMENT.md for how to place them. Anchored with a leading
+# slash so it means the repository-root models/ directory and NOT the
+# fieldsense/domain/models/ package, which an unanchored pattern also matches.
+# ---------------------------------------------------------------------------
+/models/
 *.gguf
+
+# ---------------------------------------------------------------------------
+# Logs and local secrets. Nothing here should ever reach a commit.
+# ---------------------------------------------------------------------------
+*.log
+.env
+.env.*
+*.pem
+*.key

@@ -146,11 +146,28 @@ def test_firmware_without_the_control_is_distinguishable_from_no_press():
     assert UIEvent(press_count=0).reported
 
 
-def test_the_trigger_describes_a_panel_whose_touch_did_not_answer():
-    gps = FakeGPS(["FIX_OK,1734.18N,07825.47E,Sats:10,HDOP:0.96,UI:0,TP:0,TZ:0"])
+def test_the_trigger_reports_a_panel_that_has_not_been_touched():
+    gps = FakeGPS(["FIX_OK,1734.18N,07825.47E,Sats:10,HDOP:0.96,UI:0,TP:0,SA:0,TZ:0"])
     trigger = MCUTrigger(gps.read_raw, poll_seconds=0.0)
     trigger.sync()
-    assert "ABSENT" in trigger.describe()
+    assert "no touch detected yet" in trigger.describe()
+
+
+def test_the_trigger_distinguishes_pen_detect_from_working_coordinates():
+    """The assembled unit pen-detects but its controller is silent over SPI.
+
+    Conflating those two facts is what previously made the boot log claim touch
+    was absent while it was in fact driving the workflow.
+    """
+    pen_only = FakeGPS(["FIX_OK,1734.18N,07825.47E,Sats:10,HDOP:0.96,UI:3,TP:1,SA:0,TZ:0"])
+    trigger = MCUTrigger(pen_only.read_raw, poll_seconds=0.0)
+    trigger.sync()
+    assert "PEN-DETECT ONLY" in trigger.describe()
+
+    full = FakeGPS(["FIX_OK,1734.18N,07825.47E,Sats:10,HDOP:0.96,UI:3,TP:1,SA:1,TZ:900"])
+    trigger = MCUTrigger(full.read_raw, poll_seconds=0.0)
+    trigger.sync()
+    assert "with coordinates" in trigger.describe()
 
 
 def test_the_auto_trigger_says_it_is_not_an_operator():
@@ -413,3 +430,100 @@ def test_a_unit_with_no_control_at_all_says_so(tmp_path):
     composite = CompositeTrigger([ButtonTrigger(device_path="/nonexistent/gpio-keys")])
     assert not composite.available()
     assert "NO OPERATOR CONTROL" in composite.describe()
+
+
+# ------------------------------------- duplicate presses and the new-run gate
+
+
+class CountingTrigger(AutoTrigger):
+    """An auto trigger that records how often it was synced and polled."""
+
+    def __init__(self, presses_available=99):
+        super().__init__(0.0)
+        self.syncs = 0
+        self.presses_available = presses_available
+        self.presses_taken = 0
+
+    def sync(self):
+        self.syncs += 1
+
+    def wait_for_press(self, timeout=None):
+        if self.presses_taken >= self.presses_available:
+            return False
+        self.presses_taken += 1
+        return True
+
+
+def test_presses_made_while_the_device_was_busy_are_discarded(tmp_path):
+    """A tap during MEASURING must not fire the next sample instantly.
+
+    The press counter is monotonic and only diffed inside wait_for_press, so
+    without a resync an impatient second tap sits in the counter and consumes
+    the next wait before the operator has moved or seen READY.
+    """
+    adapter = FakeAdapter([
+        {"lat": 17.5697 + i * 0.0004, "moisture": 31.2 - i} for i in range(3)])
+    node = build_node(tmp_path, adapter, samples=3)
+    trigger = CountingTrigger()
+    node.build_trigger = lambda: trigger
+    node.run()
+
+    # One sync before each armed wait, plus one before the result hold.
+    assert trigger.syncs >= 3, "the trigger was not resynced between samples"
+
+
+def test_the_result_screen_waits_for_the_operator(tmp_path):
+    """--loop would otherwise replace the result with READY seconds later."""
+    adapter = FakeAdapter([
+        {"lat": 17.5697 + i * 0.0004, "moisture": 31.2 - i} for i in range(3)])
+    node = build_node(tmp_path, adapter, samples=3)
+    trigger = CountingTrigger()
+    node.build_trigger = lambda: trigger
+    node.run()
+
+    assert node.session.state is FieldState.RESULT
+    # The samples plus the new-run tap.
+    assert trigger.presses_taken >= 4
+
+
+def test_the_new_run_wait_is_bounded_for_an_unattended_unit(tmp_path):
+    """A unit left switched on must recycle rather than hold forever."""
+    from fieldsense.field_node import RESULT_HOLD_SECONDS
+
+    assert 0 < RESULT_HOLD_SECONDS <= 3600
+
+    adapter = FakeAdapter([
+        {"lat": 17.5697 + i * 0.0004, "moisture": 31.2 - i} for i in range(3)])
+    node = build_node(tmp_path, adapter, samples=3)
+    trigger = CountingTrigger(presses_available=3)   # no press for the result
+    node.build_trigger = lambda: trigger
+    assert node.run() == 0
+    assert node.await_new_run() is False
+
+
+def test_await_new_run_does_nothing_outside_the_result_state(tmp_path):
+    adapter = FakeAdapter([{"lat": 17.5697, "moisture": 31.2}])
+    node = build_node(tmp_path, adapter, samples=1)
+    node.session = None
+    assert node.await_new_run() is False
+
+
+def test_a_session_that_could_not_be_processed_also_holds_the_screen(tmp_path):
+    """The reason is the most useful thing a failed run has to show.
+
+    Holding only on RESULT meant "0 of 5 samples are usable" appeared and was
+    replaced by READY within seconds, so an operator learned nothing from a
+    walk that went wrong.
+    """
+    air = {"moisture": 0.0, "ec": 0.0, "nitrogen": 0.0,
+           "phosphorus": 0.0, "potassium": 0.0}
+    adapter = FakeAdapter([dict(air, lat=17.5697 + i * 0.0004) for i in range(3)])
+    node = build_node(tmp_path, adapter, samples=3)
+    trigger = CountingTrigger()
+    node.build_trigger = lambda: trigger
+    node.run()
+
+    assert node.session.state is FieldState.ERROR
+    assert node.session.map_eligible_records() == []
+    # The hold ran: it accepted a press rather than returning immediately.
+    assert node.await_new_run() is True

@@ -63,6 +63,11 @@ DEFAULT_DWELL_SECONDS = 2.0
 #: press lockout, so no press can fall between two polls.
 TRIGGER_POLL_SECONDS = 0.5
 
+#: How long the finished result stays on the panel waiting for the operator to
+#: ask for another run. Long enough to read the result, walk back, and decide;
+#: bounded so a unit left switched on in a shed still recycles by itself.
+RESULT_HOLD_SECONDS = 900.0
+
 #: The board's own push-button, exposed by the kernel's gpio-keys driver. It is
 #: already on the UNO Q - nothing to wire, nothing to fit - and readable straight
 #: from Linux with no MCU round trip. The by-path name is stable across boots;
@@ -342,9 +347,17 @@ class MCUTrigger(TriggerSource):
         if not event.reported:
             return ("mcu (firmware has not reported an operator control yet; "
                     "an older sketch would never report one)")
-        return "mcu (touch {}, last pressure {}, press count {})".format(
-            "present" if event.touch_present else "ABSENT - fit a switch on D5",
-            event.touch_pressure, event.press_count)
+        # Two independent facts, and conflating them is what made the earlier
+        # log line wrong: a panel can detect touch through PENIRQ - which needs
+        # only power and the glass - while its SPI wires carry nothing.
+        if not event.touch_present:
+            touch = "no touch detected yet"
+        elif event.spi_answering:
+            touch = "touch active with coordinates"
+        else:
+            touch = ("touch active, PEN-DETECT ONLY - the controller does not "
+                     "answer over SPI, so presses work and hit zones do not")
+        return "mcu ({}, press count {})".format(touch, event.press_count)
 
 
 class EnterTrigger(TriggerSource):
@@ -732,6 +745,37 @@ class FieldNode:
             report["spatial_spread_m"]))
         return {"processed": True, "summary": summary}
 
+    def await_new_run(self) -> bool:
+        """Hold the result on screen until the operator asks for another run.
+
+        The launcher's --loop starts a fresh session as soon as this process
+        exits, so without this the result would be replaced by READY seconds
+        after appearing - and an operator who looked away would never see what
+        their walk produced. Waiting here makes starting the next run an
+        explicit act on the panel, which is the point of a screen-only device.
+
+        Bounded, because an unattended unit must still recycle: after
+        RESULT_HOLD_SECONDS it returns anyway and the launcher starts the next
+        session. Returns True when a press ended the wait.
+        """
+        # RESULT *or* ERROR. A session that could not be processed - too few
+        # usable samples - is just as finished as one that produced a map, and
+        # its screen carries something the operator needs more: the reason. The
+        # first version held only on RESULT, so a run that ended "0 of 5 samples
+        # are usable" flashed that conclusion and was replaced by READY within
+        # seconds, which is how an operator learns nothing from a failed walk.
+        if self.session is None or self.session.state not in (
+                FieldState.RESULT, FieldState.ERROR):
+            return False
+        self.trigger.sync()          # a tap during PROCESSING is not a request
+        log("{} on screen; tap to start a new run (auto-continues in {:.0f}s)".format(
+            "result" if self.session.state is FieldState.RESULT else "outcome",
+            RESULT_HOLD_SECONDS))
+        pressed = self.trigger.wait_for_press(timeout=RESULT_HOLD_SECONDS)
+        log("operator started a new run" if pressed
+            else "no input; recycling for the next session")
+        return pressed
+
     def _result_overlay(self, summary: Dict[str, Any],
                         report: Dict[str, Any]) -> Dict[str, Any]:
         """Fold the finished pipeline's own numbers onto the result screen."""
@@ -800,6 +844,16 @@ class FieldNode:
                 if self.session.state is FieldState.ERROR:
                     self.session.recover()
                     self.show()
+                # Discard anything that arrived while the device was busy.
+                #
+                # The press counter is monotonic and the host only diffs it
+                # inside wait_for_press. Without this, taps during MEASURING -
+                # an impatient second tap, a palm on the glass while the probe
+                # is being seated - sit in the counter and fire the NEXT wait
+                # instantly, taking a sample before the operator has moved or
+                # even seen the READY screen. Presses made while the device was
+                # working are not instructions about the sample after it.
+                self.trigger.sync()
                 log("waiting for START (sample {} of {})".format(
                     self.session.sample_index, self.planned_samples))
                 if not self.trigger.wait_for_press():
@@ -813,6 +867,7 @@ class FieldNode:
                 self.session.begin_processing()
             self.show()
             self.process()
+            self.await_new_run()
             return 0
         except KeyboardInterrupt:
             log("interrupted; the session is stored at {}".format(store.directory))

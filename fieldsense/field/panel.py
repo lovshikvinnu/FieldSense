@@ -24,7 +24,7 @@ from ..hardware.panel_renderer import (
     PANEL_HOLD_SECONDS,
     build_panel_record,
 )
-from .states import FieldState
+from .states import ARMED_STATES, FieldState
 
 #: The large instruction, per state. `{i}` is the current sample index and
 #: `{m}` the planned total; both are substituted before the record is built.
@@ -39,8 +39,34 @@ ACTION_LINES: Dict[FieldState, str] = {
     FieldState.ERROR: "CHECK DEVICE",
 }
 
+#: Shown instead of the state's usual line when the previous attempt was not
+#: accepted and the operator has to take that same sample again.
+#:
+#: Without this the panel is actively misleading. A RETRY verdict returns the
+#: workflow to READY or READY_NEXT_SAMPLE - the same states it passes through
+#: normally - so the glass said "PLACE PROBE - PRESS START" exactly as if
+#: nothing had gone wrong, while the reason sat in a small quality field the
+#: operator has no cause to read. Someone standing in a field would press again,
+#: get the same rejection, and have nothing on screen to explain the loop.
+RETRY_ACTION_LINE = "RESEAT PROBE - RETRY SAMPLE {i}"
+
+#: Shown on the result screen. The session is finished and the only thing left
+#: to do is start another one, so the instruction says so rather than merely
+#: announcing that a result exists.
+RESULT_ACTION_LINE = "COMPLETE - TAP FOR NEW RUN"
+
 #: Channels lifted onto the panel from the most recent reading.
 SOIL_KEYS = ("moisture", "ph", "ec", "nitrogen", "phosphorus", "potassium")
+
+
+def _is_retrying(outcome: Any) -> bool:
+    """True when the last measurement was rejected and must be taken again.
+
+    Keyed on the outcome not being accepted rather than on the quality word, so
+    a storage failure reads as a retry to the operator too - from where they are
+    standing the required action is identical.
+    """
+    return outcome is not None and not getattr(outcome, "accepted", True)
 
 
 def _short_label(session_id: str) -> str:
@@ -48,9 +74,31 @@ def _short_label(session_id: str) -> str:
     return str(session_id).replace("session_", "", 1)[:23] or "FIELD SESSION"
 
 
-def action_line(state: FieldState, sample_index: int, planned: int) -> str:
-    """Return the large operator instruction for one state."""
-    template = ACTION_LINES.get(state, state.value)
+def action_line(
+    state: FieldState,
+    sample_index: int,
+    planned: int,
+    retrying: bool = False,
+    session_complete: bool = False,
+) -> str:
+    """Return the large operator instruction for one state.
+
+    Args:
+        state: The workflow state being displayed.
+        sample_index: Sample number the instruction should refer to.
+        planned: Planned sample count for the session.
+        retrying: True when the previous attempt at this same sample was not
+            accepted, so the line has to say that rather than repeating the
+            ordinary prompt.
+        session_complete: True on the result screen, where the useful
+            instruction is how to begin another run.
+    """
+    if retrying and state in ARMED_STATES:
+        template = RETRY_ACTION_LINE
+    elif session_complete and state is FieldState.RESULT:
+        template = RESULT_ACTION_LINE
+    else:
+        template = ACTION_LINES.get(state, state.value)
     return template.format(i=sample_index, m=planned)
 
 
@@ -104,7 +152,9 @@ def workflow_summary(
         "sample_index": shown_index,
         "planned_samples": report["planned_samples"],
         "action_line": action_line(
-            session.state, shown_index, report["planned_samples"]),
+            session.state, shown_index, report["planned_samples"],
+            retrying=_is_retrying(outcome),
+            session_complete=session.state is FieldState.RESULT),
         "total_samples": report["stored_samples"],
         "valid_samples": report["quality_counts"].get("VALID", 0),
         "rejected_samples": (report["quality_counts"].get("REJECTED", 0)

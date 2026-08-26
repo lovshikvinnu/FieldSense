@@ -10,6 +10,12 @@ separate documents:
 | III | `DECISION_LOG.md` | Why each architectural decision was made |
 | IV | `03_ARCHITECTURE.md` §29–30 | Frozen contracts and the change-control protocol |
 
+The originals are kept in [`archive/`](archive/), each stamped as superseded.
+Two of them are not fully absorbed: the *Verified Hardware Paths* sections of
+[`archive/SYSTEM_ARCHITECTURE.md`](archive/SYSTEM_ARCHITECTURE.md) and
+[`archive/SOFTWARE_SPEC.md`](archive/SOFTWARE_SPEC.md) were written after the
+consolidation and still live only there.
+
 Hardware specifications live in [HARDWARE.md](HARDWARE.md).
 Runtime deployment lives in [AI_DEPLOYMENT.md](AI_DEPLOYMENT.md).
 
@@ -740,7 +746,7 @@ Empirical hardware bench testing demonstrated that relying on `ser.read(ser.in_w
 Hardware sensor adapter and test drivers read physical sensor registers reliably without frame truncation or silent empty buffer reads.
 
 **Related system:**  
-Hardware Interface Boundary (`fieldsense.hardware`, `hardware_test/soil sensor/jxbs_test.py`)
+Hardware Interface Boundary (`fieldsense.hardware`, `hardware/soil-probe/jxbs_test.py`)
 
 ---
 

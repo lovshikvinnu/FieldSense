@@ -19,7 +19,7 @@ Target platform: Arduino UNO Q — Qualcomm QRB2210 Linux MPU + STM32U585 MCU
 > | Label | Means |
 > | :--- | :--- |
 > | `VERIFIED — SOFTWARE` | Exercised by the automated suite on a development host. Reproducible by anyone with `pytest`. |
-> | `VERIFIED — BENCH` | Physically demonstrated on the component during hardware bring-up, recorded in `hardware_test/` and `docs/HARDWARE.md`. |
+> | `VERIFIED — BENCH` | Physically demonstrated on the component during hardware bring-up, recorded in `hardware/` and `docs/HARDWARE.md`. |
 > | `PENDING HARDWARE` | Implemented and unit-tested, but never executed on the assembled UNO Q. |
 >
 > No claim in this report is labelled verified on the strength of a code
@@ -97,12 +97,12 @@ figure.
 ### Where this figure is now recorded
 
 `README.md` (badge, Quickstart, Status table) · `docs/OFFICIAL_PROJECT_REPORT.md`
-(this file) · `docs/INTEGRATION_RUNBOOK.md` · `docs/TEST_AND_VALIDATION.md` ·
+(this file) · `docs/INTEGRATION_RUNBOOK.md` · `docs/evidence/TEST_AND_VALIDATION.md` ·
 `TESTING_GUIDE.md` · `MASTER_AUDIT_REPORT.md`.
 
 Historical documents are deliberately **not** rewritten: `docs/archive/*` records
 the sprint-by-sprint progression (34 → 105), and
-`docs/CCR-001_UIFieldView_Narrative.md` cites `105/105` as the regression
+`docs/archive/CCR-001_UIFieldView_Narrative.md` cites `105/105` as the regression
 baseline *for that specific change request*. Both are accurate as history.
 
 ---
@@ -309,7 +309,7 @@ Live execution at freeze time (5-point dataset):
 
 | Path | Wiring | Status | Evidence |
 | :--- | :--- | :--- | :--- |
-| Soil via STM32 bridge | JXBS → MAX485 → STM32 `Serial1` → `Bridge.call("get_soil_data")` → Linux | `VERIFIED — SOFTWARE` + `VERIFIED — BENCH` | `bridge_soil.py` decodes the sketch's exact payload under test; the MCU side was demonstrated on the bench (`hardware_test/soil sensor with Max485-RS485 UNO Q/`) |
+| Soil via STM32 bridge | JXBS → MAX485 → STM32 `Serial1` → `Bridge.call("get_soil_data")` → Linux | `VERIFIED — SOFTWARE` + `VERIFIED — BENCH` | `bridge_soil.py` decodes the sketch's exact payload under test; the MCU side was demonstrated on the bench (`hardware/soil-probe-unoq/`) |
 | Soil via USB-RS485 | JXBS → MAX485 → USB dongle → Linux `/dev/ttyUSB0` | `VERIFIED — SOFTWARE` + `VERIFIED — BENCH` | Stdlib Modbus transport, standard library only; register map and CRC bench-recorded (`HW-01`, `HW-02` `RESOLVED`) |
 | GPS via STM32 bridge | NEO-M8N → STM32 `Serial1` → `Bridge.call("get_gps_data")` → Linux | `VERIFIED — SOFTWARE` + `VERIFIED — BENCH` | `bridge_gps.py` parses the sketch's telemetry CSV; module verified standalone |
 | GPS device node on the UNO Q | Direct UART to the QRB2210 | `PENDING HARDWARE` | `HW-03` — the node the QRB2210 exposes is unconfirmed |

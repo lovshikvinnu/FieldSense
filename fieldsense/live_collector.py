@@ -112,7 +112,7 @@ def collect_samples(
             "board rail), that RS485 A/B are not swapped, that the 12 V ground "
             "is tied to board ground, and that {} exists.\n"
             "Isolate the link before suspecting software:\n"
-            "  python3 \"hardware_test/soil sensor/rs485_probe_sweep.py\" --port {}".format(
+            "  python3 \"hardware/soil-probe/rs485_probe_sweep.py\" --port {}".format(
                 source, type(exc).__name__, exc, sensor_port, sensor_port)
         ) from exc
 

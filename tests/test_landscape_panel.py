@@ -17,8 +17,8 @@ import pytest
 from fieldsense.field.panel import ACTION_LINES
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEPLOYED = os.path.join(REPO_ROOT, "hardware_test", "fieldsense_unoq", "fieldsense_unoq.ino")
-DISPLAY_ONLY = os.path.join(REPO_ROOT, "hardware_test", "TFT_UNOQ", "dashboard", "dashboard.ino")
+DEPLOYED = os.path.join(REPO_ROOT, "firmware", "unoq", "fieldsense_unoq.ino")
+DISPLAY_ONLY = os.path.join(REPO_ROOT, "hardware", "tft-unoq", "dashboard", "dashboard.ino")
 SKETCHES = (DEPLOYED, DISPLAY_ONLY)
 
 # Adafruit_GFX's built-in font, which both sketches use.

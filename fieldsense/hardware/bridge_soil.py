@@ -10,7 +10,7 @@ only one of them had a Python consumer:
         handled HERE
 
 The second wiring is the one the bench sketch in
-`hardware_test/soil sensor with Max485-RS485 UNO Q/sketch.ino` verified. The
+`hardware/soil-probe-unoq/sketch.ino` verified. The
 STM32 owns the RS485 direction pin because Linux cannot meet the turnaround
 deadline, publishes the decoded reading as a JSON string, and exposes it as
 the Bridge method `get_soil_data`. Without this module that reading could not

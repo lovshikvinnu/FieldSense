@@ -544,3 +544,123 @@ def test_the_result_screen_shows_samples_stored_not_the_next_index(tmp_path):
     summary = workflow_summary(session)
     assert summary["sample_index"] == 5
     assert summary["planned_samples"] == 5
+
+
+# ------------------------------------------------- screen-only operator UI
+
+def test_a_rejected_sample_says_retry_not_the_ordinary_prompt(tmp_path):
+    """A RETRY returns to READY, which used to look identical to normal.
+
+    The operator would press again, be rejected again, and have nothing on the
+    glass explaining the loop - the reason sat in a quality field they have no
+    cause to read.
+    """
+    session = make_session(tmp_path, planned=5)
+    session.boot_complete()
+    session.start_measurement()
+    outcome = session.record_measurement(soil=AIR, gps=fix(), validation_state="VALID")
+
+    assert not outcome.accepted
+    assert session.state is FieldState.READY
+    assert workflow_summary(session)["action_line"] == "RESEAT PROBE - RETRY SAMPLE 1"
+
+
+def test_the_retry_prompt_names_the_sample_being_retaken(tmp_path):
+    """It must not imply the operator has advanced."""
+    session = make_session(tmp_path, planned=5)
+    session.boot_complete()
+    session.start_measurement()
+    session.record_measurement(soil=SOIL, gps=fix(), validation_state="VALID")
+    session.advance()
+    session.start_measurement()
+    session.record_measurement(soil=AIR, gps=fix(lat=17.5701), validation_state="VALID")
+
+    summary = workflow_summary(session)
+    assert summary["action_line"] == "RESEAT PROBE - RETRY SAMPLE 2"
+    assert summary["sample_index"] == 2
+
+
+def test_an_accepted_sample_clears_the_retry_prompt(tmp_path):
+    session = make_session(tmp_path, planned=5)
+    session.boot_complete()
+    session.start_measurement()
+    session.record_measurement(soil=AIR, gps=fix(), validation_state="VALID")
+    assert "RETRY" in workflow_summary(session)["action_line"]
+
+    session.start_measurement()
+    session.record_measurement(soil=SOIL, gps=fix(), validation_state="VALID")
+    session.advance()
+    assert "RETRY" not in workflow_summary(session)["action_line"]
+
+
+def test_the_result_screen_offers_a_new_run(tmp_path):
+    """The session is over; the only useful instruction is how to start another."""
+    session = make_session(tmp_path, planned=2)
+    session.boot_complete()
+    for step in range(2):
+        session.start_measurement()
+        session.record_measurement(soil=dict(SOIL, moisture=30.0 + step),
+                                   gps=fix(lat=17.5697 + step * 0.0004),
+                                   validation_state="VALID")
+        session.advance()
+    session.complete_processing({})
+
+    summary = workflow_summary(session)
+    assert summary["action_line"] == "COMPLETE - TAP FOR NEW RUN"
+    assert summary["sample_index"] == 2
+    assert summary["planned_samples"] == 2
+
+
+def test_every_state_still_yields_a_renderable_instruction():
+    """Including the two conditional variants."""
+    from fieldsense.field.panel import action_line
+
+    for state in FieldState:
+        for retrying in (False, True):
+            for done in (False, True):
+                text = action_line(state, 3, 5, retrying=retrying,
+                                   session_complete=done)
+                assert text and "{" not in text
+
+
+def test_the_panel_reports_every_number_the_operator_needs(tmp_path):
+    """Sample number, stored count, sites, and state - all four on one record."""
+    session = make_session(tmp_path, planned=5)
+    session.boot_complete()
+    for step in range(2):
+        session.start_measurement()
+        session.record_measurement(soil=dict(SOIL, moisture=30.0 + step),
+                                   gps=fix(lat=17.5697 + step * 0.0006),
+                                   validation_state="VALID")
+        session.advance()
+
+    summary = workflow_summary(session)
+    assert summary["sample_index"] == 3
+    assert summary["planned_samples"] == 5
+    assert summary["total_samples"] == 2
+    assert summary["distinct_locations"] == 2
+    assert summary["workflow_state"] == "READY_NEXT_SAMPLE"
+
+    record = build_panel_record(summary).decode("ascii")
+    for key in ("i=3", "m=5", "n=2", "d=2", "t=READY_NEXT_SAMPLE"):
+        assert key in record
+
+
+def test_the_index_never_exceeds_the_planned_count_on_screen(tmp_path):
+    """No SAMPLE 6/5, in any state, at any point in a full session."""
+    session = make_session(tmp_path, planned=5)
+    session.boot_complete()
+    seen = []
+    for step in range(5):
+        session.start_measurement()
+        seen.append(workflow_summary(session)["sample_index"])
+        session.record_measurement(soil=dict(SOIL, moisture=30.0 + step),
+                                   gps=fix(lat=17.5697 + step * 0.0004),
+                                   validation_state="VALID")
+        seen.append(workflow_summary(session)["sample_index"])
+        session.advance()
+        seen.append(workflow_summary(session)["sample_index"])
+    session.complete_processing({})
+    seen.append(workflow_summary(session)["sample_index"])
+
+    assert max(seen) <= 5, "index exceeded the planned count: {}".format(seen)
