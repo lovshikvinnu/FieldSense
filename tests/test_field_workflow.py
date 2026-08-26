@@ -390,7 +390,8 @@ def test_the_workflow_record_reaches_the_wire_intact(tmp_path):
     record = build_panel_record(workflow_summary(session, soil=SOIL)).decode("ascii")
     assert record.startswith("FS|")
     assert "t=READY" in record and "m=5" in record and "i=1" in record
-    assert "a=PLACE PROBE - PRESS START" in record
+    assert "a=PLACE PROBE IN SOIL" in record
+    assert "b=START SAMPLE" in record
     assert "w=31.20" in record
 
 
@@ -562,7 +563,11 @@ def test_a_rejected_sample_says_retry_not_the_ordinary_prompt(tmp_path):
 
     assert not outcome.accepted
     assert session.state is FieldState.READY
-    assert workflow_summary(session)["action_line"] == "RESEAT PROBE - RETRY SAMPLE 1"
+    summary = workflow_summary(session)
+    # The teaser names the physical cause; the button names the act. Splitting
+    # them is what let both shrink to something readable outdoors.
+    assert summary["action_line"] == "RE-SEAT PROBE IN SOIL"
+    assert summary["button_label"] == "RETRY"
 
 
 def test_the_retry_prompt_names_the_sample_being_retaken(tmp_path):
@@ -576,7 +581,9 @@ def test_the_retry_prompt_names_the_sample_being_retaken(tmp_path):
     session.record_measurement(soil=AIR, gps=fix(lat=17.5701), validation_state="VALID")
 
     summary = workflow_summary(session)
-    assert summary["action_line"] == "RESEAT PROBE - RETRY SAMPLE 2"
+    assert summary["action_line"] == "RE-SEAT PROBE IN SOIL"
+    assert summary["button_label"] == "RETRY"
+    # The counter still has to say which sample is being retaken.
     assert summary["sample_index"] == 2
 
 
@@ -585,12 +592,12 @@ def test_an_accepted_sample_clears_the_retry_prompt(tmp_path):
     session.boot_complete()
     session.start_measurement()
     session.record_measurement(soil=AIR, gps=fix(), validation_state="VALID")
-    assert "RETRY" in workflow_summary(session)["action_line"]
+    assert workflow_summary(session)["button_label"] == "RETRY"
 
     session.start_measurement()
     session.record_measurement(soil=SOIL, gps=fix(), validation_state="VALID")
     session.advance()
-    assert "RETRY" not in workflow_summary(session)["action_line"]
+    assert workflow_summary(session)["button_label"] != "RETRY"
 
 
 def test_the_result_screen_offers_a_new_run(tmp_path):
@@ -606,7 +613,8 @@ def test_the_result_screen_offers_a_new_run(tmp_path):
     session.complete_processing({})
 
     summary = workflow_summary(session)
-    assert summary["action_line"] == "COMPLETE - TAP FOR NEW RUN"
+    assert summary["action_line"] == "FIELD RESULT READY"
+    assert summary["button_label"] == "NEW RUN"
     assert summary["sample_index"] == 2
     assert summary["planned_samples"] == 2
 
@@ -664,3 +672,98 @@ def test_the_index_never_exceeds_the_planned_count_on_screen(tmp_path):
     seen.append(workflow_summary(session)["sample_index"])
 
     assert max(seen) <= 5, "index exceeded the planned count: {}".format(seen)
+
+
+# --------------------------------------------- visual-first panel elements
+
+
+def test_the_progress_strip_tracks_stored_samples(tmp_path):
+    """It reads the records on disk, so it cannot drift from what was saved."""
+    from fieldsense.field.panel import progress_segments
+
+    session = make_session(tmp_path, planned=5)
+    session.boot_complete()
+    assert progress_segments(session) == "R----"
+
+    session.start_measurement()
+    session.record_measurement(soil=SOIL, gps=fix(), validation_state="VALID")
+    assert progress_segments(session) == "V----"
+
+    session.advance()
+    assert progress_segments(session) == "VR---"
+
+
+def test_a_flagged_sample_lights_amber_not_green(tmp_path):
+    """A stored-but-suspicious sample must not read as a completed one."""
+    from fieldsense.field.panel import progress_segments
+
+    session = make_session(tmp_path, planned=3)
+    session.boot_complete()
+    session.start_measurement()
+    session.record_measurement(
+        soil=dict(SOIL, nitrogen=0.0, phosphorus=0.0, potassium=0.0),
+        gps=fix(), validation_state="VALID")
+    session.advance()
+    assert progress_segments(session)[0] == "S"
+
+
+def test_the_strip_is_always_exactly_the_planned_length(tmp_path):
+    from fieldsense.field.panel import progress_segments
+
+    for planned in (3, 5, 8):
+        session = make_session(tmp_path / str(planned), planned=planned)
+        session.boot_complete()
+        assert len(progress_segments(session)) == planned
+
+
+def test_the_button_names_the_action_not_the_state(tmp_path):
+    from fieldsense.field.panel import button_label
+
+    assert button_label(FieldState.READY) == "START SAMPLE"
+    assert button_label(FieldState.READY_NEXT_SAMPLE) == "NEXT SITE"
+    assert button_label(FieldState.READY, retrying=True) == "RETRY"
+    assert button_label(FieldState.RESULT) == "NEW RUN"
+
+
+def test_there_is_no_button_while_the_device_is_busy(tmp_path):
+    """An absent button says "wait" and removes any target to press by mistake."""
+    from fieldsense.field.panel import button_label
+
+    for state in (FieldState.MEASURING, FieldState.PROCESSING,
+                  FieldState.SAMPLE_SAVED, FieldState.BOOT):
+        assert button_label(state) == ""
+
+
+def test_the_retry_teaser_names_the_physical_cause(tmp_path):
+    """'RETRY' alone does not tell an operator what to change."""
+    session = make_session(tmp_path, planned=5)
+    session.boot_complete()
+    session.start_measurement()
+    session.record_measurement(soil=AIR, gps=fix(), validation_state="VALID")
+
+    summary = workflow_summary(session)
+    assert summary["action_line"] == "RE-SEAT PROBE IN SOIL"
+    assert summary["button_label"] == "RETRY"
+
+
+def test_the_visual_fields_reach_the_wire(tmp_path):
+    session = make_session(tmp_path, planned=5)
+    session.boot_complete()
+    record = build_panel_record(
+        workflow_summary(session, extra={"zone_statuses": "GAR"})).decode("ascii")
+    assert "b=START SAMPLE" in record
+    assert "g=R----" in record
+    assert "u=GAR" in record
+
+
+def test_the_record_still_fits_the_firmware_line_buffer(tmp_path):
+    """lineBuf is 256 bytes; an overlong line is dropped whole."""
+    session = make_session(tmp_path, planned=8)
+    session.boot_complete()
+    session.start_measurement()
+    session.record_measurement(soil=SOIL, gps=fix(), validation_state="VALID")
+    summary = workflow_summary(
+        session, soil=SOIL, field_name="A" * 23,
+        extra={"zone_statuses": "GARGARGA", "evidence_level": "LIMITED",
+               "soil_health_status": "MODERATE", "soil_health_score": 0.67})
+    assert len(build_panel_record(summary)) < 256

@@ -406,6 +406,14 @@ PANEL_RECORD_FIELDS = (
     ("x", "nitrogen"),
     ("y", "phosphorus"),
     ("j", "potassium"),
+    # --- visual-first UI --------------------------------------------------
+    # The panel is read outdoors, at arm's length, by someone holding a probe.
+    # These three carry the parts of that design a text field cannot: what the
+    # single control does right now, how far through the run the operator is,
+    # and which zones need attention.
+    ("b", "button_label"),        # full-width action button, empty when busy
+    ("g", "progress_segments"),   # one char per planned sample: V S R -
+    ("u", "zone_statuses"),       # one char per zone: G A R ?
 )
 
 # arduino-router re-exposes the MCU Monitor stream here. Not a tty: the daemon

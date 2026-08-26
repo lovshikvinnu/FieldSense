@@ -208,9 +208,16 @@ static const uint16_t COL_BG     = 0x0861;
 static const uint16_t COL_CARD   = 0x18E3;
 static const uint16_t COL_TEXT   = ST77XX_WHITE;
 static const uint16_t COL_DIM    = 0x8410;
-static const uint16_t COL_GOOD   = 0x07E0;
-static const uint16_t COL_WARN   = 0xFD20;
-static const uint16_t COL_BAD    = 0xF800;
+// Traffic-light palette, RGB565 of the specified sRGB values. Pure 0x07E0
+// green and 0xF800 red were the driver's primaries, not design choices - they
+// read as neon indoors and wash out in sunlight. These are the Material tones
+// the rest of the product uses.
+static const uint16_t COL_GOOD   = 0x072E;   // #00E676 optimal / valid / ready
+static const uint16_t COL_GOOD_D = 0x4D6A;   // #4CAF50 dimmer green, for fills
+static const uint16_t COL_WARN   = 0xFCC0;   // #FF9800 moderate / re-seat / jitter
+static const uint16_t COL_WARN_D = 0xFD80;   // #FFB300
+static const uint16_t COL_BAD    = 0xFA8A;   // #FF5252 poor / air probe / error
+static const uint16_t COL_BAD_D  = 0xF206;   // #F44336
 static const uint16_t COL_ACCENT = 0x05FF;
 
 Adafruit_ST7789 tft = Adafruit_ST7789(&SPI, TFT_CS, TFT_DC, TFT_RST);
@@ -227,17 +234,23 @@ Adafruit_ST7789 tft = Adafruit_ST7789(&SPI, TFT_CS, TFT_DC, TFT_RST);
 //   108          SOIL      moisture / pH / EC / N / P / K         70
 //   182          BAR       START target, or the field result      58
 //
-static const int16_t HEADER_Y   = 0,   HEADER_H = 26;
-static const int16_t GPS_Y      = 30,  GPS_H    = 22;
-static const int16_t ACTION_Y   = 56,  ACTION_H = 48;
-static const int16_t SOIL_Y     = 108, SOIL_H   = 70;
+static const int16_t HEADER_Y   = 0,   HEADER_H = 30;
+static const int16_t PROG_Y     = 33,  PROG_H   = 13;
+static const int16_t GPS_Y      = 49,  GPS_H    = 16;
+static const int16_t ACTION_Y   = 68,  ACTION_H = 48;
+static const int16_t SOIL_Y     = 120, SOIL_H   = 58;
 static const int16_t BAR_Y      = 182, BAR_H    = 58;
 static const int16_t MARGIN     = 6;
 
 // Two columns inside the soil card, and four label/value rows in each.
 static const int16_t SOIL_COL_A = MARGIN + 8;
 static const int16_t SOIL_COL_B = PANEL_W / 2 + 6;
-static const int16_t SOIL_ROW_H = 15;
+static const int16_t SOIL_ROW_H = 13;
+
+// One tile per planned sample, drawn across PROG_Y. Width is computed from the
+// count the host sends rather than fixed at five, so changing SAMPLES does not
+// silently leave the strip wrong.
+static const int16_t PROG_GAP   = 4;
 
 // ------------------------------------------------------------- panel state
 
@@ -247,6 +260,9 @@ static char     evidence[16]    = "-";
 static char     workflowState[20] = "BOOT";
 static char     actionLine[40]  = "STARTING";
 static char     lastQuality[14] = "";
+static char     buttonLabel[20]  = "";   // empty means the device is busy
+static char     progressSegments[12] = "";  // one char per planned sample
+static char     zoneStatuses[12] = "";   // one char per zone: G A R ?
 static float    healthScore     = -1.0f;   // negative means "never received"
 static int32_t  totalSamples    = -1;
 static int32_t  validSamples    = -1;
@@ -297,6 +313,9 @@ static void applyPair(const char *key, const char *value) {
   else if (!strcmp(key, "t")) copyField(workflowState, sizeof(workflowState), value);
   else if (!strcmp(key, "a")) copyField(actionLine, sizeof(actionLine), value);
   else if (!strcmp(key, "q")) copyField(lastQuality, sizeof(lastQuality), value);
+  else if (!strcmp(key, "b")) copyField(buttonLabel, sizeof(buttonLabel), value);
+  else if (!strcmp(key, "g")) copyField(progressSegments, sizeof(progressSegments), value);
+  else if (!strcmp(key, "u")) copyField(zoneStatuses, sizeof(zoneStatuses), value);
   else if (!strcmp(key, "h")) healthScore     = atof(value);
   else if (!strcmp(key, "n")) totalSamples    = atol(value);
   else if (!strcmp(key, "v")) validSamples    = atol(value);
@@ -1092,43 +1111,9 @@ static void putValue(int16_t x, int16_t y, int16_t w, int16_t h,
 //
 // The split below is the whole fix: chrome once, values per update.
 
-// Static chrome: background, title, card shapes, fixed labels. Drawn once.
-static void renderChrome() {
-  tft.fillScreen(COL_BG);
-
-  // Header band
-  tft.fillRect(0, HEADER_Y, PANEL_W, HEADER_H, COL_CARD);
-  label(MARGIN + 2, 5, "FIELDSENSE", COL_ACCENT, 2);
-  tft.drawFastHLine(0, HEADER_H, PANEL_W, COL_DIM);
-
-  // Soil card and its fixed labels. Two columns, because 320 px of width is
-  // the whole reason this layout exists.
-  tft.fillRoundRect(MARGIN, SOIL_Y, PANEL_W - 2 * MARGIN, SOIL_H, 4, COL_CARD);
-  label(SOIL_COL_A, SOIL_Y + 6,                   "MOISTURE", COL_DIM, 1);
-  label(SOIL_COL_A, SOIL_Y + 6 + SOIL_ROW_H,      "PH",       COL_DIM, 1);
-  label(SOIL_COL_A, SOIL_Y + 6 + SOIL_ROW_H * 2,  "EC",       COL_DIM, 1);
-  label(SOIL_COL_B, SOIL_Y + 6,                   "N",        COL_DIM, 1);
-  label(SOIL_COL_B, SOIL_Y + 6 + SOIL_ROW_H,      "P",        COL_DIM, 1);
-  label(SOIL_COL_B, SOIL_Y + 6 + SOIL_ROW_H * 2,  "K",        COL_DIM, 1);
-  label(SOIL_COL_A, SOIL_Y + 6 + SOIL_ROW_H * 3,  "SAMPLES",  COL_DIM, 1);
-  label(SOIL_COL_B, SOIL_Y + 6 + SOIL_ROW_H * 3,  "SITES",    COL_DIM, 1);
-}
-
-// The bottom bar changes shape, not just contents: a green START target when
-// the workflow is armed, a flat strip otherwise. Redrawing that shape is the
-// only chrome change after boot, and it happens on a state edge rather than on
-// every repaint so it cannot reintroduce the wipe.
-static void renderBarChrome(bool asButton) {
-  if (asButton) {
-    tft.fillRoundRect(MARGIN, BAR_Y, PANEL_W - 2 * MARGIN, BAR_H - 2, 6, COL_GOOD);
-    tft.drawRoundRect(MARGIN, BAR_Y, PANEL_W - 2 * MARGIN, BAR_H - 2, 6, COL_TEXT);
-  } else {
-    tft.fillRoundRect(MARGIN, BAR_Y, PANEL_W - 2 * MARGIN, BAR_H - 2, 6, COL_CARD);
-  }
-  barIsButton = asButton;
-  barShapeKnown = true;
-}
-
+// Draw one value into its own cleared box. Width is generous enough for the
+// longest value each field can hold, so a shrinking number cannot leave the
+// tail of the previous one behind it.
 static void putFloat(int16_t x, int16_t y, int16_t w, float value,
                      uint8_t decimals, uint16_t colour) {
   putValue(x, y, w, CHAR_H, COL_CARD, colour, 1);
@@ -1148,140 +1133,278 @@ static void putInt(int16_t x, int16_t y, int16_t w, int32_t value, uint16_t colo
   }
 }
 
-// Everything that can change. Called on new data, and once a second so the age
-// counter stays truthful.
-static void renderValues() {
-  char buf[48];
-
-  // Header right: which sample, out of how many. The counter an operator
-  // checks before deciding whether to walk on.
-  putValue(PANEL_W - 150, 5, 144, CHAR_H * 2, COL_CARD, COL_TEXT, 2);
-  if (sampleIndex > 0 && plannedSamples > 0) {
-    snprintf(buf, sizeof(buf), "SAMPLE %ld/%ld", (long)sampleIndex, (long)plannedSamples);
-    int16_t width = (int16_t)(strlen(buf) * CHAR_W * 2);
-    tft.setCursor(PANEL_W - MARGIN - 2 - width, 5);
-    tft.print(buf);
+// Colour for one progress-strip character.
+//
+//   V a stored VALID sample     S stored but flagged      R being taken now
+//   -  not yet reached
+//
+// S and R are both amber deliberately: from the operator's side they mean the
+// same thing - that tile is not finished business - and inventing a fourth
+// colour for the difference would cost more than it explains at arm's length.
+static uint16_t segmentColour(char code) {
+  switch (code) {
+    case 'V': return COL_GOOD;
+    case 'S': return COL_WARN;
+    case 'R': return COL_WARN_D;
+    default:  return COL_CARD;
   }
+}
 
-  // GPS strip. Fix state, satellites and HDOP come straight from this sketch's
-  // own GGA parse - the host is never asked to tell the panel what the receiver
-  // attached to this MCU is doing.
-  putValue(MARGIN, GPS_Y, PANEL_W - 2 * MARGIN, CHAR_H, COL_BG, COL_DIM, 1);
-  bool haveFix = (strncmp(latest_gps_csv.c_str(), "FIX_OK", 6) == 0);
-  tft.setTextColor(haveFix ? COL_GOOD : COL_WARN);
-  tft.print(haveFix ? "GPS FIX" : "GPS SEARCHING");
-  tft.setTextColor(COL_DIM);
-  tft.print("   SAT ");
-  tft.print(gpsSatsText());
-  tft.print("   HDOP ");
-  tft.print(gpsHdopText());
-
-  // Link freshness - always honest about it.
-  bool everReceived = recordCount > 0;
-  uint32_t ageS = everReceived ? (millis() - lastRecordMs) / 1000 : 0;
-  if (!everReceived) {
-    snprintf(buf, sizeof(buf), "NO HOST");
-  } else {
-    snprintf(buf, sizeof(buf), "%lus #%lu", (unsigned long)ageS, (unsigned long)recordCount);
+// Traffic-light colour for one zone letter from the host's grid string.
+static uint16_t zoneColour(char code) {
+  switch (code) {
+    case 'G': return COL_GOOD;
+    case 'A': return COL_WARN;
+    case 'R': return COL_BAD;
+    default:  return COL_DIM;    // '?' - a status word this panel does not know
   }
-  int16_t linkW = (int16_t)(strlen(buf) * CHAR_W);
-  putValue(PANEL_W - MARGIN - linkW, GPS_Y, linkW, CHAR_H, COL_BG,
-           everReceived ? (ageS > 30 ? COL_WARN : COL_DIM) : COL_WARN, 1);
-  tft.print(buf);
+}
 
-  // Session label, small, above the instruction.
-  tft.fillRect(MARGIN, GPS_Y + 11, PANEL_W - 2 * MARGIN, CHAR_H, COL_BG);
-  drawClipped(MARGIN, GPS_Y + 11, PANEL_W - 2 * MARGIN, fieldName, COL_DIM, 1);
+// The step bar: one tile per planned sample, across the full width.
+//
+// Reads its length from the host's string rather than assuming five, so a
+// session configured for a different sample count still draws a correct strip.
+static void renderProgress() {
+  size_t count = strlen(progressSegments);
+  tft.fillRect(MARGIN, PROG_Y, PANEL_W - 2 * MARGIN, PROG_H, COL_BG);
+  if (count == 0) {
+    return;
+  }
+  int16_t span = PANEL_W - 2 * MARGIN;
+  int16_t tile = (int16_t)((span - (int16_t)(count - 1) * PROG_GAP) / (int16_t)count);
+  if (tile < 4) tile = 4;
+  int16_t x = MARGIN;
+  for (size_t i = 0; i < count; i++) {
+    tft.fillRoundRect(x, PROG_Y, tile, PROG_H, 3, segmentColour(progressSegments[i]));
+    x += tile + PROG_GAP;
+  }
+}
 
-  // THE INSTRUCTION. The largest thing on the panel, and the only thing an
-  // operator reads while walking.
-  tft.fillRect(MARGIN, ACTION_Y, PANEL_W - 2 * MARGIN, ACTION_H, COL_BG);
-  uint16_t actionColour = COL_TEXT;
-  if (!strcmp(workflowState, "ERROR"))              actionColour = COL_BAD;
-  else if (!strcmp(workflowState, "MEASURING"))     actionColour = COL_ACCENT;
-  else if (!strcmp(workflowState, "SAMPLE_SAVED"))  actionColour = COL_GOOD;
-  else if (!strcmp(workflowState, "PROCESSING"))    actionColour = COL_ACCENT;
-  drawCentered(MARGIN, ACTION_Y, PANEL_W - 2 * MARGIN, ACTION_H,
-               actionLine, actionColour, 3);
+// The result view's zone map: one coloured tile per zone.
+//
+// This is the interpolated field reduced to the only thing readable outdoors -
+// which areas are fine and which are not. It draws exactly the statuses the
+// zone engine produced; the ordering matches the zone list, so tile n is
+// zone n in the written report.
+static void renderZoneGrid(int16_t x, int16_t y, int16_t w, int16_t h) {
+  size_t count = strlen(zoneStatuses);
+  tft.fillRect(x, y, w, h, COL_CARD);
+  if (count == 0) {
+    label(x, y + (h - CHAR_H) / 2, "NO ZONES", COL_DIM, 1);
+    return;
+  }
+  // Lay out in up to two rows so a long zone list stays legible rather than
+  // shrinking to slivers.
+  size_t perRow = count > 4 ? (count + 1) / 2 : count;
+  size_t rows = (count + perRow - 1) / perRow;
+  int16_t gap = 3;
+  int16_t tileW = (int16_t)((w - (int16_t)(perRow - 1) * gap) / (int16_t)perRow);
+  int16_t tileH = (int16_t)((h - (int16_t)(rows - 1) * gap) / (int16_t)rows);
+  if (tileW < 4) tileW = 4;
+  if (tileH < 4) tileH = 4;
 
-  // Soil card values, two columns.
-  int16_t vA = SOIL_COL_A + 64, vB = SOIL_COL_B + 22;
-  putFloat(vA, SOIL_Y + 6,                  60, soilMoisture, 1, COL_TEXT);
+  for (size_t i = 0; i < count; i++) {
+    size_t row = i / perRow, col = i % perRow;
+    tft.fillRoundRect(x + (int16_t)col * (tileW + gap),
+                      y + (int16_t)row * (tileH + gap),
+                      tileW, tileH, 2, zoneColour(zoneStatuses[i]));
+  }
+}
+
+// Three-band health scale with a marker at the score.
+//
+// The bar is always green|amber|red left to right; the marker says where this
+// field sits on it. That is readable at a glance in a way a bare percentage is
+// not, and it does not restate the number - it places it.
+static void renderHealthScale(int16_t x, int16_t y, int16_t w, int16_t h) {
+  int16_t band = w / 3;
+  tft.fillRect(x, y, band, h, COL_BAD);
+  tft.fillRect(x + band, y, band, h, COL_WARN);
+  tft.fillRect(x + 2 * band, y, w - 2 * band, h, COL_GOOD);
+  if (healthScore >= 0.0f) {
+    float clamped = healthScore < 0.0f ? 0.0f : (healthScore > 1.0f ? 1.0f : healthScore);
+    int16_t mx = x + (int16_t)((w - 3) * clamped);
+    tft.fillRect(mx, y - 3, 3, h + 6, COL_TEXT);
+  }
+}
+
+// Static chrome: background, title, card shapes, fixed labels. Drawn once.
+static void renderChrome() {
+  tft.fillScreen(COL_BG);
+
+  // Header band: product mark left, the sample counter right at size 3.
+  tft.fillRect(0, HEADER_Y, PANEL_W, HEADER_H, COL_CARD);
+  label(MARGIN + 2, 7, "FIELDSENSE", COL_ACCENT, 2);
+  tft.drawFastHLine(0, HEADER_H, PANEL_W, COL_DIM);
+
+  // The middle card is drawn per-state by renderValues, because the sampling
+  // view and the result view are different shapes rather than the same shape
+  // with different numbers.
+  barShapeKnown = false;
+}
+
+// Sampling view: the live probe channels, two columns.
+static void renderSoilCard() {
+  tft.fillRoundRect(MARGIN, SOIL_Y, PANEL_W - 2 * MARGIN, SOIL_H, 4, COL_CARD);
+  label(SOIL_COL_A, SOIL_Y + 5,                  "MOISTURE", COL_DIM, 1);
+  label(SOIL_COL_A, SOIL_Y + 5 + SOIL_ROW_H,     "PH",       COL_DIM, 1);
+  label(SOIL_COL_A, SOIL_Y + 5 + SOIL_ROW_H * 2, "EC",       COL_DIM, 1);
+  label(SOIL_COL_B, SOIL_Y + 5,                  "N",        COL_DIM, 1);
+  label(SOIL_COL_B, SOIL_Y + 5 + SOIL_ROW_H,     "P",        COL_DIM, 1);
+  label(SOIL_COL_B, SOIL_Y + 5 + SOIL_ROW_H * 2, "K",        COL_DIM, 1);
+  label(SOIL_COL_A, SOIL_Y + 5 + SOIL_ROW_H * 3, "SAMPLES",  COL_DIM, 1);
+  label(SOIL_COL_B, SOIL_Y + 5 + SOIL_ROW_H * 3, "SITES",    COL_DIM, 1);
+
+  int16_t vA = SOIL_COL_A + 62, vB = SOIL_COL_B + 22;
+  putFloat(vA, SOIL_Y + 5,                  56, soilMoisture, 1, COL_TEXT);
   if (soilMoisture >= 0.0f) tft.print("%");
-  putFloat(vA, SOIL_Y + 6 + SOIL_ROW_H,     60, soilPh,       2, COL_TEXT);
-  putFloat(vA, SOIL_Y + 6 + SOIL_ROW_H * 2, 60, soilEc,       2, COL_TEXT);
-  putInt(vB, SOIL_Y + 6,                    60, soilN, COL_TEXT);
-  putInt(vB, SOIL_Y + 6 + SOIL_ROW_H,       60, soilP, COL_TEXT);
-  putInt(vB, SOIL_Y + 6 + SOIL_ROW_H * 2,   60, soilK, COL_TEXT);
+  putFloat(vA, SOIL_Y + 5 + SOIL_ROW_H,     56, soilPh,       2, COL_TEXT);
+  putFloat(vA, SOIL_Y + 5 + SOIL_ROW_H * 2, 56, soilEc,       2, COL_TEXT);
+  putInt(vB, SOIL_Y + 5,                    56, soilN, COL_TEXT);
+  putInt(vB, SOIL_Y + 5 + SOIL_ROW_H,       56, soilP, COL_TEXT);
+  putInt(vB, SOIL_Y + 5 + SOIL_ROW_H * 2,   56, soilK, COL_TEXT);
 
-  // Stored samples, and how many of them are far enough apart to be separate
-  // places. The second number is the honest denominator for any spatial claim,
-  // so it gets its own value column rather than the shared one: "SITES" is five
-  // characters where N/P/K are one, and at the shared offset the value box
-  // clipped the label's last letter to "SITE" on the glass.
-  putValue(vA, SOIL_Y + 6 + SOIL_ROW_H * 3, 60, CHAR_H, COL_CARD, COL_TEXT, 1);
+  putValue(vA, SOIL_Y + 5 + SOIL_ROW_H * 3, 56, CHAR_H, COL_CARD, COL_TEXT, 1);
   if (totalSamples < 0) {
     tft.print("--");
   } else {
     tft.print(totalSamples);
     if (validSamples >= 0) { tft.print(" OK "); tft.print(validSamples); }
   }
-  putInt(SOIL_COL_B + 40, SOIL_Y + 6 + SOIL_ROW_H * 3, 42, distinctLocs, COL_TEXT);
+  putInt(SOIL_COL_B + 40, SOIL_Y + 5 + SOIL_ROW_H * 3, 42, distinctLocs, COL_TEXT);
+}
 
-  // Bottom bar. Shape follows the workflow; contents follow the state.
-  bool wantButton = workflowArmed();
+// Result view: the score, its status badge, the scale, and the zone map.
+static void renderResultCard() {
+  tft.fillRoundRect(MARGIN, SOIL_Y, PANEL_W - 2 * MARGIN, SOIL_H, 4, COL_CARD);
+
+  // Score, large. The one number a farmer reads first.
+  char pct[8];
+  if (healthScore >= 0.0f) {
+    snprintf(pct, sizeof(pct), "%d%%", (int)(healthScore * 100.0f + 0.5f));
+  } else {
+    snprintf(pct, sizeof(pct), "--");
+  }
+  label(SOIL_COL_A, SOIL_Y + 6, pct, statusColour(), 3);
+
+  // Status badge, filled in the same traffic-light colour.
+  int16_t badgeW = (int16_t)(strlen(statusText) * CHAR_W + 10);
+  if (badgeW > 108) badgeW = 108;
+  tft.fillRoundRect(SOIL_COL_A, SOIL_Y + 34, badgeW, 14, 3, statusColour());
+  drawClipped(SOIL_COL_A + 5, SOIL_Y + 38, badgeW - 10, statusText, COL_BG, 1);
+
+  // Where that score sits on a green/amber/red scale.
+  renderHealthScale(SOIL_COL_A, SOIL_Y + 26, 108, 5);
+
+  // Zone map on the right half.
+  label(PANEL_W / 2 + 6, SOIL_Y + 4, "ZONES", COL_DIM, 1);
+  renderZoneGrid(PANEL_W / 2 + 6, SOIL_Y + 15, PANEL_W / 2 - 6 - MARGIN - 6, SOIL_H - 20);
+}
+
+// The bottom bar is the single touch target. Green and full width when there
+// is something to press; a flat state strip when the device is busy, so there
+// is no target to press by mistake.
+static void renderBarChrome(bool asButton) {
+  if (asButton) {
+    tft.fillRoundRect(MARGIN, BAR_Y, PANEL_W - 2 * MARGIN, BAR_H - 2, 8, COL_GOOD_D);
+    tft.drawRoundRect(MARGIN, BAR_Y, PANEL_W - 2 * MARGIN, BAR_H - 2, 8, COL_GOOD);
+  } else {
+    tft.fillRoundRect(MARGIN, BAR_Y, PANEL_W - 2 * MARGIN, BAR_H - 2, 8, COL_CARD);
+  }
+  barIsButton = asButton;
+  barShapeKnown = true;
+}
+
+// Everything that can change. Called on new data, and once a second so the age
+// counter stays truthful.
+static void renderValues() {
+  char buf[48];
+
+  // Header right: the sample counter, large.
+  putValue(PANEL_W - 118, 4, 112, CHAR_H * 3, COL_CARD, COL_TEXT, 3);
+  if (sampleIndex > 0 && plannedSamples > 0) {
+    snprintf(buf, sizeof(buf), "%ld/%ld", (long)sampleIndex, (long)plannedSamples);
+    int16_t width = (int16_t)(strlen(buf) * CHAR_W * 3);
+    tft.setCursor(PANEL_W - MARGIN - 2 - width, 4);
+    tft.print(buf);
+  }
+
+  renderProgress();
+
+  // GPS strip. Fix state, satellites and HDOP come from this sketch's own GGA
+  // parse - the host is never asked what the receiver on this MCU is doing.
+  putValue(MARGIN, GPS_Y, PANEL_W - 2 * MARGIN, CHAR_H, COL_BG, COL_DIM, 1);
+  bool haveFix = (strncmp(latest_gps_csv.c_str(), "FIX_OK", 6) == 0);
+  tft.setTextColor(haveFix ? COL_GOOD : COL_WARN);
+  tft.print(haveFix ? "GPS FIX" : "GPS SEARCHING");
+  tft.setTextColor(COL_DIM);
+  tft.print("  SAT ");
+  tft.print(gpsSatsText());
+  tft.print("  HDOP ");
+  tft.print(gpsHdopText());
+
+  bool everReceived = recordCount > 0;
+  uint32_t ageS = everReceived ? (millis() - lastRecordMs) / 1000 : 0;
+  if (!everReceived) {
+    snprintf(buf, sizeof(buf), "NO HOST");
+  } else {
+    snprintf(buf, sizeof(buf), "%lus", (unsigned long)ageS);
+  }
+  int16_t linkW = (int16_t)(strlen(buf) * CHAR_W);
+  putValue(PANEL_W - MARGIN - linkW, GPS_Y, linkW, CHAR_H, COL_BG,
+           everReceived ? (ageS > 30 ? COL_WARN : COL_DIM) : COL_WARN, 1);
+  tft.print(buf);
+
+  // THE TEASER. One actionable line, as large as it will go.
+  tft.fillRect(MARGIN, ACTION_Y, PANEL_W - 2 * MARGIN, ACTION_H, COL_BG);
+  uint16_t actionColour = COL_TEXT;
+  if (!strcmp(workflowState, "ERROR"))             actionColour = COL_BAD;
+  else if (!strcmp(workflowState, "MEASURING"))    actionColour = COL_ACCENT;
+  else if (!strcmp(workflowState, "SAMPLE_SAVED")) actionColour = COL_GOOD;
+  else if (!strcmp(workflowState, "PROCESSING"))   actionColour = COL_ACCENT;
+  else if (!strcmp(lastQuality, "RETRY"))          actionColour = COL_WARN;
+  drawCentered(MARGIN, ACTION_Y, PANEL_W - 2 * MARGIN, ACTION_H,
+               actionLine, actionColour, 3);
+
+  // Middle card: which view depends on whether the run has produced a result.
+  bool showResult = !strcmp(workflowState, "RESULT");
+  static int8_t lastCardKind = -1;
+  int8_t cardKind = showResult ? 1 : 0;
+  if (cardKind != lastCardKind) {
+    lastCardKind = cardKind;
+    tft.fillRect(MARGIN, SOIL_Y, PANEL_W - 2 * MARGIN, SOIL_H, COL_BG);
+  }
+  if (showResult) {
+    renderResultCard();
+  } else {
+    renderSoilCard();
+  }
+
+  // Bottom bar. A label means there is something to press.
+  bool wantButton = (buttonLabel[0] != '\0');
   if (!barShapeKnown || wantButton != barIsButton) {
     renderBarChrome(wantButton);
   }
 
   if (wantButton) {
-    snprintf(buf, sizeof(buf), "PRESS START");
-    drawCentered(MARGIN, BAR_Y, PANEL_W - 2 * MARGIN, BAR_H - 2, buf, COL_BG, 3);
-  } else if (!strcmp(workflowState, "RESULT")) {
-    tft.fillRect(MARGIN + 2, BAR_Y + 2, PANEL_W - 2 * MARGIN - 4, BAR_H - 6, COL_CARD);
-    label(SOIL_COL_A, BAR_Y + 8, "FIELD STATUS", COL_DIM, 1);
-    // Score bar, which is what reads from a distance.
-    int16_t trackX = PANEL_W / 2 + 10, trackW = PANEL_W / 2 - 10 - MARGIN - 6;
-    // The status is clipped to the space left of the score bar. Every status
-    // this pipeline emits fits, but the host owns this string and a long one
-    // would otherwise run under the bar rather than being cut short.
-    drawClipped(SOIL_COL_A, BAR_Y + 22, trackX - SOIL_COL_A - 6,
-                statusText, statusColour(), 2);
-    tft.fillRect(trackX, BAR_Y + 26, trackW, 10, COL_BG);
-    if (healthScore >= 0.0f) {
-      int16_t fill = (int16_t)(trackW * healthScore);
-      if (fill < 0) fill = 0;
-      if (fill > trackW) fill = trackW;
-      tft.fillRect(trackX, BAR_Y + 26, fill, 10, statusColour());
-      putValue(trackX, BAR_Y + 8, trackW, CHAR_H, COL_CARD, COL_TEXT, 1);
-      tft.print(healthScore, 2);
-      tft.print("  Z");
-      tft.print(zoneCount < 0 ? 0 : zoneCount);
-      tft.print("  A");
-      tft.print(recCount < 0 ? 0 : recCount);
-    }
+    tft.fillRoundRect(MARGIN + 3, BAR_Y + 3, PANEL_W - 2 * MARGIN - 6, BAR_H - 8, 6, COL_GOOD_D);
+    drawCentered(MARGIN, BAR_Y, PANEL_W - 2 * MARGIN, BAR_H - 2, buttonLabel, COL_BG, 3);
   } else {
-    tft.fillRect(MARGIN + 2, BAR_Y + 2, PANEL_W - 2 * MARGIN - 4, BAR_H - 6, COL_CARD);
-    // State token, plus the last sample's quality verdict when there is one.
-    // READY_NEXT_SAMPLE is the longest state at 17 characters; the clip keeps
-    // it off the quality label whatever the host sends.
+    tft.fillRect(MARGIN + 3, BAR_Y + 3, PANEL_W - 2 * MARGIN - 6, BAR_H - 8, COL_CARD);
     int16_t qualityW = (int16_t)(strlen(lastQuality) * CHAR_W);
     int16_t stateW = PANEL_W - MARGIN - 8 - qualityW - SOIL_COL_A - 6;
-    drawClipped(SOIL_COL_A, BAR_Y + 10, stateW, workflowState, COL_ACCENT, 2);
+    drawClipped(SOIL_COL_A, BAR_Y + 12, stateW, workflowState, COL_ACCENT, 2);
     if (lastQuality[0]) {
-      label(PANEL_W - MARGIN - 8 - qualityW, BAR_Y + 14, lastQuality,
+      label(PANEL_W - MARGIN - 8 - qualityW, BAR_Y + 16, lastQuality,
             qualityColour(), 1);
     }
     if (offlineMode == 1) {
-      label(SOIL_COL_A, BAR_Y + 34, "OFFLINE", COL_GOOD, 1);
+      label(SOIL_COL_A, BAR_Y + 36, "OFFLINE", COL_GOOD, 1);
     }
     if (!touchPresent) {
-      // Say so on the glass. A unit whose touch is not answering must not
-      // look identical to one where it is - the operator would keep pressing
-      // a target that does nothing instead of reaching for the board keys.
       const char *note = "NO TOUCH";
       label(PANEL_W - MARGIN - 8 - (int16_t)(strlen(note) * CHAR_W),
-            BAR_Y + 34, note, COL_WARN, 1);
+            BAR_Y + 36, note, COL_WARN, 1);
     }
   }
 }

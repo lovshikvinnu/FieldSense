@@ -14,7 +14,13 @@ import re
 
 import pytest
 
-from fieldsense.field.panel import ACTION_LINES
+from fieldsense.field.panel import (
+    ACTION_LINES,
+    BUTTON_LABELS,
+    RETRY_BUTTON_LABEL,
+    RETRY_TEASER,
+    TEASER_LINES,
+)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEPLOYED = os.path.join(REPO_ROOT, "firmware", "unoq", "fieldsense_unoq.ino")
@@ -226,3 +232,77 @@ def test_the_repo_layout_constants_match_the_ones_these_tests_assume():
     assert _const(source, "CHAR_H") == CHAR_H
     assert _const(source, "ACTION_H") >= CHAR_H * 3, \
         "the action band must be tall enough for size-3 text"
+
+
+# ------------------------------------------------ visual-first UI elements
+
+
+def _every_teaser():
+    """Every guidance line the panel can display, expanded."""
+    lines = [t.format(i=8, m=8) for t in TEASER_LINES.values()]
+    lines.append(RETRY_TEASER.format(i=8, m=8))
+    return lines
+
+
+def _every_button():
+    labels = [b for b in BUTTON_LABELS.values() if b]
+    labels.append(RETRY_BUTTON_LABEL)
+    return labels
+
+
+def test_every_teaser_is_readable_at_arms_length():
+    """Size 1 is 8 px tall and unreadable outdoors.
+
+    'PROBE LOOSE - RE-SEAT IN SOIL' fitted only at size 1 - and it is the line
+    an operator most needs to read without stopping to squint.
+    """
+    width = ACTION_BOX_W - DRAW_CENTERED_PADDING
+    for text in _every_teaser():
+        assert _fit_size(text, width, 3) >= 2, \
+            "{!r} only renders at text size 1".format(text)
+
+
+def test_every_button_label_renders_at_the_largest_size():
+    """The single control has a whole bar to itself; it should use it."""
+    width = ACTION_BOX_W - DRAW_CENTERED_PADDING
+    for text in _every_button():
+        assert _fit_size(text, width, 3) == 3, \
+            "{!r} does not fit the action bar at size 3".format(text)
+
+
+def test_teasers_are_one_line_and_short():
+    """A 'teaser banner' that wraps is a paragraph again."""
+    for text in _every_teaser():
+        assert "\n" not in text
+        assert len(text) <= 30, "{!r} is {} chars".format(text, len(text))
+
+
+@pytest.mark.parametrize("path", SKETCHES)
+def test_the_progress_strip_has_its_own_band(path):
+    """The step bar must not share space with the header or the GPS line."""
+    source = _read(path)
+    prog_y, prog_h = _const(source, "PROG_Y"), _const(source, "PROG_H")
+    assert prog_y >= _const(source, "HEADER_Y") + _const(source, "HEADER_H")
+    assert prog_y + prog_h <= _const(source, "GPS_Y")
+
+
+@pytest.mark.parametrize("path", SKETCHES)
+def test_the_traffic_light_palette_is_the_specified_one(path):
+    """Pure 0x07E0/0xF800 are driver primaries, not the product's colours."""
+    source = _read(path)
+    for name, value in (("COL_GOOD", 0x072E), ("COL_WARN", 0xFCC0),
+                        ("COL_BAD", 0xFA8A)):
+        match = re.search(r"\b{}\s*=\s*0x([0-9A-Fa-f]{{4}})".format(name), source)
+        assert match, "{} not found".format(name)
+        assert int(match.group(1), 16) == value, \
+            "{} is 0x{} not 0x{:04X}".format(name, match.group(1), value)
+
+
+@pytest.mark.parametrize("path", SKETCHES)
+def test_the_panel_draws_a_tile_per_sample_and_per_zone(path):
+    """Both grids read their length from the host string, not a fixed 5."""
+    source = _read(path)
+    assert "strlen(progressSegments)" in source, \
+        "the progress strip should size itself from the host's string"
+    assert "strlen(zoneStatuses)" in source, \
+        "the zone map should size itself from the host's string"

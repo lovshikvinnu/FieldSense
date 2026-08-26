@@ -441,6 +441,31 @@ def push_to_display(
     return outcome
 
 
+#: Zone status word -> the single letter the panel's grid map draws.
+#: G green, A amber, R red. Anything unrecognised becomes '?' and renders grey,
+#: so a new status word from the zone engine shows up as unknown rather than
+#: being silently coloured as healthy.
+ZONE_STATUS_LETTERS = {
+    "HEALTHY": "G", "GOOD": "G", "OPTIMAL": "G",
+    "MODERATE": "A", "DEGRADED": "A", "STRESSED": "A", "WARNING": "A",
+    "POOR": "R", "CRITICAL": "R", "SEVERE": "R",
+}
+
+
+def zone_status_letters(zones: Any) -> str:
+    """Compress each zone's status to one letter for the panel record.
+
+    One character per zone keeps the whole map inside a record that has to
+    cross a link measured at about 860 B/s. Ordering follows the zone list, so
+    tile n on the glass is zone n in the report.
+    """
+    letters = []
+    for zone in zones or []:
+        status = str(getattr(zone, "status", "") or "").upper().strip()
+        letters.append(ZONE_STATUS_LETTERS.get(status, "?"))
+    return "".join(letters)
+
+
 def run_spatial_test(
     json_path: str = "field_test_20260823_171931.json",
     output_dir: str = "artifacts",
@@ -594,6 +619,12 @@ def run_spatial_test(
         "soil_health_score": round(health.score, 4) if health else None,
         "soil_health_status": health.status if health else None,
         "zone_count": len(zone_result.zones),
+        # Per-zone status as one letter each, for the panel's grid map. The
+        # zones already carry a status; it simply never reached the display, so
+        # the panel could say "2 zones" and not which of them needed attention.
+        # This reads what the zone engine produced - it does not compute or
+        # reclassify anything.
+        "zone_statuses": zone_status_letters(zone_result.zones),
         "recommendation_count": len(rec_result.recommendations),
         "data_source": "HARDWARE" if provenance == "LIVE_HARDWARE" else provenance,
         "evidence_level": health.evidence_level if health else None,

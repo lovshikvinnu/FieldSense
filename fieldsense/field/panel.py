@@ -39,6 +39,55 @@ ACTION_LINES: Dict[FieldState, str] = {
     FieldState.ERROR: "CHECK DEVICE",
 }
 
+#: The label on the full-width action button, per state. Empty means the device
+#: is busy and there is nothing to press - the button is not drawn at all, which
+#: is the clearest way to say "wait" on a panel read at arm's length outdoors.
+BUTTON_LABELS: Dict[FieldState, str] = {
+    FieldState.BOOT: "",
+    FieldState.READY: "START SAMPLE",
+    FieldState.MEASURING: "",
+    FieldState.SAMPLE_SAVED: "",
+    FieldState.READY_NEXT_SAMPLE: "NEXT SITE",
+    FieldState.PROCESSING: "",
+    FieldState.RESULT: "NEW RUN",
+    FieldState.ERROR: "NEW RUN",
+}
+
+#: Button label when the previous attempt has to be taken again. Overrides the
+#: armed-state label so the control names the actual next act, not the generic one.
+RETRY_BUTTON_LABEL = "RETRY"
+
+#: One short, actionable line per state - the "teaser banner". Kept to a single
+#: line on purpose: this replaces sentences that were being read outdoors, in
+#: sunlight, by someone holding a probe.
+TEASER_LINES: Dict[FieldState, str] = {
+    FieldState.BOOT: "STARTING UP",
+    FieldState.READY: "PLACE PROBE IN SOIL",
+    FieldState.MEASURING: "MEASURING - HOLD STILL",
+    FieldState.SAMPLE_SAVED: "SAMPLE {i} SAVED",
+    FieldState.READY_NEXT_SAMPLE: "MOVE TO THE NEXT SITE",
+    FieldState.PROCESSING: "PROCESSING {m} SAMPLES",
+    FieldState.RESULT: "FIELD RESULT READY",
+    FieldState.ERROR: "CHECK DEVICE",
+}
+
+#: Teaser for a reading that has to be retaken. Names the physical cause,
+#: because "RETRY" alone does not tell an operator what to change.
+#: 21 characters, not 29. "PROBE LOOSE - RE-SEAT IN SOIL" said it better but
+#: only fitted at text size 1, which is unreadable at arm's length in sunlight -
+#: and this is the line an operator most needs to read without stopping to
+#: squint. tests/test_landscape_panel.py holds every teaser to size 2 or above.
+RETRY_TEASER = "RE-SEAT PROBE IN SOIL"
+
+#: Progress-segment letters, one per planned sample. The panel draws one tile
+#: per character: V solid green, S amber, R amber (in progress / retaking),
+#: '-' unlit. Compressing the whole strip to N characters keeps it affordable
+#: on a link measured at about 860 B/s.
+SEGMENT_VALID = "V"
+SEGMENT_FLAGGED = "S"
+SEGMENT_CURRENT = "R"
+SEGMENT_PENDING = "-"
+
 #: Shown instead of the state's usual line when the previous attempt was not
 #: accepted and the operator has to take that same sample again.
 #:
@@ -57,6 +106,53 @@ RESULT_ACTION_LINE = "COMPLETE - TAP FOR NEW RUN"
 
 #: Channels lifted onto the panel from the most recent reading.
 SOIL_KEYS = ("moisture", "ph", "ec", "nitrogen", "phosphorus", "potassium")
+
+
+def button_label(state: FieldState, retrying: bool = False) -> str:
+    """Return the text on the full-width action button.
+
+    Empty when the device is busy. An absent button says "wait" more clearly
+    than a greyed-out one, and removes any target to press by mistake.
+    """
+    if retrying and state in ARMED_STATES:
+        return RETRY_BUTTON_LABEL
+    return BUTTON_LABELS.get(state, "")
+
+
+def teaser_line(
+    state: FieldState,
+    sample_index: int,
+    planned: int,
+    retrying: bool = False,
+) -> str:
+    """Return the single guidance line shown above the button."""
+    template = RETRY_TEASER if (retrying and state in ARMED_STATES) \
+        else TEASER_LINES.get(state, state.value)
+    return template.format(i=sample_index, m=planned)
+
+
+def progress_segments(session: Any, retrying: bool = False) -> str:
+    """One character per planned sample, for the step bar across the top.
+
+    Reads the stored records rather than a counter, so the strip cannot drift
+    from what is actually on disk - a segment is lit because a sample exists,
+    not because the workflow believes it should.
+
+    V a stored VALID sample        S a stored but flagged one
+    R the sample being taken now   -  not yet reached
+    """
+    planned = int(getattr(session, "planned_samples", 0) or 0)
+    stored = []
+    for record in session.store.iter_records():
+        stored.append(SEGMENT_VALID if record.get("map_eligible") else SEGMENT_FLAGGED)
+
+    segments = stored[:planned]
+    current = len(segments)
+    if current < planned:
+        state = getattr(session, "state", None)
+        if state in ARMED_STATES or state is FieldState.MEASURING or retrying:
+            segments.append(SEGMENT_CURRENT)
+    return "".join(segments).ljust(planned, SEGMENT_PENDING)[:planned]
 
 
 def _is_retrying(outcome: Any) -> bool:
@@ -151,10 +247,11 @@ def workflow_summary(
         "workflow_state": report["state"],
         "sample_index": shown_index,
         "planned_samples": report["planned_samples"],
-        "action_line": action_line(
+        "action_line": teaser_line(
             session.state, shown_index, report["planned_samples"],
-            retrying=_is_retrying(outcome),
-            session_complete=session.state is FieldState.RESULT),
+            retrying=_is_retrying(outcome)),
+        "button_label": button_label(session.state, retrying=_is_retrying(outcome)),
+        "progress_segments": progress_segments(session, retrying=_is_retrying(outcome)),
         "total_samples": report["stored_samples"],
         "valid_samples": report["quality_counts"].get("VALID", 0),
         "rejected_samples": (report["quality_counts"].get("REJECTED", 0)
