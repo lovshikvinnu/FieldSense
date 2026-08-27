@@ -87,11 +87,66 @@ def _fit_size(text, width, max_size):
 
 @pytest.mark.parametrize("path", SKETCHES)
 def test_the_panel_boots_directly_into_landscape(path):
-    """Not rotated later, not left to the host: landscape from setup()."""
+    """Not rotated later, not left to the host: landscape from setup().
+
+    ST7789 rotations 1 and 3 are the same landscape surface 180 degrees apart -
+    both report 320x240, so every coordinate in the sketch maps unchanged and
+    either is a valid orientation for this unit. 0 and 2 are portrait and would
+    invalidate the whole layout, which is what this actually guards.
+    """
     source = _read(path)
-    assert _const(source, "PANEL_ROTATION") == 1
+    assert _const(source, "PANEL_ROTATION") in (1, 3), \
+        "rotation must be landscape (1 or 3), not portrait"
     assert re.search(r"tft\.setRotation\(\s*PANEL_ROTATION\s*\)", source), \
         "setRotation must use PANEL_ROTATION so the constant cannot drift from the call"
+
+
+@pytest.mark.parametrize("path", SKETCHES)
+def test_the_background_is_black(path):
+    """Every cleared region uses COL_BG, so this one constant is the background.
+
+    It was a deep slate borrowed from the HTML dashboard - nearly black on a
+    monitor, visibly grey on this panel in daylight, and every clear read as a
+    grey flash rather than as background.
+    """
+    source = _read(path)
+    match = re.search(r"\bCOL_BG\s*=\s*0x([0-9A-Fa-f]{4})", source)
+    assert match, "COL_BG not found"
+    assert int(match.group(1), 16) == 0x0000, \
+        "COL_BG is 0x{}, not black".format(match.group(1))
+
+
+@pytest.mark.parametrize("path", SKETCHES)
+def test_no_full_screen_clear_outside_setup(path):
+    """fillScreen on a periodic repaint is a visible wipe - there is no
+    framebuffer between this sketch and the glass."""
+    source = _read(path)
+    body = source[source.index("static void renderValues"):]
+    assert "fillScreen" not in body, \
+        "renderValues (or something after it) clears the whole screen"
+
+
+@pytest.mark.parametrize("path", SKETCHES)
+def test_dynamic_regions_repaint_only_when_they_change(path):
+    """The flicker fix. renderValues runs once a second so the age counter stays
+    truthful, and almost nothing else on the panel changes in that second."""
+    source = _read(path)
+    assert "changedSince" in source, "the repaint-on-change guard is missing"
+    body = source[source.index("static void renderValues"):]
+    assert body.count("changedSince") >= 4, \
+        "only {} dynamic regions are gated".format(body.count("changedSince"))
+
+
+@pytest.mark.parametrize("path", SKETCHES)
+def test_card_backgrounds_are_chrome_not_values(path):
+    """Painting the card background every second is what wiped the card."""
+    source = _read(path)
+    assert "renderSoilChrome" in source and "renderResultChrome" in source, \
+        "card background and labels should be separate from the value path"
+    values = source[source.index("static void renderSoilCard"):
+                    source.index("static void renderResultChrome")]
+    assert "fillRoundRect" not in values, \
+        "renderSoilCard still repaints its own card background"
 
 
 @pytest.mark.parametrize("path", SKETCHES)

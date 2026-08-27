@@ -108,7 +108,13 @@
 // every coordinate in this file is written against that.
 static const uint16_t PANEL_W = 320;
 static const uint16_t PANEL_H = 240;
-static const uint8_t  PANEL_ROTATION = 1;
+// Rotation 3, not 1: the same landscape surface turned through 180 degrees, so
+// the unit reads correctly in the orientation it is actually held. Both values
+// are landscape and both report 320x240, so every coordinate in this file maps
+// unchanged - the driver rewrites MADCTL and the whole image turns together.
+// Anything other than 1 or 3 here would be portrait and would invalidate the
+// entire layout.
+static const uint8_t  PANEL_ROTATION = 3;
 
 // Adafruit_GFX's built-in font is 6x8 px per character at size 1 and scales by
 // integer multiples. Named here because every fit calculation below uses them.
@@ -117,7 +123,12 @@ static const uint8_t  CHAR_H = 8;
 
 // Deep slate, matching the dashboard HTML so the panel and the browser view
 // read as the same product rather than two different tools.
-static const uint16_t COL_BG     = 0x0861;
+// Black, explicitly. This was a deep slate (0x0861) borrowed from the HTML
+// dashboard, which is nearly black on a monitor and visibly grey on this panel
+// in daylight - and any region cleared to it read as a grey flash rather than
+// as background. Every clear in this file uses COL_BG, so this one constant is
+// the whole of "the panel initialises to black and stays black".
+static const uint16_t COL_BG     = 0x0000;
 static const uint16_t COL_CARD   = 0x18E3;
 static const uint16_t COL_TEXT   = ST77XX_WHITE;
 static const uint16_t COL_DIM    = 0x8410;
@@ -417,6 +428,24 @@ static void putInt(int16_t x, int16_t y, int16_t w, int32_t value, uint16_t colo
   }
 }
 
+// Has this string changed since it was last drawn?
+//
+// The whole flicker fix in one idea. Every dynamic region below repaints by
+// clearing its rectangle and drawing into it - which is correct, and invisible
+// when the contents actually changed, and a visible wipe when they did not.
+// renderValues() runs once a second so the age counter stays truthful, and
+// almost none of the panel changes in that second.
+//
+// Each caller keeps a small buffer of what it last put on the glass and repaints
+// only on a difference, so a still panel issues no writes at all.
+static bool changedSince(char *cache, size_t cap, const char *now) {
+  if (strncmp(cache, now, cap - 1) == 0) {
+    return false;
+  }
+  copyField(cache, cap, now);
+  return true;
+}
+
 // Colour for one progress-strip character.
 //
 //   V a stored VALID sample     S stored but flagged      R being taken now
@@ -449,6 +478,10 @@ static uint16_t zoneColour(char code) {
 // Reads its length from the host's string rather than assuming five, so a
 // session configured for a different sample count still draws a correct strip.
 static void renderProgress() {
+  static char drawn[12] = "\x01";      // impossible value, so the first pass draws
+  if (!changedSince(drawn, sizeof(drawn), progressSegments)) {
+    return;
+  }
   size_t count = strlen(progressSegments);
   tft.fillRect(MARGIN, PROG_Y, PANEL_W - 2 * MARGIN, PROG_H, COL_BG);
   if (count == 0) {
@@ -528,7 +561,9 @@ static void renderChrome() {
 }
 
 // Sampling view: the live probe channels, two columns.
-static void renderSoilCard() {
+// The card background and its fixed labels. Drawn when the view appears, never
+// on a periodic repaint - painting these every second is what wiped the card.
+static void renderSoilChrome() {
   tft.fillRoundRect(MARGIN, SOIL_Y, PANEL_W - 2 * MARGIN, SOIL_H, 4, COL_CARD);
   label(SOIL_COL_A, SOIL_Y + 5,                  "MOISTURE", COL_DIM, 1);
   label(SOIL_COL_A, SOIL_Y + 5 + SOIL_ROW_H,     "PH",       COL_DIM, 1);
@@ -538,6 +573,21 @@ static void renderSoilCard() {
   label(SOIL_COL_B, SOIL_Y + 5 + SOIL_ROW_H * 2, "K",        COL_DIM, 1);
   label(SOIL_COL_A, SOIL_Y + 5 + SOIL_ROW_H * 3, "SAMPLES",  COL_DIM, 1);
   label(SOIL_COL_B, SOIL_Y + 5 + SOIL_ROW_H * 3, "SITES",    COL_DIM, 1);
+}
+
+// Only the value boxes, and only when a value actually moved. Each putValue
+// clears its own small rectangle first, so a shrinking number cannot leave the
+// tail of the previous one behind.
+static void renderSoilCard() {
+  static char drawn[64] = "\x01";
+  char now[64];
+  snprintf(now, sizeof(now), "%.1f|%.2f|%.2f|%ld|%ld|%ld|%ld|%ld|%ld",
+           (double)soilMoisture, (double)soilPh, (double)soilEc,
+           (long)soilN, (long)soilP, (long)soilK,
+           (long)totalSamples, (long)validSamples, (long)distinctLocs);
+  if (!changedSince(drawn, sizeof(drawn), now)) {
+    return;
+  }
 
   int16_t vA = SOIL_COL_A + 62, vB = SOIL_COL_B + 22;
   putFloat(vA, SOIL_Y + 5,                  56, soilMoisture, 1, COL_TEXT);
@@ -559,8 +609,19 @@ static void renderSoilCard() {
 }
 
 // Result view: the score, its status badge, the scale, and the zone map.
-static void renderResultCard() {
+static void renderResultChrome() {
   tft.fillRoundRect(MARGIN, SOIL_Y, PANEL_W - 2 * MARGIN, SOIL_H, 4, COL_CARD);
+  label(PANEL_W / 2 + 6, SOIL_Y + 4, "ZONES", COL_DIM, 1);
+}
+
+static void renderResultCard() {
+  static char drawn[64] = "\x01";
+  char now[64];
+  snprintf(now, sizeof(now), "%.2f|%s|%s",
+           (double)healthScore, statusText, zoneStatuses);
+  if (!changedSince(drawn, sizeof(drawn), now)) {
+    return;
+  }
 
   // Score, large. The one number a farmer reads first.
   char pct[8];
@@ -581,7 +642,6 @@ static void renderResultCard() {
   renderHealthScale(SOIL_COL_A, SOIL_Y + 26, 108, 5);
 
   // Zone map on the right half.
-  label(PANEL_W / 2 + 6, SOIL_Y + 4, "ZONES", COL_DIM, 1);
   renderZoneGrid(PANEL_W / 2 + 6, SOIL_Y + 15, PANEL_W / 2 - 6 - MARGIN - 6, SOIL_H - 20);
 }
 
@@ -605,27 +665,46 @@ static void renderValues() {
   char buf[48];
 
   // Header right: the sample counter, large.
-  putValue(PANEL_W - 118, 4, 112, CHAR_H * 3, COL_CARD, COL_TEXT, 3);
-  if (sampleIndex > 0 && plannedSamples > 0) {
-    snprintf(buf, sizeof(buf), "%ld/%ld", (long)sampleIndex, (long)plannedSamples);
-    int16_t width = (int16_t)(strlen(buf) * CHAR_W * 3);
-    tft.setCursor(PANEL_W - MARGIN - 2 - width, 4);
-    tft.print(buf);
+  {
+    static char drawn[16] = "\x01";
+    if (sampleIndex > 0 && plannedSamples > 0) {
+      snprintf(buf, sizeof(buf), "%ld/%ld", (long)sampleIndex, (long)plannedSamples);
+    } else {
+      buf[0] = '\0';
+    }
+    if (changedSince(drawn, sizeof(drawn), buf)) {
+      putValue(PANEL_W - 118, 4, 112, CHAR_H * 3, COL_CARD, COL_TEXT, 3);
+      if (buf[0]) {
+        int16_t width = (int16_t)(strlen(buf) * CHAR_W * 3);
+        tft.setCursor(PANEL_W - MARGIN - 2 - width, 4);
+        tft.print(buf);
+      }
+    }
   }
 
   renderProgress();
 
   // GPS strip. Fix state, satellites and HDOP come from this sketch's own GGA
   // parse - the host is never asked what the receiver on this MCU is doing.
-  putValue(MARGIN, GPS_Y, PANEL_W - 2 * MARGIN, CHAR_H, COL_BG, COL_DIM, 1);
   bool haveFix = (strncmp(latest_gps_csv.c_str(), "FIX_OK", 6) == 0);
-  tft.setTextColor(haveFix ? COL_GOOD : COL_WARN);
-  tft.print(haveFix ? "GPS FIX" : "GPS SEARCHING");
-  tft.setTextColor(COL_DIM);
-  tft.print("  SAT ");
-  tft.print(gpsSatsText());
-  tft.print("  HDOP ");
-  tft.print(gpsHdopText());
+  {
+    // Fix state, satellites and HDOP change on the receiver's schedule, not
+    // once a second. Repainting the whole strip regardless was a full-width
+    // wipe for content that was usually identical.
+    static char drawn[40] = "\x01";
+    snprintf(buf, sizeof(buf), "%d|%s|%s", haveFix ? 1 : 0,
+             gpsSatsText(), gpsHdopText());
+    if (changedSince(drawn, sizeof(drawn), buf)) {
+      putValue(MARGIN, GPS_Y, PANEL_W - 2 * MARGIN - 48, CHAR_H, COL_BG, COL_DIM, 1);
+      tft.setTextColor(haveFix ? COL_GOOD : COL_WARN);
+      tft.print(haveFix ? "GPS FIX" : "GPS SEARCHING");
+      tft.setTextColor(COL_DIM);
+      tft.print("  SAT ");
+      tft.print(gpsSatsText());
+      tft.print("  HDOP ");
+      tft.print(gpsHdopText());
+    }
+  }
 
   bool everReceived = recordCount > 0;
   uint32_t ageS = everReceived ? (millis() - lastRecordMs) / 1000 : 0;
@@ -634,29 +713,55 @@ static void renderValues() {
   } else {
     snprintf(buf, sizeof(buf), "%lus", (unsigned long)ageS);
   }
-  int16_t linkW = (int16_t)(strlen(buf) * CHAR_W);
-  putValue(PANEL_W - MARGIN - linkW, GPS_Y, linkW, CHAR_H, COL_BG,
-           everReceived ? (ageS > 30 ? COL_WARN : COL_DIM) : COL_WARN, 1);
-  tft.print(buf);
+  {
+    // The only region that legitimately changes every second. It is 6 characters
+    // wide, so a repaint here is invisible - but gate it anyway so a panel with
+    // a settled age counter issues no writes at all.
+    static char drawn[16] = "\x01";
+    if (changedSince(drawn, sizeof(drawn), buf)) {
+      int16_t linkW = (int16_t)(strlen(buf) * CHAR_W);
+      putValue(PANEL_W - MARGIN - 48, GPS_Y, 48, CHAR_H, COL_BG,
+               everReceived ? (ageS > 30 ? COL_WARN : COL_DIM) : COL_WARN, 1);
+      tft.setCursor(PANEL_W - MARGIN - linkW, GPS_Y);
+      tft.print(buf);
+    }
+  }
 
   // THE TEASER. One actionable line, as large as it will go.
-  tft.fillRect(MARGIN, ACTION_Y, PANEL_W - 2 * MARGIN, ACTION_H, COL_BG);
   uint16_t actionColour = COL_TEXT;
   if (!strcmp(workflowState, "ERROR"))             actionColour = COL_BAD;
   else if (!strcmp(workflowState, "MEASURING"))    actionColour = COL_ACCENT;
   else if (!strcmp(workflowState, "SAMPLE_SAVED")) actionColour = COL_GOOD;
   else if (!strcmp(workflowState, "PROCESSING"))   actionColour = COL_ACCENT;
   else if (!strcmp(lastQuality, "RETRY"))          actionColour = COL_WARN;
-  drawCentered(MARGIN, ACTION_Y, PANEL_W - 2 * MARGIN, ACTION_H,
-               actionLine, actionColour, 3);
+  {
+    // The instruction changes on a state change, not on a clock. Clearing this
+    // 308x48 band every second was the largest single wipe on the panel.
+    static char drawn[48] = "\x01";
+    static uint16_t drawnColour = 0;
+    if (changedSince(drawn, sizeof(drawn), actionLine) || actionColour != drawnColour) {
+      drawnColour = actionColour;
+      tft.fillRect(MARGIN, ACTION_Y, PANEL_W - 2 * MARGIN, ACTION_H, COL_BG);
+      drawCentered(MARGIN, ACTION_Y, PANEL_W - 2 * MARGIN, ACTION_H,
+                   actionLine, actionColour, 3);
+    }
+  }
 
   // Middle card: which view depends on whether the run has produced a result.
+  // The card's BACKGROUND and labels are drawn only when the view changes; the
+  // values redraw themselves only when they move. Previously the whole card was
+  // repainted every second, which is what wiped it.
   bool showResult = !strcmp(workflowState, "RESULT");
   static int8_t lastCardKind = -1;
   int8_t cardKind = showResult ? 1 : 0;
   if (cardKind != lastCardKind) {
     lastCardKind = cardKind;
     tft.fillRect(MARGIN, SOIL_Y, PANEL_W - 2 * MARGIN, SOIL_H, COL_BG);
+    if (showResult) {
+      renderResultChrome();
+    } else {
+      renderSoilChrome();
+    }
   }
   if (showResult) {
     renderResultCard();
@@ -666,29 +771,41 @@ static void renderValues() {
 
   // Bottom bar. A label means there is something to press.
   bool wantButton = (buttonLabel[0] != '\0');
-  if (!barShapeKnown || wantButton != barIsButton) {
+  bool barReshaped = (!barShapeKnown || wantButton != barIsButton);
+  if (barReshaped) {
     renderBarChrome(wantButton);
   }
 
   if (wantButton) {
-    tft.fillRoundRect(MARGIN + 3, BAR_Y + 3, PANEL_W - 2 * MARGIN - 6, BAR_H - 8, 6, COL_GOOD_D);
-    drawCentered(MARGIN, BAR_Y, PANEL_W - 2 * MARGIN, BAR_H - 2, buttonLabel, COL_BG, 3);
+    // The label changes on a state change. Repainting the button face every
+    // second made the one element an operator is about to touch the least
+    // stable thing on the panel.
+    static char drawn[24] = "\x01";
+    if (barReshaped || changedSince(drawn, sizeof(drawn), buttonLabel)) {
+      tft.fillRoundRect(MARGIN + 3, BAR_Y + 3, PANEL_W - 2 * MARGIN - 6, BAR_H - 8, 6, COL_GOOD_D);
+      drawCentered(MARGIN, BAR_Y, PANEL_W - 2 * MARGIN, BAR_H - 2, buttonLabel, COL_BG, 3);
+    }
   } else {
-    tft.fillRect(MARGIN + 3, BAR_Y + 3, PANEL_W - 2 * MARGIN - 6, BAR_H - 8, COL_CARD);
-    int16_t qualityW = (int16_t)(strlen(lastQuality) * CHAR_W);
-    int16_t stateW = PANEL_W - MARGIN - 8 - qualityW - SOIL_COL_A - 6;
-    drawClipped(SOIL_COL_A, BAR_Y + 12, stateW, workflowState, COL_ACCENT, 2);
-    if (lastQuality[0]) {
-      label(PANEL_W - MARGIN - 8 - qualityW, BAR_Y + 16, lastQuality,
-            qualityColour(), 1);
-    }
-    if (offlineMode == 1) {
-      label(SOIL_COL_A, BAR_Y + 36, "OFFLINE", COL_GOOD, 1);
-    }
-    if (!touchPresent) {
-      const char *note = "NO TOUCH";
-      label(PANEL_W - MARGIN - 8 - (int16_t)(strlen(note) * CHAR_W),
-            BAR_Y + 36, note, COL_WARN, 1);
+    static char drawn[48] = "\x01";
+    snprintf(buf, sizeof(buf), "%s|%s|%ld|%d", workflowState, lastQuality,
+             (long)offlineMode, touchPresent ? 1 : 0);
+    if (barReshaped || changedSince(drawn, sizeof(drawn), buf)) {
+      tft.fillRect(MARGIN + 3, BAR_Y + 3, PANEL_W - 2 * MARGIN - 6, BAR_H - 8, COL_CARD);
+      int16_t qualityW = (int16_t)(strlen(lastQuality) * CHAR_W);
+      int16_t stateW = PANEL_W - MARGIN - 8 - qualityW - SOIL_COL_A - 6;
+      drawClipped(SOIL_COL_A, BAR_Y + 12, stateW, workflowState, COL_ACCENT, 2);
+      if (lastQuality[0]) {
+        label(PANEL_W - MARGIN - 8 - qualityW, BAR_Y + 16, lastQuality,
+              qualityColour(), 1);
+      }
+      if (offlineMode == 1) {
+        label(SOIL_COL_A, BAR_Y + 36, "OFFLINE", COL_GOOD, 1);
+      }
+      if (!touchPresent) {
+        const char *note = "NO TOUCH";
+        label(PANEL_W - MARGIN - 8 - (int16_t)(strlen(note) * CHAR_W),
+              BAR_Y + 36, note, COL_WARN, 1);
+      }
     }
   }
 }
