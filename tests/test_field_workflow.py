@@ -614,7 +614,9 @@ def test_the_result_screen_offers_a_new_run(tmp_path):
 
     summary = workflow_summary(session)
     assert summary["action_line"] == "FIELD RESULT READY"
-    assert summary["button_label"] == "NEW RUN"
+    # Names the act and the fact that it needs a deliberate hold - see
+    # test_the_new_run_button_tells_the_operator_it_needs_a_hold.
+    assert summary["button_label"] == "HOLD FOR NEW RUN"
     assert summary["sample_index"] == 2
     assert summary["planned_samples"] == 2
 
@@ -722,7 +724,7 @@ def test_the_button_names_the_action_not_the_state(tmp_path):
     assert button_label(FieldState.READY) == "START SAMPLE"
     assert button_label(FieldState.READY_NEXT_SAMPLE) == "NEXT SITE"
     assert button_label(FieldState.READY, retrying=True) == "RETRY"
-    assert button_label(FieldState.RESULT) == "NEW RUN"
+    assert button_label(FieldState.RESULT) == "HOLD FOR NEW RUN"
 
 
 def test_there_is_no_button_while_the_device_is_busy(tmp_path):
@@ -767,3 +769,20 @@ def test_the_record_still_fits_the_firmware_line_buffer(tmp_path):
         extra={"zone_statuses": "GARGARGA", "evidence_level": "LIMITED",
                "soil_health_status": "MODERATE", "soil_health_score": 0.67})
     assert len(build_panel_record(summary)) < 256
+
+
+def test_the_new_run_button_tells_the_operator_it_needs_a_hold(tmp_path):
+    """The firmware requires a longer press on RESULT than anywhere else.
+
+    With no touch coordinates available on this hardware, a stray brush would
+    otherwise dismiss a field result the operator may not have read. A control
+    that behaves differently has to say so, or it reads as unresponsive.
+    """
+    from fieldsense.field.panel import button_label
+
+    assert button_label(FieldState.RESULT) == "HOLD FOR NEW RUN"
+    assert button_label(FieldState.ERROR) == "HOLD FOR NEW RUN"
+    # Every other action stays a quick press, and says nothing about holding.
+    for state in (FieldState.READY, FieldState.READY_NEXT_SAMPLE):
+        assert "HOLD" not in button_label(state)
+    assert "HOLD" not in button_label(FieldState.READY, retrying=True)

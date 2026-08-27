@@ -49,8 +49,12 @@ BUTTON_LABELS: Dict[FieldState, str] = {
     FieldState.SAMPLE_SAVED: "",
     FieldState.READY_NEXT_SAMPLE: "NEXT SITE",
     FieldState.PROCESSING: "",
-    FieldState.RESULT: "NEW RUN",
-    FieldState.ERROR: "NEW RUN",
+    # "HOLD" is not decoration - the firmware genuinely requires a longer press
+    # here than anywhere else, because with no touch coordinates a stray brush
+    # would otherwise dismiss a result the operator may not have read. A control
+    # that behaves differently must say so, or it reads as an unresponsive one.
+    FieldState.RESULT: "HOLD FOR NEW RUN",
+    FieldState.ERROR: "HOLD FOR NEW RUN",
 }
 
 #: Button label when the previous attempt has to be taken again. Overrides the

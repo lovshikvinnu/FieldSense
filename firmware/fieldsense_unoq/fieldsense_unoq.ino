@@ -411,6 +411,24 @@ static const uint32_t TOUCH_SAMPLE_MS = 40;
 static const uint16_t TOUCH_Z_MIN   = 400;   // below this is noise or no contact
 static const uint16_t TOUCH_Z_MAX   = 4000;  // above this is a rail, not a finger
 static const uint32_t TOUCH_HOLD_MS = 180;   // deliberate press, not a phantom
+
+// A longer hold for the one action that throws something away.
+//
+// Touch on this unit has no coordinates - the loopback test proved SPI2 cannot
+// receive (TX AA55 -> RX 0000, 194 runs, MOSI jumpered straight to MISO), so
+// there is no hitbox and any contact anywhere is the current action. For START,
+// NEXT and RETRY that is harmless: the worst case is a sample the operator
+// immediately retakes.
+//
+// RESULT is different. There the action is NEW RUN, and a stray brush dismisses
+// a field result the operator may not have read yet - which is exactly what was
+// reported, a centre touch firing NEW RUN. Nothing is lost from disk (the
+// session is written and closed before the result is shown), but the screen is.
+//
+// This is not an arbitrary delay. It is the only defence available once
+// position is unavailable, it is scoped to the single destructive action, and
+// it is proportionate to that action rather than applied to every press.
+static const uint32_t RESULT_HOLD_MS = 1200;
 static const uint32_t PRESS_LOCKOUT_MS = 1200;  // one press per press
 
 static bool     touchPresent   = false;
@@ -660,7 +678,10 @@ static void serviceOperatorInput() {
   // defence. That is weaker than hold-plus-position and is stated plainly
   // rather than papered over; it is also why TOUCH_HOLD_MS is not shortened to
   // make the panel feel snappier.
-  if ((now - contactBeganMs) >= TOUCH_HOLD_MS) {
+  // The result screen asks for a deliberate hold; everything else stays quick.
+  uint32_t needHold = !strcmp(workflowState, "RESULT") ? RESULT_HOLD_MS
+                                                       : TOUCH_HOLD_MS;
+  if ((now - contactBeganMs) >= needHold) {
     if (!spiAnswering || contactInBar()) {
       notePress();
       contactActive = false;
