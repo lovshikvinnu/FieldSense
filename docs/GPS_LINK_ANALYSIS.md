@@ -1,34 +1,95 @@
 # GPS link — why sentences are lost, and what can be done about it
 
-> ## ⚠️ Superseded in part — read this first
+> ## ⚠️ SUPERSEDED — root cause established by A/B on 2026-08-27
 >
-> This document originally presented the 64-byte RX ring as the root cause.
-> **That is wrong, and the correction matters.**
+> **`quietenGPS()` is the immediate cause of the parsing failure.** The function
+> written to protect the link is what breaks it. Measured, both directions, same
+> module and same firmware — see §0.
 >
-> The ring was 64 bytes on 2026-08-24 while the GPS worked reliably enough to
-> produce `field_test_live_hardware.json` — five samples, fourteen seconds
-> apart. `7024f3e` ("Drain the GPS UART on its own clock") was written
-> specifically to live within that buffer, and it did. **The buffer is a
-> pre-existing limitation, not the regression.** What broke is the margin that
-> drain relied on, not the buffer under it.
+> Two earlier conclusions in this document are wrong and are kept only as the
+> record of how the investigation went:
 >
-> The mechanism in §2–§3 is still accurate: the ring cannot hold a whole
-> sentence, drop-newest costs the tail, and the tail carries the checksum and
-> the terminator. What §2 gets wrong is calling that a *cause* rather than a
-> *standing constraint the system used to stay inside*.
+> - **§2's "root cause".** The 64-byte RX ring is a *contributing constraint*
+>   exposed by an isolated GGA burst, not the regression. It was 64 bytes while
+>   the GPS worked.
+> - **§4's "lowering the GGA rate reduces successes per minute without improving
+>   the success rate".** Wrong in the worst way: it does not reduce successes, it
+>   **eliminates** them. Fewer bytes made parsing strictly worse.
 >
-> The live suspect is a workload change: `field_node` (added 08-25, after the
-> good run) polls `get_gps_data` every 0.5 s while waiting for START, where the
-> previous `v1_runner` read GPS once per sample. That is unconfirmed pending an
-> A/B test, so no fix should be built on it yet either.
+> The RPC-polling theory in §7 is also **not causal** — the failure reproduces
+> with `field_node` not running at all.
 >
-> **Do not act on §4's conclusion about rebuilding the Zephyr core** until the
-> A/B has run. Raising the buffer may still be worth doing as headroom, but it
-> is not the thing that changed.
+> §1–§6 are retained as the measurements and reasoning that led here. Read §0
+> first; it is the only section with a confirmed answer.
 
-**Status:** analysis, partially superseded. No code change recommended.
-**Measured:** 2026-08-26, on the assembled unit, USB-powered, receiver locked.
-**Corrected:** 2026-08-26, after establishing the buffer predates the failure.
+**Status:** root cause confirmed (§0). §1–§7 superseded but retained.
+**Measured:** 2026-08-26 and 2026-08-27, assembled unit, USB-powered.
+
+---
+
+## 0. The A/B that settled it (2026-08-27)
+
+One variable: whether `quietenGPS()`'s configuration reaches the receiver.
+Same NEO-M8N, same UNO Q, same flashed firmware, same wiring otherwise. Each arm
+measured over 60 s from the live gateway.
+
+| Counter | Quietened — GGA only | Un-quietened — factory default | |
+| :--- | ---: | ---: | :--- |
+| `rx` | 60.2 B/s | **217.6 B/s** | |
+| `lines` | **0.00/s** | **3.54/s** | complete sentences |
+| `csum` | **0.00/s** | **3.02/s** | valid checksums |
+| `gga` | **0.00/s** | **0.25/s** | positions parsed |
+| `ovf` | 0.30/s | **0.05/s** | 6× fewer overflows |
+| `hi` | 0 | 0 | clean 7-bit ASCII in both |
+
+Un-quietened arm: **`FIX_OK` on 60/60 samples, `age=0`, 12 satellites,
+fix quality 2 (DGPS)**. Sentence types `GPGSV, GLGSV, GNRMC, GNGGA, GNGSA,
+GNGLL`. **No `$GNTXT`** in either arm — the receiver is not resetting.
+
+Quietened arm reproduced twice independently: 60.2 and 60.24 B/s, `lines`
+exactly 0 both times.
+
+**Method.** The receiver's `PUBX,40` settings live in RAM, so disconnecting the
+module's RX alone does not undo them. The un-quietened arm required
+disconnecting module RX **and then power-cycling the module**, so it boots to
+factory defaults with no way for `quietenGPS()` to re-quieten it.
+
+### Why less data is worse
+
+- **Un-quietened**: ~217 B/s across seven sentence types is a near-continuous
+  stream. The 400 ms drain polls every 2 ms and consumes it incrementally, so
+  sentences complete.
+- **Quietened**: GGA-only is one ~78-byte burst in 81 ms, then 919 ms of
+  silence. The 64-byte ring cannot hold that burst. Land it in the ~595 ms blind
+  window — roughly 60% of the time — and the tail is lost, taking the checksum
+  and the CRLF.
+
+An isolated burst is all-or-nothing. A continuous stream is drained a byte at a
+time. That asymmetry is the whole finding.
+
+There is also a **latch**: on overflow the code discards until a newline, and
+that newline exits discard with `gpsLineLen == 0`, producing no line. Once
+intermittent CRLF loss starts, `lines` can sit at zero indefinitely even while
+newlines keep arriving. That is why `lines` was pinned at exactly 0, not merely
+low.
+
+### What this says about the original regression
+
+`quietenGPS()` landed in `86a879d` on 2026-08-24 19:01, **before** the
+known-good 21:22 run — and the GPS worked. That is only consistent if MCU
+TX → module RX was **not connected** then, leaving the receiver un-quietened.
+Somewhere in the later rewiring that wire was connected, `quietenGPS()` began
+taking effect, and parsing collapsed.
+
+### Current stable operating configuration
+
+**Leave the GPS module's RX wire disconnected.** That is a wiring-level
+workaround for a firmware logic error, and it is stable and reproducible:
+`FIX_OK`, `age=0`, DGPS quality. The proper fix — drop `quietenGPS()`, or keep
+the receiver talkative enough that the stream stays continuous — is a firmware
+decision and has **not** been made.
+
+---
 
 The receiver is healthy and the wiring is sound. The MCU still parses roughly
 one GGA sentence in fifty. This is why, with the numbers behind each claim.
