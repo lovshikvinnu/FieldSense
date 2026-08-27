@@ -1,8 +1,34 @@
 # GPS link — why sentences are lost, and what can be done about it
 
-**Status:** analysis and proposal. No code change is recommended without the
-measurement in §6 first.
+> ## ⚠️ Superseded in part — read this first
+>
+> This document originally presented the 64-byte RX ring as the root cause.
+> **That is wrong, and the correction matters.**
+>
+> The ring was 64 bytes on 2026-08-24 while the GPS worked reliably enough to
+> produce `field_test_live_hardware.json` — five samples, fourteen seconds
+> apart. `7024f3e` ("Drain the GPS UART on its own clock") was written
+> specifically to live within that buffer, and it did. **The buffer is a
+> pre-existing limitation, not the regression.** What broke is the margin that
+> drain relied on, not the buffer under it.
+>
+> The mechanism in §2–§3 is still accurate: the ring cannot hold a whole
+> sentence, drop-newest costs the tail, and the tail carries the checksum and
+> the terminator. What §2 gets wrong is calling that a *cause* rather than a
+> *standing constraint the system used to stay inside*.
+>
+> The live suspect is a workload change: `field_node` (added 08-25, after the
+> good run) polls `get_gps_data` every 0.5 s while waiting for START, where the
+> previous `v1_runner` read GPS once per sample. That is unconfirmed pending an
+> A/B test, so no fix should be built on it yet either.
+>
+> **Do not act on §4's conclusion about rebuilding the Zephyr core** until the
+> A/B has run. Raising the buffer may still be worth doing as headroom, but it
+> is not the thing that changed.
+
+**Status:** analysis, partially superseded. No code change recommended.
 **Measured:** 2026-08-26, on the assembled unit, USB-powered, receiver locked.
+**Corrected:** 2026-08-26, after establishing the buffer predates the failure.
 
 The receiver is healthy and the wiring is sound. The MCU still parses roughly
 one GGA sentence in fifty. This is why, with the numbers behind each claim.
@@ -34,7 +60,7 @@ is not the problem.
 
 ---
 
-## 2. Root cause
+## 2. The mechanism (a standing constraint, not the regression)
 
 Three facts, each verifiable on the board:
 
@@ -194,16 +220,61 @@ it while debugging.
 
 ---
 
-## 7. One thing still unexplained
+## 7. What actually changed — and the test that settles it
 
 The measured success rate is ~2%. The model in §3 predicts roughly the drain
-share — around 40% if the loop cycle is ~1 s. The gap is large enough that
-something else is also consuming drain time, most likely panel rendering, which
-would push the effective blind window well past the 840 ms fill threshold.
+share, around 40%. That gap was the clue: something else is consuming the time
+the drain needs, and §5's rendering theory turned out to be wrong — `render()`
+was **28** draw calls in the known-good firmware and `renderValues()` is now
+**17**. Rendering got cheaper.
 
-Option A addresses exactly that, which is why it is worth trying first — but
-the discrepancy should be measured rather than assumed. Timing one loop pass and
-logging its parts would settle it, and would say whether A alone is sufficient.
+What changed is the workload on the other side of the link.
+
+| | Known-good, 2026-08-24 | Now |
+| :--- | :--- | :--- |
+| Service | `fieldsense-standalone` | `fieldsense-field` |
+| Runner | `v1_runner` | `field_node` (added 08-25, `e55d163`) |
+| `get_gps_data` calls | once per sample, ~5 per run | **every 0.5 s, forever** |
+
+`TriggerSource.wait_for_press()` polls the MCU at 2 Hz for the whole time it is
+waiting for START. The journal shows the board sat waiting from 08:54 to 09:52
+— 58 minutes, roughly 7,000 RPCs. Every one is serviced by the same MCU loop
+that has to drain `Serial1`, and the 400 ms drain in `7024f3e` was tuned when
+that load was five calls per run.
+
+The known-good `loop()` says so in its own comment: the symptom the drain was
+written to fix was *"rx=1518 with lines=2"*. Today's board reads rx=49790,
+lines=1. Same failure, and the drain is unchanged — so the thing that moved is
+what it has to compete with.
+
+**This is not yet confirmed.** The A/B that settles it needs no code change:
+
+```bash
+sudo systemctl stop fieldsense-field.service     # stop the 2 Hz polling
+# wait ~60 s, then read the gateway
+sudo systemctl start fieldsense-field.service    # resume it
+```
+
+Confirmed if `lines`, `csum` and `gga` climb ~1/s with the service stopped and
+`ovf` goes flat, then stall again when it restarts. A single variable, both
+directions.
+
+If it confirms, the first thing to try is `TRIGGER_POLL_SECONDS` — a host-side
+constant, currently 0.5. Backing it to 1–2 s costs a little START latency and
+may restore the margin without touching firmware at all.
+
+### Ruled out
+
+- **The receiver.** `hi=0` across 49,790 bytes and valid `*68` checksums in the
+  raw window. Independently confirmed off-board: the NEO-M8N behaves correctly
+  on both an ESP and an Arduino UNO, with and without a fix.
+- **Wiring and noise.** Same evidence — a floating pin cannot produce clean
+  7-bit ASCII NMEA.
+- **Rendering.** Fewer draw calls than the known-good build.
+- **The touch driver.** `serviceOperatorInput()` is IRQ-gated: no finger, no SPI.
+- **The diagnostics added on 08-26.** They grew the payload from ~135 to 271
+  bytes, which plausibly makes matters worse at 2 Hz, but telemetry was already
+  frozen at 09:17 — before the first of them was flashed.
 
 ---
 
