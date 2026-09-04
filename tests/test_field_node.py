@@ -527,3 +527,53 @@ def test_a_session_that_could_not_be_processed_also_holds_the_screen(tmp_path):
     assert node.session.map_eligible_records() == []
     # The hold ran: it accepted a press rather than returning immediately.
     assert node.await_new_run() is True
+
+
+def test_the_result_overlay_sends_the_zone_letters_to_the_panel(tmp_path):
+    """The zone map read NO ZONES on every finished run.
+
+    `run_spatial_test` writes one status letter per zone into
+    panel_summary.json, the panel record already reserves field `u` for them,
+    and the firmware already parses `u` into the string `renderZoneGrid` draws
+    from. Only the overlay that folds the finished pipeline onto the result
+    screen never forwarded the key, so the sketch was never given a value at
+    all - and because it keeps the last value it was given, the grid took its
+    empty-string branch and drew NO ZONES however many zones had been found.
+
+    A live session on the board found one zone, wrote "G" to panel_summary.json,
+    and still showed NO ZONES on the glass. That is the case this pins.
+    """
+    from fieldsense.hardware.panel_renderer import build_panel_record
+
+    adapter = FakeAdapter([{"lat": 17.5697, "moisture": 31.2}])
+    node = build_node(tmp_path, adapter, samples=1)
+    os.makedirs(node.output_dir, exist_ok=True)
+    with open(os.path.join(node.output_dir, "panel_summary.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump({"soil_health_status": "HEALTHY", "soil_health_score": 0.73,
+                   "evidence_level": "LIMITED", "zone_statuses": "GAR"}, handle)
+
+    overlay = node._result_overlay({"zones": 3, "recommendations": 2},
+                                   {"distinct_locations": 5})
+
+    assert overlay["zone_statuses"] == "GAR"
+    # The zone count was already being sent; it is the letters the grid draws.
+    assert overlay["zone_count"] == 3
+    # And the letters survive into the record the MCU actually parses.
+    assert "u=GAR" in build_panel_record(overlay).decode("ascii").strip().split("|")
+
+
+def test_a_run_with_no_zone_letters_omits_the_field_rather_than_blanking_it(tmp_path):
+    """Absent has to stay absent, because the sketch keeps its last value.
+
+    Sending an empty `u` would wipe a zone grid that is still the truth, which
+    is the same reason build_panel_record drops None keys instead of writing
+    them empty.
+    """
+    adapter = FakeAdapter([{"lat": 17.5697, "moisture": 31.2}])
+    node = build_node(tmp_path, adapter, samples=1)   # no panel_summary.json
+
+    overlay = node._result_overlay({"zones": 0, "recommendations": 0},
+                                   {"distinct_locations": 1})
+
+    assert "zone_statuses" not in overlay

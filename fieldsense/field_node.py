@@ -791,6 +791,7 @@ class FieldNode:
             "soil_health_status": panel_summary.get("soil_health_status"),
             "soil_health_score": panel_summary.get("soil_health_score"),
             "zone_count": summary.get("zones"),
+            "zone_statuses": panel_summary.get("zone_statuses"),
             "recommendation_count": summary.get("recommendations"),
             "evidence_level": panel_summary.get("evidence_level"),
             "distinct_locations": report["distinct_locations"],
