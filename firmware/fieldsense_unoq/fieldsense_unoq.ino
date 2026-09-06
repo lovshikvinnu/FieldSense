@@ -283,6 +283,30 @@ static char     lastQuality[14] = "";
 static char     buttonLabel[20]  = "";   // empty means the device is busy
 static char     progressSegments[12] = "";  // one char per planned sample
 static char     zoneStatuses[12] = "";   // one char per zone: G A R ?
+
+// --- map pages -------------------------------------------------------------
+// One status letter per interpolated grid cell, per layer, in the same G/A/R/?
+// alphabet the zone tiles already use. The host sends these once with the
+// result; this sketch owns which page is showing, so paging costs no round trip
+// on a link measured at about 860 B/s.
+//
+// ponytail: 40 cells per layer. The tested lattice is 5x6=30 and four layers
+// still leave the record inside lineBuf[256]. A materially larger field would
+// need the map split across two records - the parser already tolerates that,
+// since absent keys keep their last value.
+static char     gridHealth[41]   = "";
+static char     gridMoisture[41] = "";
+static char     gridNitrogen[41] = "";
+static char     gridCarbon[41]   = "";
+static int32_t  gridRows        = -1;
+static int32_t  gridCols        = -1;
+// Two ASCII digits per axis, 0..99, normalised by the host: "xxyy" per sample.
+// Absolute metres would not survive the record budget and would mean nothing
+// across 308 pixels. What an operator needs off the glass is the shape of the
+// walk, not a coordinate they could read off the dashboard instead.
+static char     samplePos[45]    = "";
+static char     zoneBox[10]      = "";   // "x0y0x1y1", same 0..99 scale
+static uint8_t  pageIndex       = 0;
 static float    healthScore     = -1.0f;   // negative means "never received"
 static int32_t  totalSamples    = -1;
 static int32_t  validSamples    = -1;
@@ -336,6 +360,14 @@ static void applyPair(const char *key, const char *value) {
   else if (!strcmp(key, "b")) copyField(buttonLabel, sizeof(buttonLabel), value);
   else if (!strcmp(key, "g")) copyField(progressSegments, sizeof(progressSegments), value);
   else if (!strcmp(key, "u")) copyField(zoneStatuses, sizeof(zoneStatuses), value);
+  else if (!strcmp(key, "G")) copyField(gridHealth, sizeof(gridHealth), value);
+  else if (!strcmp(key, "M")) copyField(gridMoisture, sizeof(gridMoisture), value);
+  else if (!strcmp(key, "N")) copyField(gridNitrogen, sizeof(gridNitrogen), value);
+  else if (!strcmp(key, "C")) copyField(gridCarbon, sizeof(gridCarbon), value);
+  else if (!strcmp(key, "P")) copyField(samplePos, sizeof(samplePos), value);
+  else if (!strcmp(key, "B")) copyField(zoneBox, sizeof(zoneBox), value);
+  else if (!strcmp(key, "R")) gridRows        = atol(value);
+  else if (!strcmp(key, "Q")) gridCols        = atol(value);
   else if (!strcmp(key, "h")) healthScore     = atof(value);
   else if (!strcmp(key, "n")) totalSamples    = atol(value);
   else if (!strcmp(key, "v")) validSamples    = atol(value);
@@ -589,6 +621,26 @@ static bool contactInBar() {
   return y >= BAR_Y;
 }
 
+// A contact that ended. On the result screen a SHORT deliberate press - long
+// enough to clear a phantom, short of the hold that starts a new run - turns
+// the page. Everywhere else it does nothing, because everywhere else the
+// screen already offers exactly one action.
+//
+// This is the only gesture available. The controller pen-detects but does not
+// answer over SPI, so there are no coordinates and therefore no tabs and no hit
+// zones; press-and-release against a clock is the whole vocabulary. A hold that
+// already fired notePress() clears contactActive, so a lift after a new-run
+// hold cannot also turn a page.
+static void endContact(uint32_t now) {
+  if (contactActive && !strcmp(workflowState, "RESULT")
+      && (now - contactBeganMs) >= TOUCH_HOLD_MS
+      && (now - contactBeganMs) < RESULT_HOLD_MS) {
+    nextPage();
+    dirty = true;
+  }
+  contactActive = false;
+}
+
 // Register a START press from whichever input produced it.
 static void notePress() {
   uint32_t now = millis();
@@ -610,7 +662,7 @@ static void serviceOperatorInput() {
   // THE GATE. No finger, no SPI - the whole reason the display survives this.
   // irqLevel is refreshed by serviceTouchIrq(), which is a bare digitalRead.
   if (irqLevel != LOW) {
-    contactActive = false;
+    endContact(now);
     return;
   }
 
@@ -667,7 +719,7 @@ static void serviceOperatorInput() {
                               : (irqLevel == LOW);
 
   if (!contact) {
-    contactActive = false;
+    endContact(now);
     return;
   }
   if (!contactActive) {
@@ -1507,6 +1559,143 @@ static void renderResultCard() {
   renderZoneGrid(PANEL_W / 2 + 6, SOIL_Y + 15, PANEL_W / 2 - 6 - MARGIN - 6, SOIL_H - 20);
 }
 
+// ------------------------------------------------------------- map pages
+
+// Page 0 is the result card. The rest are the same finished run seen another
+// way, and they only exist once a run has produced one.
+#define PAGE_RESULT  0
+#define PAGE_GRID_H  1
+#define PAGE_GRID_M  2
+#define PAGE_GRID_N  3
+#define PAGE_GRID_C  4
+#define PAGE_GPS     5
+#define PAGE_COUNT   6
+
+// A map page borrows the action line's band as well as the card: the large
+// instruction is "FIELD RESULT READY" on every one of these screens, which the
+// page title says better, and 110 px is the difference between a legible grid
+// and six rows of slivers.
+static const int16_t MAP_Y = ACTION_Y;
+static const int16_t MAP_H = (SOIL_Y + SOIL_H) - ACTION_Y;
+
+static const char *pageTitle(uint8_t p) {
+  switch (p) {
+    case PAGE_GRID_H: return "SOIL HEALTH";
+    case PAGE_GRID_M: return "MOISTURE";
+    case PAGE_GRID_N: return "NITROGEN";
+    case PAGE_GRID_C: return "CARBON";
+    case PAGE_GPS:    return "GPS MAP";
+    default:          return "";
+  }
+}
+
+static const char *pageGrid(uint8_t p) {
+  switch (p) {
+    case PAGE_GRID_H: return gridHealth;
+    case PAGE_GRID_M: return gridMoisture;
+    case PAGE_GRID_N: return gridNitrogen;
+    case PAGE_GRID_C: return gridCarbon;
+    default:          return "";
+  }
+}
+
+// A page with nothing behind it is skipped rather than drawn empty. The host
+// sends only the layers the spatial engine actually produced, and cycling
+// through blank screens teaches an operator nothing.
+static bool pageHasData(uint8_t p) {
+  if (p == PAGE_RESULT) return true;
+  if (p == PAGE_GPS)    return samplePos[0] != '\0';
+  return pageGrid(p)[0] != '\0' && gridRows > 0 && gridCols > 0;
+}
+
+static void nextPage() {
+  for (uint8_t i = 1; i <= PAGE_COUNT; i++) {
+    uint8_t candidate = (uint8_t)((pageIndex + i) % PAGE_COUNT);
+    if (pageHasData(candidate)) {
+      pageIndex = candidate;
+      return;
+    }
+  }
+}
+
+// Two ASCII digits, 0..99. Never called on a string shorter than i+2.
+static uint8_t pairAt(const char *s, size_t i) {
+  return (uint8_t)((s[i] - '0') * 10 + (s[i + 1] - '0'));
+}
+
+static void renderMapChrome(uint8_t p) {
+  tft.fillRect(MARGIN, MAP_Y, PANEL_W - 2 * MARGIN, MAP_H, COL_BG);
+  tft.fillRoundRect(MARGIN, MAP_Y, PANEL_W - 2 * MARGIN, MAP_H, 4, COL_CARD);
+  label(MARGIN + 8, MAP_Y + 5, pageTitle(p), COL_ACCENT, 1);
+}
+
+// One tile per interpolated cell, row-major as the host ordered them: north at
+// the top, west at the left, so the picture stands the same way up as the walk.
+static void renderGridPage(uint8_t p) {
+  const char *cells = pageGrid(p);
+  int16_t rows = (int16_t)gridRows, cols = (int16_t)gridCols;
+  if (rows < 1 || cols < 1) return;
+  size_t n = strlen(cells);
+  const int16_t gap = 2;
+  int16_t x0 = MARGIN + 6, y0 = MAP_Y + 18;
+  int16_t w = PANEL_W - 2 * MARGIN - 12, h = MAP_H - 24;
+  int16_t tw = (int16_t)((w - (cols - 1) * gap) / cols);
+  int16_t th = (int16_t)((h - (rows - 1) * gap) / rows);
+  if (tw < 3) tw = 3;
+  if (th < 3) th = 3;
+  for (size_t i = 0; i < n; i++) {
+    int16_t r = (int16_t)(i / (size_t)cols);
+    int16_t c = (int16_t)(i % (size_t)cols);
+    if (r >= rows) break;
+    tft.fillRoundRect(x0 + c * (tw + gap), y0 + r * (th + gap), tw, th, 2,
+                      zoneColour(cells[i]));
+  }
+}
+
+// The walk: where the operator actually stood, in what order, inside the zone
+// the engine drew around them.
+static void renderGpsPage() {
+  size_t n = strlen(samplePos) / 4;
+  if (n == 0) return;
+  int16_t x0 = MARGIN + 12, y0 = MAP_Y + 20;
+  int16_t w = PANEL_W - 2 * MARGIN - 28, h = MAP_H - 30;
+
+  // Zone boundary first, so the samples sit on top of it rather than under.
+  if (strlen(zoneBox) >= 8) {
+    int16_t bx0 = x0 + (int16_t)((int32_t)pairAt(zoneBox, 0) * w / 99);
+    int16_t by1 = y0 + (int16_t)((int32_t)(99 - pairAt(zoneBox, 2)) * h / 99);
+    int16_t bx1 = x0 + (int16_t)((int32_t)pairAt(zoneBox, 4) * w / 99);
+    int16_t by0 = y0 + (int16_t)((int32_t)(99 - pairAt(zoneBox, 6)) * h / 99);
+    if (bx1 > bx0 && by1 > by0) {
+      tft.drawRoundRect(bx0, by0, bx1 - bx0, by1 - by0, 3, COL_DIM);
+    }
+  }
+
+  // Walk order, drawn before the dots for the same reason.
+  int16_t px = 0, py = 0;
+  for (size_t i = 0; i < n; i++) {
+    int16_t sx = x0 + (int16_t)((int32_t)pairAt(samplePos, i * 4) * w / 99);
+    int16_t sy = y0 + (int16_t)((int32_t)(99 - pairAt(samplePos, i * 4 + 2)) * h / 99);
+    if (i > 0) {
+      tft.drawLine(px, py, sx, sy, COL_ACCENT);
+    }
+    px = sx;
+    py = sy;
+  }
+
+  // Dots and their sample numbers. The number sits up and right of the dot so
+  // a tight cluster still reads as separate points.
+  for (size_t i = 0; i < n; i++) {
+    int16_t sx = x0 + (int16_t)((int32_t)pairAt(samplePos, i * 4) * w / 99);
+    int16_t sy = y0 + (int16_t)((int32_t)(99 - pairAt(samplePos, i * 4 + 2)) * h / 99);
+    tft.fillCircle(sx, sy, 4, COL_GOOD);
+    tft.drawCircle(sx, sy, 4, COL_TEXT);
+    char num[4];
+    snprintf(num, sizeof(num), "%u", (unsigned)(i + 1));
+    label(sx + 6, sy - 10, num, COL_TEXT, 1);
+  }
+}
+
 // The bottom bar is the single touch target. Green and full width when there
 // is something to press; a flat state strip when the device is busy, so there
 // is no target to press by mistake.
@@ -1589,6 +1778,17 @@ static void renderValues() {
     }
   }
 
+  // Which page is showing governs everything below. A map page borrows the
+  // action band as well as the card, so the instruction must not draw over it
+  // and the band has to be handed back on the way out.
+  bool showResult = !strcmp(workflowState, "RESULT");
+  // Leaving the result screen returns to page 0, so the next run starts on its
+  // own result rather than on whichever map the last operator left showing.
+  if (!showResult && pageIndex != PAGE_RESULT) {
+    pageIndex = PAGE_RESULT;
+  }
+  bool onMapPage = showResult && pageIndex != PAGE_RESULT;
+
   // THE TEASER. One actionable line, as large as it will go.
   uint16_t actionColour = COL_TEXT;
   if (!strcmp(workflowState, "ERROR"))             actionColour = COL_BAD;
@@ -1596,13 +1796,22 @@ static void renderValues() {
   else if (!strcmp(workflowState, "SAMPLE_SAVED")) actionColour = COL_GOOD;
   else if (!strcmp(workflowState, "PROCESSING"))   actionColour = COL_ACCENT;
   else if (!strcmp(lastQuality, "RETRY"))          actionColour = COL_WARN;
-  {
+  // Hoisted out of the block below so the page dispatch can invalidate it. A
+  // map page paints over this band, so coming back has to redraw the
+  // instruction even though its text never changed.
+  static char drawnAction[48] = "\x01";
+  static uint16_t drawnActionColour = 0;
+  static bool wasOnMapPage = false;
+  if (wasOnMapPage && !onMapPage) {
+    drawnAction[0] = '\x01';
+  }
+  wasOnMapPage = onMapPage;
+  if (!onMapPage) {
     // The instruction changes on a state change, not on a clock. Clearing this
     // 308x48 band every second was the largest single wipe on the panel.
-    static char drawn[48] = "\x01";
-    static uint16_t drawnColour = 0;
-    if (changedSince(drawn, sizeof(drawn), actionLine) || actionColour != drawnColour) {
-      drawnColour = actionColour;
+    if (changedSince(drawnAction, sizeof(drawnAction), actionLine)
+        || actionColour != drawnActionColour) {
+      drawnActionColour = actionColour;
       tft.fillRect(MARGIN, ACTION_Y, PANEL_W - 2 * MARGIN, ACTION_H, COL_BG);
       drawCentered(MARGIN, ACTION_Y, PANEL_W - 2 * MARGIN, ACTION_H,
                    actionLine, actionColour, 3);
@@ -1613,19 +1822,30 @@ static void renderValues() {
   // The card's BACKGROUND and labels are drawn only when the view changes; the
   // values redraw themselves only when they move. Previously the whole card was
   // repainted every second, which is what wiped it.
-  bool showResult = !strcmp(workflowState, "RESULT");
   static int8_t lastCardKind = -1;
-  int8_t cardKind = showResult ? 1 : 0;
+  int8_t cardKind = onMapPage ? (int8_t)(2 + pageIndex) : (showResult ? 1 : 0);
   if (cardKind != lastCardKind) {
     lastCardKind = cardKind;
-    tft.fillRect(MARGIN, SOIL_Y, PANEL_W - 2 * MARGIN, SOIL_H, COL_BG);
-    if (showResult) {
-      renderResultChrome();
+    if (onMapPage) {
+      renderMapChrome(pageIndex);
     } else {
-      renderSoilChrome();
+      // Coming back from a map page also has to clear the action band it
+      // borrowed, or the page title stays behind the instruction line.
+      tft.fillRect(MARGIN, MAP_Y, PANEL_W - 2 * MARGIN, MAP_H, COL_BG);
+      if (showResult) {
+        renderResultChrome();
+      } else {
+        renderSoilChrome();
+      }
     }
   }
-  if (showResult) {
+  if (onMapPage) {
+    if (pageIndex == PAGE_GPS) {
+      renderGpsPage();
+    } else {
+      renderGridPage(pageIndex);
+    }
+  } else if (showResult) {
     renderResultCard();
   } else {
     renderSoilCard();

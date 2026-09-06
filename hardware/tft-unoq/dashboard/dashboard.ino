@@ -186,6 +186,21 @@ static char     lastQuality[14] = "";
 static char     buttonLabel[20]  = "";   // empty means the device is busy
 static char     progressSegments[12] = "";  // one char per planned sample
 static char     zoneStatuses[12] = "";   // one char per zone: G A R ?
+
+// --- map pages -------------------------------------------------------------
+// STORED, NOT DRAWN. This is the bench display sketch; the field sketch owns
+// the map pages and the press-to-page gesture that reaches them. These live
+// here so the two sketches parse an identical record -
+// test_both_sketches_parse_the_same_record holds them to it - because a key
+// one sketch silently ignores is the failure mode that whole test exists for.
+static char     gridHealth[41]   = "";
+static char     gridMoisture[41] = "";
+static char     gridNitrogen[41] = "";
+static char     gridCarbon[41]   = "";
+static int32_t  gridRows        = -1;
+static int32_t  gridCols        = -1;
+static char     samplePos[45]    = "";
+static char     zoneBox[10]      = "";
 static float    healthScore     = -1.0f;   // negative means "never received"
 static int32_t  totalSamples    = -1;
 static int32_t  validSamples    = -1;
@@ -239,6 +254,14 @@ static void applyPair(const char *key, const char *value) {
   else if (!strcmp(key, "b")) copyField(buttonLabel, sizeof(buttonLabel), value);
   else if (!strcmp(key, "g")) copyField(progressSegments, sizeof(progressSegments), value);
   else if (!strcmp(key, "u")) copyField(zoneStatuses, sizeof(zoneStatuses), value);
+  else if (!strcmp(key, "G")) copyField(gridHealth, sizeof(gridHealth), value);
+  else if (!strcmp(key, "M")) copyField(gridMoisture, sizeof(gridMoisture), value);
+  else if (!strcmp(key, "N")) copyField(gridNitrogen, sizeof(gridNitrogen), value);
+  else if (!strcmp(key, "C")) copyField(gridCarbon, sizeof(gridCarbon), value);
+  else if (!strcmp(key, "P")) copyField(samplePos, sizeof(samplePos), value);
+  else if (!strcmp(key, "B")) copyField(zoneBox, sizeof(zoneBox), value);
+  else if (!strcmp(key, "R")) gridRows        = atol(value);
+  else if (!strcmp(key, "Q")) gridCols        = atol(value);
   else if (!strcmp(key, "h")) healthScore     = atof(value);
   else if (!strcmp(key, "n")) totalSamples    = atol(value);
   else if (!strcmp(key, "v")) validSamples    = atol(value);

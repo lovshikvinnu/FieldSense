@@ -414,6 +414,26 @@ PANEL_RECORD_FIELDS = (
     ("b", "button_label"),        # full-width action button, empty when busy
     ("g", "progress_segments"),   # one char per planned sample: V S R -
     ("u", "zone_statuses"),       # one char per zone: G A R ?
+    # --- map pages --------------------------------------------------------
+    # Sent as their OWN record, never folded into the result record. That one
+    # measures 200 bytes of the sketch's 256-byte lineBuf and four grid layers
+    # are another 130; an overlong line is dropped whole and silently, so the
+    # map would take the result down with it. The sketch keeps the last value
+    # for any field a record omits, which is what makes a second record free.
+    ("G", "grid_soil_health"),      # one status letter per cell, row-major
+    ("M", "grid_moisture"),
+    ("N", "grid_nitrogen"),
+    ("C", "grid_carbon_readiness"),
+    ("R", "grid_rows"),
+    ("Q", "grid_cols"),
+    ("P", "sample_positions"),      # "xxyy" per sample, 0..99, north-up
+    ("B", "zone_box"),              # "x0y0x1y1", same scale
+)
+
+#: The map-page sources, for a caller that wants to send only those.
+PANEL_MAP_SOURCES = (
+    "grid_rows", "grid_cols", "grid_soil_health", "grid_moisture",
+    "grid_nitrogen", "grid_carbon_readiness", "sample_positions", "zone_box",
 )
 
 # arduino-router re-exposes the MCU Monitor stream here. Not a tty: the daemon

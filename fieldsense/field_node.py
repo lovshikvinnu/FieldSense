@@ -44,7 +44,10 @@ from fieldsense.field.states import FieldState
 from fieldsense.field.store import FieldSessionStore
 from fieldsense.hardware.factory import DataSourceConfig, SensorAdapterFactory
 from fieldsense.hardware.gps.bridge_gps import UIEvent, parse_ui_event
-from fieldsense.hardware.panel_renderer import DEFAULT_PANEL_ENDPOINT
+from fieldsense.hardware.panel_renderer import (
+    DEFAULT_PANEL_ENDPOINT,
+    PANEL_MAP_SOURCES,
+)
 from fieldsense.intelligence import FieldIntelligenceEngine, ValidationEngine
 
 PROVENANCE_LIVE = "LIVE_HARDWARE"
@@ -747,11 +750,40 @@ class FieldNode:
 
         self.session.complete_processing(summary)
         self.show(extra=self._result_overlay(summary, report))
+        self.push_map_pages()
         log("field result: {} samples, {} distinct locations, spread {} m".format(
             report["stored_samples"], report["distinct_locations"],
             report["spatial_spread_m"]))
         self.start_narrative(dataset)
         return {"processed": True, "summary": summary}
+
+    def push_map_pages(self) -> Dict[str, Any]:
+        """Send the grid and GPS pages as their own record.
+
+        A SECOND record, not extra fields on the result. The result record
+        measures 200 bytes of the sketch's 256-byte lineBuf and four grid
+        layers are another 130 - and an overlong line is not truncated, it is
+        dropped whole and silently, so the map would have taken the result
+        screen down with it. The sketch keeps the last value it was given for
+        any field a record omits, which is precisely what makes a second
+        record free rather than a protocol change.
+
+        Never raises: a panel that cannot be reached must not cost a session.
+        """
+        from fieldsense.hardware.panel_renderer import load_panel_summary
+
+        try:
+            summary = load_panel_summary(
+                os.path.join(self.output_dir, "panel_summary.json")) or {}
+        except Exception:
+            summary = {}
+        fields = {k: summary[k] for k in PANEL_MAP_SOURCES
+                  if summary.get(k) not in (None, "")}
+        if not fields:
+            return {"status": "SKIPPED", "detail": "no map fields to send"}
+        result = field_panel.push_summary(fields, endpoint=self.panel_endpoint)
+        log("map pages: {} ({})".format(result["status"], result["detail"]))
+        return result
 
     def start_narrative(self, dataset: str) -> threading.Thread:
         """Generate the narrative after the map is already on the glass.

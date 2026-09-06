@@ -476,6 +476,91 @@ def zone_status_letters(zones: Any) -> str:
     return "".join(letters)
 
 
+#: Record key -> the layer id the spatial engine produces. Only these four
+#: exist; there is no pH, EC or NPK grid to draw, and inventing one would put a
+#: surface on the panel that no engine computed.
+PANEL_MAP_LAYERS = (
+    ("grid_soil_health", "soil_health"),
+    ("grid_moisture", "moisture"),
+    ("grid_nitrogen", "nitrogen"),
+    ("grid_carbon_readiness", "carbon_readiness"),
+)
+
+
+def _norm99(value: float, low: float, high: float) -> int:
+    """Scale one coordinate onto 0..99 for the panel's two-digit encoding."""
+    span = (high - low) or 1.0
+    return max(0, min(99, int(round((value - low) * 99.0 / span))))
+
+
+def panel_map_fields(coords: Any, local_xy: Any, ui_view: Any) -> Dict[str, Any]:
+    """The two map pages, compressed to what a 256-byte record can carry.
+
+    One status letter per interpolated cell, in the same G/A/R/? alphabet the
+    zone tiles already use, plus the sample positions on a shared 0..99 frame.
+    Absolute metres would not fit and would mean nothing across 308 pixels: what
+    an operator needs off the glass is which cells want attention and the shape
+    of the walk. The numbers are on the dashboard.
+
+    Cells come back ROW-MAJOR, north first and west first, rather than in
+    whatever order the engine emitted them. The panel draws a lattice, so the
+    ordering IS the layout - get it wrong and the glass shows a tidy map that is
+    quietly transposed, which is worse than showing nothing.
+
+    Returns {} when there is no view or no grid, so a caller can fold it into a
+    summary unconditionally.
+    """
+    grid_by_layer = getattr(getattr(ui_view, "map", None), "grid_by_layer", None) or {}
+    reference = next((pts for pts in grid_by_layer.values() if pts), None)
+    if reference is None or not local_xy or not coords:
+        return {}
+
+    lats = sorted({round(p.latitude, 7) for p in reference}, reverse=True)
+    lons = sorted({round(p.longitude, 7) for p in reference})
+    rows, cols = len(lats), len(lons)
+    if rows < 1 or cols < 1:
+        return {}
+
+    at = {}
+    for index, point in enumerate(reference):
+        at[(lats.index(round(point.latitude, 7)),
+            lons.index(round(point.longitude, 7)))] = index
+
+    fields: Dict[str, Any] = {"grid_rows": rows, "grid_cols": cols}
+    for key, layer in PANEL_MAP_LAYERS:
+        points = grid_by_layer.get(layer) or []
+        if not points:
+            continue
+        letters = []
+        for row in range(rows):
+            for col in range(cols):
+                index = at.get((row, col))
+                status = ""
+                if index is not None and index < len(points):
+                    status = str(getattr(points[index], "status", "") or "").upper().strip()
+                letters.append(ZONE_STATUS_LETTERS.get(status, "?"))
+        fields[key] = "".join(letters)
+
+    # Samples and the grid share one frame, so the zone box drawn on the GPS
+    # page is the box those samples actually sit in.
+    grid_xy = latlon_to_local_cartesian(
+        [coords[0]] + [(p.latitude, p.longitude) for p in reference])[1:]
+    xs = [x for x, _ in local_xy] + [x for x, _ in grid_xy]
+    ys = [y for _, y in local_xy] + [y for _, y in grid_xy]
+    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+
+    fields["sample_positions"] = "".join(
+        "{:02d}{:02d}".format(_norm99(x, x0, x1), _norm99(y, y0, y1))
+        for x, y in local_xy)
+    if grid_xy:
+        gx = [x for x, _ in grid_xy]
+        gy = [y for _, y in grid_xy]
+        fields["zone_box"] = "{:02d}{:02d}{:02d}{:02d}".format(
+            _norm99(min(gx), x0, x1), _norm99(min(gy), y0, y1),
+            _norm99(max(gx), x0, x1), _norm99(max(gy), y0, y1))
+    return fields
+
+
 def run_spatial_test(
     json_path: str = "field_test_20260823_171931.json",
     output_dir: str = "artifacts",
@@ -599,6 +684,7 @@ def run_spatial_test(
     # 6. Visual Field Intelligence Map
     html_path = None
     health = None
+    ui_view = None
     if render_ui:
         print("\n[6/7] Rendering Field Intelligence Map dashboard...")
         html_path, ui_view = build_dashboard(
@@ -641,6 +727,10 @@ def run_spatial_test(
         # This reads what the zone engine produced - it does not compute or
         # reclassify anything.
         "zone_statuses": zone_status_letters(zone_result.zones),
+        # The two panel map pages. The zone tiles already proved a status
+        # letter per region survives this link; the interpolated cells
+        # travel the same way.
+        **panel_map_fields(coords, local_xy, ui_view),
         "recommendation_count": len(rec_result.recommendations),
         "data_source": "HARDWARE" if provenance == "LIVE_HARDWARE" else provenance,
         "evidence_level": health.evidence_level if health else None,
