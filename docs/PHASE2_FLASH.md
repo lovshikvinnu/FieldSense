@@ -8,17 +8,19 @@ lines App Lab uses.
 Do this with the unit in front of you. Not over SSH from another room, and not
 while anybody is mid-survey.
 
-**Confirm the board is actually up before you start, and keep it powered.**
-The unit went unreachable twice while this was being written - SSH timing out
-while ICMP still answered. Both were the operator switching it off, not a
-fault: there is NO evidence the board is unstable under load, and an earlier
-draft of this file wrongly said there was. Check `uptime -s` rather than
-assuming.
+**RUN THIS ON MAINS POWER. NEVER ON BATTERY.**
 
-What remains true regardless of cause: a board that loses power mid-flash is
-the one failure this procedure cannot talk you out of. Do not flash a unit
-somebody might switch off, and do not flash over a link you have just watched
-drop.
+The unit browned out twice while this was being written, both times during a
+compile: SSH timed out, ICMP kept answering, and it came back a few minutes
+later with `uptime` reset. It was a flat battery, not a board fault - and a
+compile is exactly the sustained current draw that finds a flat battery.
+
+A flash is the same kind of load with none of the forgiveness. Losing power
+part-way through writing the MCU is the one failure this procedure cannot talk
+you out of, and it is a plausible one on battery, not a theoretical one.
+
+Before starting: confirm the supply is external, and check `uptime -s` so you
+know the unit has not just restarted underneath you.
 
 ## 0. Gates
 
