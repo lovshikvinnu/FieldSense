@@ -8,13 +8,17 @@ lines App Lab uses.
 Do this with the unit in front of you. Not over SSH from another room, and not
 while anybody is mid-survey.
 
-**The board drops off the network under sustained compile load.** It happened
-twice while this was being written: SSH times out, ICMP still answers, and it
-comes back on its own a few minutes later having rebooted (`uptime -p` resets).
-Compile ONE sketch at a time, never two at once, and never start a flash
-immediately after a heavy build - wait for `uptime` to look stable first. A
-board that reboots mid-flash is the one failure this procedure cannot talk you
-out of.
+**Confirm the board is actually up before you start, and keep it powered.**
+The unit went unreachable twice while this was being written - SSH timing out
+while ICMP still answered. Both were the operator switching it off, not a
+fault: there is NO evidence the board is unstable under load, and an earlier
+draft of this file wrongly said there was. Check `uptime -s` rather than
+assuming.
+
+What remains true regardless of cause: a board that loses power mid-flash is
+the one failure this procedure cannot talk you out of. Do not flash a unit
+somebody might switch off, and do not flash over a link you have just watched
+drop.
 
 ## 0. Gates
 
