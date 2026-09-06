@@ -108,13 +108,12 @@
 // every coordinate in this file is written against that.
 static const uint16_t PANEL_W = 320;
 static const uint16_t PANEL_H = 240;
-// Rotation 3, not 1: the same landscape surface turned through 180 degrees, so
-// the unit reads correctly in the orientation it is actually held. Both values
-// are landscape and both report 320x240, so every coordinate in this file maps
-// unchanged - the driver rewrites MADCTL and the whole image turns together.
-// Anything other than 1 or 3 here would be portrait and would invalidate the
-// entire layout.
-static const uint8_t  PANEL_ROTATION = 3;
+// Rotation 1: kept identical to fieldsense_unoq.ino, which is set to 1 because
+// the unit was held and read and was already upright. See the longer note
+// there. Both values are landscape and both report 320x240, so every
+// coordinate in this file maps unchanged either way. Anything other than 1 or
+// 3 here would be portrait and would invalidate the entire layout.
+static const uint8_t  PANEL_ROTATION = 1;
 
 // Adafruit_GFX's built-in font is 6x8 px per character at size 1 and scales by
 // integer multiples. Named here because every fit calculation below uses them.

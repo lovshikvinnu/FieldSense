@@ -361,3 +361,19 @@ def test_the_panel_draws_a_tile_per_sample_and_per_zone(path):
         "the progress strip should size itself from the host's string"
     assert "strlen(zoneStatuses)" in source, \
         "the zone map should size itself from the host's string"
+
+
+def test_the_panel_rotation_matches_the_orientation_the_unit_was_read_in():
+    """Rotation 1, established by holding the unit - not by reasoning about it.
+
+    This was briefly changed to 3, on the argument that 3 is "the orientation it
+    is actually held". Nobody had held it: the board ran the rotation-1 sketch
+    continuously, so the 3 never reached the glass, and when the panel was
+    finally looked at in the hand it was already upright. Flashing 3 would have
+    turned a correct display upside down.
+
+    Both values are landscape and the layout is identical either way, which is
+    precisely why this is worth pinning - nothing else in the sketch, and no
+    other test, would notice the difference.
+    """
+    assert _const(_read(DEPLOYED), "PANEL_ROTATION") == 1,         "the unit reads upright at rotation 1; 3 is the same surface upside down"
