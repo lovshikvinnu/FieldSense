@@ -8,6 +8,7 @@ machine, the plausibility layer, the durable store, and the dataset written for
 
 import json
 import os
+import threading
 from datetime import datetime, timezone
 
 import pytest
@@ -96,6 +97,10 @@ def build_node(tmp_path, adapter, samples=3, **kwargs):
     node.adapter = adapter
     node.open_hardware = lambda: adapter.initialize()
     node.show = lambda extra=None: None          # no panel in a unit test
+    # No background narrative either: it would re-run the whole pipeline in a
+    # daemon thread and outlive the tmp_path it writes into. The tests that
+    # care about it call FieldNode.start_narrative directly.
+    node.start_narrative = lambda dataset: None
     return node
 
 
@@ -577,3 +582,93 @@ def test_a_run_with_no_zone_letters_omits_the_field_rather_than_blanking_it(tmp_
                                    {"distinct_locations": 1})
 
     assert "zone_statuses" not in overlay
+
+
+# ------------------------------------------------- non-blocking narrative
+
+
+def test_the_map_reaches_the_panel_without_waiting_for_the_narrative(tmp_path, monkeypatch):
+    """The operator used to stand in a field for two minutes watching PROCESSING.
+
+    Every deterministic result - grid, zones, health score - is finished about a
+    second after the last sample. The local SLM then took 124,957 ms on top of
+    it, and on the run that prompted this the fidelity guard rejected what it
+    produced anyway. The result screen must not be behind that.
+    """
+    import run_spatial_test as rst
+
+    seen = {}
+
+    def fake_pipeline(**kwargs):
+        seen.update(kwargs)
+        return {"zones": 1, "recommendations": 2, "samples": 3}
+
+    monkeypatch.setattr(rst, "run_spatial_test", fake_pipeline)
+
+    adapter = FakeAdapter([
+        {"lat": 17.5697 + i * 0.0004, "moisture": 31.2 - i} for i in range(3)])
+    node = build_node(tmp_path, adapter, samples=3)
+    shown = []
+    node.show = lambda extra=None: shown.append(extra or {})
+    node.run()
+
+    assert seen["with_narrative"] is False
+    assert shown, "the result screen was never pushed"
+
+
+def test_the_narrative_runs_in_the_background_and_reports_when_it_lands(tmp_path, monkeypatch):
+    """start_narrative must return while the SLM is still working."""
+    import run_spatial_test as rst
+
+    release = threading.Event()
+    monkeypatch.setattr(rst, "run_spatial_test", lambda **k: release.wait(10))
+
+    node = build_node(tmp_path, FakeAdapter([{"lat": 17.5697}]), samples=1)
+    thread = FieldNode.start_narrative(node, "dataset.json")   # bypass the stub
+
+    assert thread.is_alive()                       # returned before the SLM did
+    assert node.narrative_status == "WORKING"
+    release.set()
+    thread.join(15)
+    assert not thread.is_alive()
+    assert node.narrative_status == "READY"
+
+
+def test_a_narrative_that_fails_says_so_instead_of_claiming_it_is_ready(tmp_path, monkeypatch):
+    import run_spatial_test as rst
+
+    def boom(**kwargs):
+        raise RuntimeError("no weights")
+
+    monkeypatch.setattr(rst, "run_spatial_test", boom)
+
+    node = build_node(tmp_path, FakeAdapter([{"lat": 17.5697}]), samples=1)
+    FieldNode.start_narrative(node, "dataset.json").join(15)
+
+    assert node.narrative_status == "UNAVAILABLE"
+
+
+def test_the_result_record_still_fits_the_firmware_line_buffer():
+    """fieldsense_unoq.ino reads into lineBuf[256] and DROPS AN OVERLONG LINE WHOLE.
+
+    Not truncates - drops, silently, with no error anywhere. A field added to
+    the result record that pushes it past 255 bytes does not lose that field,
+    it loses the entire screen update. The record measured 200 bytes before
+    ai_status, so the headroom is real but small; this is the test that fails
+    before the panel goes quiet in a field.
+    """
+    from fieldsense.hardware.panel_renderer import build_panel_record
+
+    record = build_panel_record({
+        "field_name": "20260904T100837Z", "workflow_state": "RESULT",
+        "sample_index": 5, "planned_samples": 5,
+        "action_line": "FIELD RESULT READY", "button_label": "HOLD FOR NEW RUN",
+        "progress_segments": "VVVVV", "total_samples": 5, "valid_samples": 5,
+        "rejected_samples": 0, "distinct_locations": 5, "offline_mode": True,
+        "sample_quality": "VALID", "moisture": 0.0, "ph": 7.4, "ec": 0.866,
+        "nitrogen": 61.0, "phosphorus": 86.0, "potassium": 173.0,
+        "soil_health_status": "HEALTHY", "soil_health_score": 0.73,
+        "zone_count": 1, "recommendation_count": 2, "evidence_level": "LIMITED",
+        "zone_statuses": "G",
+    })
+    assert len(record) < 256, "record is {} bytes; the MCU drops it".format(len(record))

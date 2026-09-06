@@ -33,6 +33,7 @@ import json
 import os
 import select
 import struct
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -450,6 +451,11 @@ class FieldNode:
         self.last_soil: Optional[Dict[str, Any]] = None
         self._panel_fault: Optional[str] = None
         self._panel_fault_count = 0
+        # IDLE -> WORKING -> READY | UNAVAILABLE. Not on the wire yet: the
+        # sketch would ignore an unknown key, so the field ships with the
+        # firmware that draws it. tests/test_panel_record_contract.py holds
+        # the host and the sketch to the same key set.
+        self.narrative_status = "IDLE"
 
     # ------------------------------------------------------------- panel
 
@@ -730,6 +736,7 @@ class FieldNode:
                 output_dir=self.output_dir,
                 display="off",          # the panel is driven from here, below
                 allow_generate=False,
+                with_narrative=False,   # runs in the background; see below
             )
         except Exception as exc:
             detail = "{}: {}".format(type(exc).__name__, exc)
@@ -743,7 +750,53 @@ class FieldNode:
         log("field result: {} samples, {} distinct locations, spread {} m".format(
             report["stored_samples"], report["distinct_locations"],
             report["spatial_spread_m"]))
+        self.start_narrative(dataset)
         return {"processed": True, "summary": summary}
+
+    def start_narrative(self, dataset: str) -> threading.Thread:
+        """Generate the narrative after the map is already on the glass.
+
+        The local SLM costs about two minutes on this board - 124,957 ms
+        measured on the run that prompted this - while every deterministic
+        result it comments on is finished in about one second. Holding
+        PROCESSING for that is two minutes an operator spends in a field
+        waiting on prose the fidelity guard may well reject, which is what
+        happened on that run: FALLBACK_TEMPLATE, two guard violations, and the
+        generated text discarded.
+
+        Daemon, so a unit switched off mid-narrative does not wait for it.
+
+        Deliberately touches no panel record. It reports through
+        `narrative_status` only, so a narrative finishing after the operator
+        has begun another run cannot repaint that run's screen with a finished
+        run's numbers. Phase 2 puts the status on the glass, in the same change
+        as the firmware that knows how to draw it.
+        """
+        def work() -> None:
+            # ponytail: re-runs the deterministic engines (~1 s) rather than
+            # refactoring run_spatial_test to hand back its intermediates.
+            # Refactor if that second ever costs anything that matters.
+            from run_spatial_test import run_spatial_test
+
+            status = "READY"
+            try:
+                log("AI narrative: starting in the background")
+                run_spatial_test(
+                    json_path=dataset,
+                    output_dir=self.output_dir,
+                    display="off",
+                    allow_generate=False,
+                )
+            except Exception as exc:
+                log("AI narrative failed: {}: {}".format(type(exc).__name__, exc))
+                status = "UNAVAILABLE"
+            self.narrative_status = status
+            log("AI narrative: {}".format(status))
+
+        self.narrative_status = "WORKING"
+        thread = threading.Thread(target=work, name="fieldsense-narrative", daemon=True)
+        thread.start()
+        return thread
 
     def await_new_run(self) -> bool:
         """Hold the result on screen until the operator asks for another run.

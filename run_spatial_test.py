@@ -188,6 +188,7 @@ def build_dashboard(
     rec_result: Any,
     output_dir: str = "artifacts",
     html_name: str = "field_test_map.html",
+    with_narrative: bool = True,
 ) -> Tuple[str, Any]:
     """Render the Field Intelligence Map dashboard from spatial + zone results.
 
@@ -222,17 +223,26 @@ def build_dashboard(
 
     # Optional narrative. Absent model weights resolve to deterministic
     # templates; a failure here must never cost us the dashboard.
-    try:
-        ai_adapter = AIAdapterFactory.create_adapter()
+    #
+    # `with_narrative=False` skips it outright. The local SLM costs about two
+    # minutes on this board - 124,957 ms measured on the run that prompted this
+    # - while every deterministic result it comments on is finished in about a
+    # second. The field node renders the map without it and fills the narrative
+    # in from a second, background pass, so nobody stands in a field watching
+    # PROCESSING while prose is generated. Default True, so every existing
+    # caller including the CLI behaves exactly as it did.
+    if with_narrative:
         try:
-            narrative = ai_adapter.explain(
-                build_explanation_context(session, spatial_result, zone_result, rec_result)
-            )
-            view = replace(view, narrative=narrative)
-        finally:
-            ai_adapter.shutdown()
-    except Exception as exc:  # narrative is presentation text, never load-bearing
-        print("     -> AI narrative unavailable ({}); dashboard renders without it.".format(exc))
+            ai_adapter = AIAdapterFactory.create_adapter()
+            try:
+                narrative = ai_adapter.explain(
+                    build_explanation_context(session, spatial_result, zone_result, rec_result)
+                )
+                view = replace(view, narrative=narrative)
+            finally:
+                ai_adapter.shutdown()
+        except Exception as exc:  # narrative is presentation text, never load-bearing
+            print("     -> AI narrative unavailable ({}); dashboard renders without it.".format(exc))
 
     os.makedirs(output_dir, exist_ok=True)
     html_path = os.path.join(output_dir, html_name)
@@ -476,6 +486,7 @@ def run_spatial_test(
     allow_generate: bool = False,
     mcu_port: Optional[str] = None,
     mcu_baud: Optional[int] = None,
+    with_narrative: bool = True,
 ) -> Dict[str, Any]:
     """Bridge hardware JSON to Phase 1 engines, the visual dashboard, and the panel.
 
@@ -496,6 +507,10 @@ def run_spatial_test(
         mcu_baud: Retained for the CLI's shape and ignored by `bridge` mode. The
             value link rides arduino-router over TCP, which fixes its own line
             speed; there is no baud for the host to choose.
+        with_narrative: Generate the AI narrative. False returns as soon as the
+            deterministic map is written, which is what the field node wants -
+            it renders the result immediately and runs the narrative in the
+            background. Default True, so the CLI is unchanged.
 
     Returns:
         Summary dictionary of the run.
@@ -587,7 +602,8 @@ def run_spatial_test(
     if render_ui:
         print("\n[6/7] Rendering Field Intelligence Map dashboard...")
         html_path, ui_view = build_dashboard(
-            samples, spatial_result, zone_result, rec_result, output_dir=output_dir
+            samples, spatial_result, zone_result, rec_result, output_dir=output_dir,
+            with_narrative=with_narrative,
         )
         health = ui_view.health_summary
         size_kb = os.path.getsize(html_path) / 1024.0
