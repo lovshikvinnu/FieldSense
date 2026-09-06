@@ -529,10 +529,67 @@ static void serviceTouchIrq() {
   }
 }
 
+// --- PENIRQ on an interrupt ------------------------------------------------
+//
+// WHY THIS EXISTS, AND WHY POLLING CANNOT BE MADE TO WORK
+//
+// serviceTouchIrq() above is a bare digitalRead, and it is called every 2 ms
+// inside the GPS drain window. That window is 400 ms long. The rest of each
+// pass is one Serial.available() on the Monitor transport, which costs about
+// 595 ms and BLOCKS - nothing in loop() runs while it is in there. So touch was
+// unobserved for roughly three fifths of every second, and there is no line of
+// this sketch you can add another poll to, because the gap is not between the
+// calls, it is inside one of them.
+//
+// The measured symptom: a tap that fell entirely in the blind window was never
+// seen at all, and a tap that straddled it had its duration inflated by up to
+// 600 ms - which pushed ordinary presses past RESULT_HOLD_MS and made every one
+// of them read as a new-run hold. The press counter proved it: fifteen presses
+// registered, not one page turn.
+//
+// An edge cannot be missed. The controller drives PENIRQ whether or not this
+// CPU is stuck in an RPC, so both edges and their timestamps are captured in
+// hardware and read back whenever the loop next gets a turn.
+static const uint32_t TOUCH_BOUNCE_MS = 25;   // shorter than any real contact
+
+static volatile uint32_t isrDownMs = 0;       // millis() at the last falling edge
+static volatile uint32_t isrHeldMs = 0;       // how long the last contact lasted
+static volatile uint32_t isrSeq    = 0;       // bumped when a contact COMPLETES
+static volatile bool     isrDown   = false;
+
+static void touchIsr() {
+  uint32_t now = millis();
+  bool low = (digitalRead(TOUCH_IRQ) == LOW);
+  irqLevel = low ? (uint8_t)LOW : (uint8_t)HIGH;
+  if (low) {
+    if (!isrDown) {
+      isrDown = true;
+      isrDownMs = now;
+    }
+    irqEverLow = true;
+    return;
+  }
+  if (!isrDown) {
+    return;
+  }
+  isrDown = false;
+  uint32_t held = now - isrDownMs;
+  // Chatter on a resistive panel arrives as a burst of very short edges. They
+  // are dropped here rather than downstream, so the sequence counter counts
+  // contacts rather than bounces.
+  if (held >= TOUCH_BOUNCE_MS) {
+    isrHeldMs = held;
+    isrSeq++;
+  }
+}
+
 static uint32_t pressCount     = 0;    // monotonic; the host diffs it
 static uint32_t lastPressMs    = 0;
 static uint32_t contactBeganMs = 0;
 static bool     contactActive  = false;
+// Sampled while the finger was still down, because completeContact() runs after
+// it has lifted and an SPI read then returns an empty panel.
+static bool     contactWasInBar = false;
 
 static uint16_t readTouchChannel(uint8_t command) {
   SPI.beginTransaction(SPISettings(TOUCH_SPI_HZ, MSBFIRST, SPI_MODE0));
@@ -572,6 +629,9 @@ static void probeTouch() {
   pinMode(TOUCH_CS, OUTPUT);
   digitalWrite(TOUCH_CS, HIGH);
   pinMode(TOUCH_IRQ, INPUT_PULLUP);
+  // Both edges: the falling one starts the clock, the rising one stops it. See
+  // the note on touchIsr() for why this cannot be a poll.
+  attachInterrupt(digitalPinToInterrupt(TOUCH_IRQ), touchIsr, CHANGE);
 
   // NO SPI PROBE AT BOOT.
   //
@@ -621,24 +681,37 @@ static bool contactInBar() {
   return y >= BAR_Y;
 }
 
-// A contact that ended. On the result screen a SHORT deliberate press - long
-// enough to clear a phantom, short of the hold that starts a new run - turns
-// the page. Everywhere else it does nothing, because everywhere else the
-// screen already offers exactly one action.
+// One finished contact, classified by how long the finger was actually down.
 //
-// This is the only gesture available. The controller pen-detects but does not
-// answer over SPI, so there are no coordinates and therefore no tabs and no hit
-// zones; press-and-release against a clock is the whole vocabulary. A hold that
-// already fired notePress() clears contactActive, so a lift after a new-run
-// hold cannot also turn a page.
-static void endContact(uint32_t now) {
-  if (contactActive && !strcmp(workflowState, "RESULT")
-      && (now - contactBeganMs) >= TOUCH_HOLD_MS
-      && (now - contactBeganMs) < RESULT_HOLD_MS) {
+// The duration comes from the interrupt, so it is the contact, not the interval
+// between two polls that happened to notice it. That distinction is the whole
+// bug this replaced: polled durations were inflated by up to 600 ms, so every
+// press cleared RESULT_HOLD_MS and read as a new-run hold.
+//
+// On the result screen a short press turns the page and a long one starts a new
+// run. Everywhere else the screen offers exactly one action, so any deliberate
+// contact is that action.
+//
+// Acting on RELEASE rather than part-way through a hold is deliberate: you
+// cannot know a press was short until it ends, and one decision point cannot
+// fire twice.
+static void completeContact(uint32_t held) {
+  if (held < TOUCH_HOLD_MS) {
+    return;                      // a phantom, or a sleeve brushing the glass
+  }
+  // Position is only a filter when the controller answers over SPI. It does not
+  // on this unit, which is why hold length is the whole defence - stated here
+  // rather than papered over. contactWasInBar was sampled while the finger was
+  // still down; reading it now would read an empty panel.
+  if (spiAnswering && !contactWasInBar) {
+    return;
+  }
+  if (!strcmp(workflowState, "RESULT") && held < RESULT_HOLD_MS) {
     nextPage();
     dirty = true;
+    return;
   }
-  contactActive = false;
+  notePress();
 }
 
 // Register a START press from whichever input produced it.
@@ -657,12 +730,32 @@ static void serviceOperatorInput() {
     return;   // the display owns the SPI bus; nothing else touches it
   }
 
+  // A contact that began AND ended while this loop was blocked in
+  // Serial.available() is still waiting here, timestamped at both edges by
+  // touchIsr(). Handling it first is what makes a press impossible to miss.
+  //
+  // Read the sequence, read the duration, then re-read the sequence: if the
+  // interrupt landed between the two reads the pair may be torn, so leave it
+  // for the next pass rather than masking interrupts around a panel poll.
+  static uint32_t seenSeq = 0;
+  uint32_t seq = isrSeq;
+  uint32_t held = isrHeldMs;
+  if (seq == isrSeq && seq != seenSeq) {
+    seenSeq = seq;
+    if (!touchPresent) {
+      touchPresent = true;   // an edge under a real finger is proof enough
+      dirty = true;
+    }
+    completeContact(held);
+  }
+
   uint32_t now = millis();
 
   // THE GATE. No finger, no SPI - the whole reason the display survives this.
-  // irqLevel is refreshed by serviceTouchIrq(), which is a bare digitalRead.
+  // Everything below is about the SPI channel now: pressure, and a landing
+  // position on a unit whose controller answers. It times nothing.
   if (irqLevel != LOW) {
-    endContact(now);
+    contactActive = false;
     return;
   }
 
@@ -719,35 +812,26 @@ static void serviceOperatorInput() {
                               : (irqLevel == LOW);
 
   if (!contact) {
-    endContact(now);
+    contactActive = false;
     return;
   }
   if (!contactActive) {
     contactActive = true;
     contactBeganMs = now;
-    contactInBar();      // for its side effect: record where this landed
+    contactWasInBar = contactInBar();   // while there is still a finger to read
     return;
   }
-  // Held long enough to be deliberate.
+  // No timing here any more. A press is judged when it ENDS, by
+  // completeContact(), from the interrupt's own timestamps - see the note on
+  // touchIsr(). This loop only keeps the pressure channel and the landing
+  // position current while a finger is down.
   //
-  // Two filters reject the phantom contacts this panel's lamination pinch
-  // produces near the centre: a sustained hold, which brief phantoms do not
-  // survive, and - only when the controller answers over SPI - a position
-  // inside the bottom bar.
-  //
-  // With no coordinates available the hold and the press lockout are the whole
-  // defence. That is weaker than hold-plus-position and is stated plainly
-  // rather than papered over; it is also why TOUCH_HOLD_MS is not shortened to
-  // make the panel feel snappier.
-  // The result screen asks for a deliberate hold; everything else stays quick.
-  uint32_t needHold = !strcmp(workflowState, "RESULT") ? RESULT_HOLD_MS
-                                                       : TOUCH_HOLD_MS;
-  if ((now - contactBeganMs) >= needHold) {
-    if (!spiAnswering || contactInBar()) {
-      notePress();
-      contactActive = false;
-    }
-  }
+  // Two filters still reject the phantom contacts this panel's lamination
+  // pinch produces near the centre: a sustained hold, which brief phantoms do
+  // not survive, and - only when the controller answers over SPI - a position
+  // inside the bottom bar. With no coordinates available the hold and the
+  // press lockout are the whole defence. That is weaker than hold-plus-
+  // position and is stated plainly rather than papered over.
 }
 
 // ----------------------------------------------------------------- GPS
