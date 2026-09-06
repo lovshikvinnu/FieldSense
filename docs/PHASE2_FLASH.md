@@ -88,6 +88,11 @@ fighting over SWD:
 ssh uno-q 'sudo killall -9 openocd'
 ```
 
+`killall` matches on process name, so this works even though openocd is not on
+PATH - it lives at `/opt/openocd/bin/openocd` (0.12.0), with its gpiod config
+beside it at `/opt/openocd/openocd_gpiod.cfg`. `command -v openocd` returning
+nothing is NOT a broken toolchain; do not go installing one.
+
 Wait for it to settle, then retry step 4. Do not retry in a loop.
 
 ## 5. Verify, in this order
