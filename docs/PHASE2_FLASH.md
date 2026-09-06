@@ -8,11 +8,24 @@ lines App Lab uses.
 Do this with the unit in front of you. Not over SSH from another room, and not
 while anybody is mid-survey.
 
+**The board drops off the network under sustained compile load.** It happened
+twice while this was being written: SSH times out, ICMP still answers, and it
+comes back on its own a few minutes later having rebooted (`uptime -p` resets).
+Compile ONE sketch at a time, never two at once, and never start a flash
+immediately after a heavy build - wait for `uptime` to look stable first. A
+board that reboots mid-flash is the one failure this procedure cannot talk you
+out of.
+
 ## 0. Gates
 
 Do not start until all three are true.
 
-- [ ] **The sketch compiles.** It has never been built. See step 2.
+- [x] **The sketch compiles.** Verified 2026-09-06 on the board itself with
+      `arduino-cli 1.5.1`, `arduino:zephyr:unoq`: 125,092 bytes of program
+      storage (15%), globals 50,394 bytes (19%), no errors. `dashboard.ino`
+      builds too (110,580 / 43,852); its one warning, `workflowArmed defined
+      but not used`, predates this work. Rebuild anyway if the sketch has been
+      touched since.
 - [ ] **`PANEL_ROTATION` is 1.** 3 is the same landscape surface upside down.
       `tests/test_landscape_panel.py` pins it; run the suite.
 - [ ] **No session is in progress.** `journalctl -u fieldsense-field -n 5`
