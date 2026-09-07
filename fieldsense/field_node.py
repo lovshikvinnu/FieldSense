@@ -61,7 +61,16 @@ DEFAULT_SETTLE_SECONDS = 2.0
 #: that an operator who glanced away still sees SAMPLE N SAVED, short enough not
 #: to feel like the device has hung. Configurable mainly so tests do not spend
 #: it: a three-sample test would otherwise be twelve seconds of pure sleep.
-DEFAULT_DWELL_SECONDS = 2.0
+#:
+#: 0.8 s, down from 2.0. Between one sample and the next the panel was
+#: unresponsive for about eight seconds - two panel pushes at three seconds
+#: each plus this - and `sync()` at the top of the loop DISCARDS presses made
+#: while the device is busy. So an operator who tapped NEXT SITE during the
+#: wind-down had the press registered by the MCU and thrown away by the host,
+#: which reads as a dead panel rather than a busy one. This is the half of that
+#: eight seconds that costs nothing to shorten: it only governs how long a
+#: message sits on the glass, and SAMPLE N SAVED is still legible.
+DEFAULT_DWELL_SECONDS = 0.8
 
 #: Poll interval while waiting for the operator. Well under the firmware's
 #: press lockout, so no press can fall between two polls.

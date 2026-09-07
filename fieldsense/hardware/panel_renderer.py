@@ -450,10 +450,27 @@ DEFAULT_PANEL_ENDPOINT = "127.0.0.1:7500"
 # single-digit milliseconds, so the send window overlapped the poll under one
 # percent of the time - senders reported success and the panel kept its dashes.
 #
-# 3 s spans roughly three poll cycles. Lives here rather than in either sender
-# so tools/push_panel.py and run_spatial_test.py cannot drift apart, the same
-# reason the record format is shared.
-PANEL_HOLD_SECONDS = 3.0
+# 2.0 s, down from 3.0, and no lower.
+#
+# 3 s spanned about three poll cycles, which was generous. The cost showed up
+# between samples: two pushes at three seconds each plus the dwell left the
+# panel unresponsive for roughly eight seconds, and the workflow discards
+# presses made while it is busy - so a tap on NEXT SITE in that window was
+# registered by the MCU and dropped by the host. That reads as a broken panel.
+#
+# 1.5 was tried and abandoned. test_default_hold_is_long_enough_for_the_
+# firmware_poll_interval pins this at 2.0 or more, on the grounds that one MCU
+# pass is about a second and the hold has to span several - and that is a
+# reliability argument, not a style one. The extra 0.5 s buys half a poll cycle
+# of delivery margin for half a second of responsiveness, which is a trade
+# worth losing. Raising the floor to buy it back would have been relaxing a
+# guard to fit a number, which is how the panel ended up showing dashes the
+# first time.
+#
+# Lives here rather than in either sender so tools/push_panel.py and
+# run_spatial_test.py cannot drift apart, the same reason the record format is
+# shared.
+PANEL_HOLD_SECONDS = 2.0
 
 
 def _clean_record_value(value: Any) -> str:
