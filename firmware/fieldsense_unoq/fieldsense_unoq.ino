@@ -793,10 +793,11 @@ static void completeContact(uint32_t held) {
     // Released before the hold matured, so it was a tap. On the result screen
     // that turns the page; on the error screen there is no page to turn.
     if (!strcmp(workflowState, "RESULT")) {
-      nextPage();
+      nextPage();               // already local and instant; needs no flash
       dirty = true;
     } else {
       notePress();
+      renderTapFlash();
     }
     barShapeKnown = false;
     dirty = true;
@@ -849,6 +850,7 @@ static void serviceOperatorInput() {
         // lift to be heard. notePress() is idempotent inside one contact via
         // its lockout, and holdFired stops the release re-firing it.
         notePress();
+        renderTapFlash();       // acknowledge locally; the host will catch up
         holdFired = true;
       }
     }
@@ -1924,6 +1926,33 @@ static void renderBarChrome(bool asButton) {
   barShapeKnown = true;
 }
 
+// --- tap acknowledgement ---------------------------------------------------
+//
+// A tap fires on the MCU in about 50 ms, but the screen it changes belongs to
+// the host, and a host-driven repaint is up to one loop pass behind - measured
+// at roughly a second, because Serial.available() alone costs ~595 ms. So the
+// button acknowledges the touch itself.
+//
+// It says ONLY "I felt that". No word, no claim about what happens next, which
+// is what keeps it honest when the host is slow, busy, or stopped - all three
+// of which have happened on this unit. The shade is COL_GOOD, already this
+// button's own border colour, so a press is the brighter of the two greens the
+// theme uses here rather than a new visual language.
+static const uint32_t TAP_FLASH_MS = 200;
+static uint32_t tapFlashUntil = 0;
+
+static void renderTapFlash() {
+  if (!barIsButton) {
+    return;                    // nothing to press on this screen
+  }
+  // Same interior rect and label the normal path draws, one shade up.
+  tft.fillRoundRect(MARGIN + 3, BAR_Y + 3, PANEL_W - 2 * MARGIN - 6, BAR_H - 8,
+                    6, COL_GOOD);
+  drawCentered(MARGIN, BAR_Y, PANEL_W - 2 * MARGIN, BAR_H - 2,
+               buttonLabel, COL_BG, 3);
+  tapFlashUntil = millis() + TAP_FLASH_MS;
+}
+
 // Everything that can change. Called on new data, and once a second so the age
 // counter stays truthful.
 static void renderValues() {
@@ -2211,6 +2240,16 @@ void loop() {
   // Values only - the chrome is already on the glass and redrawing it is what
   // caused the black wipe. Once a second is enough for the age counter, and
   // this costs a few hundred bytes of SPI instead of 153,600.
+  // Let the pressed shade go once it has been seen. A host update usually
+  // repaints over it first; this is the path for when none arrives, so a tap
+  // that the host never answers still leaves the button looking normal rather
+  // than stuck lit.
+  if (tapFlashUntil != 0 && (int32_t)(millis() - tapFlashUntil) >= 0) {
+    tapFlashUntil = 0;
+    barShapeKnown = false;     // forces renderBarChrome and the label with it
+    dirty = true;
+  }
+
   static uint32_t lastPaint = 0;
   if (dirty || millis() - lastPaint > 1000) {
     dirty = false;
