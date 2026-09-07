@@ -195,22 +195,27 @@
 // every coordinate in this file is written against that.
 static const uint16_t PANEL_W = 320;
 static const uint16_t PANEL_H = 240;
-// Rotation 1, and it is 1 because somebody held the unit and looked at it.
+// Rotation 3, confirmed by holding the unit and looking at it.
 //
-// This was briefly 3 - "the same landscape surface turned through 180 degrees,
-// so the unit reads correctly in the orientation it is actually held". That was
-// reasoning, not observation: the board has run the rotation-1 sketch
-// continuously since 9235002, so a 3 was never on the glass to be checked, and
-// when the panel was finally read in the hand it was already upright. A flash
-// carrying 3 would have turned a correct display upside down.
+// THIS FILE IS NOT WHAT THE MCU RUNS. App Lab flashes its own copy at
+// ~/ArduinoApps/unified_v1/sketch/sketch.ino, and `arduino-app-cli app restart`
+// reflashes THAT - so editing this file changes nothing until it is copied
+// across. See deploy/applab/unified_v1/README.md.
+//
+// That is how this constant got broken. It was briefly set to 1, on the
+// reasoning that the board "has run the rotation-1 sketch continuously" and
+// the panel was upright. The premise was false: the flashed copy was 209ae8a,
+// which sets 3. The display that was read as upright WAS a rotation-3 display,
+// so setting 1 here would have flipped a correct panel - the exact harm the
+// change claimed to prevent.
 //
 // Both values are landscape and both report 320x240, so every coordinate in
 // this file maps unchanged either way - the driver rewrites MADCTL and the
-// whole image turns together. That is exactly why this was easy to get wrong
-// and costs nothing to put right: the layout has no opinion, only the mounting
-// does. Anything other than 1 or 3 here would be portrait and would invalidate
-// the entire layout.
-static const uint8_t  PANEL_ROTATION = 1;
+// whole image turns together. That is why no test and no amount of reading
+// could catch a wrong value: only the mounting knows, and the mounting is not
+// in the repository. Anything other than 1 or 3 would be portrait and would
+// invalidate the entire layout.
+static const uint8_t  PANEL_ROTATION = 3;
 
 // Adafruit_GFX's built-in font is 6x8 px per character at size 1 and scales by
 // integer multiples. Named here because every fit calculation below uses them.

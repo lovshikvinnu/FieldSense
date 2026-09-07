@@ -32,8 +32,10 @@ Do not start until all three are true.
       builds too (110,580 / 43,852); its one warning, `workflowArmed defined
       but not used`, predates this work. Rebuild anyway if the sketch has been
       touched since.
-- [ ] **`PANEL_ROTATION` is 1.** 3 is the same landscape surface upside down.
-      `tests/test_landscape_panel.py` pins it; run the suite.
+- [ ] **`PANEL_ROTATION` is 3.** 1 is the same landscape surface upside down.
+      `tests/test_landscape_panel.py` pins it; run the suite. It briefly said 1,
+      from reading this repo instead of the sketch that was actually flashed.
+- [ ] **You have read step 4.** The repo sketch is not what flashes.
 - [ ] **No session is in progress.** `journalctl -u fieldsense-field -n 5`
 
 ## 1. Backup
@@ -71,7 +73,27 @@ rewritten.
 ssh uno-q 'sudo systemctl stop fieldsense-field'
 ```
 
-## 4. Flash
+## 4. COPY THE SKETCH ACROSS. THIS IS THE STEP THAT GETS MISSED.
+
+`arduino-app-cli app restart` flashes **App Lab's own copy** of the sketch, at
+`~/ArduinoApps/unified_v1/sketch/sketch.ino`. That path is outside this
+repository and nothing syncs it. Editing, committing and pulling
+`firmware/fieldsense_unoq/fieldsense_unoq.ino` changes NOTHING on the MCU until
+it is copied.
+
+This was missed four times in a row. Each flash printed
+`Progress[sketch updated]`, the MCU rebooted, its counters reset - and it came
+back running the same August sketch. Every symptom of a successful flash was
+present except the new firmware. App Lab requires the `sketch.ino` basename:
+
+```bash
+ssh uno-q 'cd ~/FieldSense/FieldSense && cp firmware/fieldsense_unoq/fieldsense_unoq.ino ~/ArduinoApps/unified_v1/sketch/sketch.ino && cp deploy/applab/unified_v1/sketch.yaml ~/ArduinoApps/unified_v1/sketch/sketch.yaml && md5sum firmware/fieldsense_unoq/fieldsense_unoq.ino ~/ArduinoApps/unified_v1/sketch/sketch.ino'
+```
+
+The two md5s must match before you go on. See
+`deploy/applab/unified_v1/README.md`, which has said all this from the start.
+
+## 5. Flash
 
 Starting the App Lab app is what performs the flash.
 
@@ -95,10 +117,25 @@ nothing is NOT a broken toolchain; do not go installing one.
 
 Wait for it to settle, then retry step 4. Do not retry in a loop.
 
-## 5. Verify, in this order
+## 6. PROVE THE FLASH LANDED, BEFORE TRUSTING ANYTHING ELSE
+
+`Progress[sketch updated]` is not evidence. A reboot is not evidence. The only
+evidence is the new firmware saying something the old one could not:
+
+```bash
+ssh uno-q 'timeout 8 python3 -c "
+import socket
+s=socket.create_connection((\"172.22.0.2\",9876),4)
+print(s.recv(400).decode(\"utf-8\",\"ignore\").strip())"' | grep -o "HD:[0-9]*,PG:[0-9]*"
+```
+
+No `HD:`/`PG:` means the copy in step 4 did not happen, or did not take. Stop
+and fix that; do not debug the panel.
+
+## 7. Verify, in this order
 
 1. **Orientation.** Hold the unit naturally. The text must be upright. If it is
-   upside down, `PANEL_ROTATION` went out as 3 - stop, fix, reflash.
+   upside down, `PANEL_ROTATION` went out as 1 - stop, fix, reflash.
 2. **The old screens still work.** `sudo systemctl start fieldsense-field`,
    wait for `PLACE PROBE IN SOIL`.
 3. **A run reaches RESULT** and shows the score, the badge, and a zone tile
@@ -107,7 +144,7 @@ Wait for it to settle, then retry step 4. Do not retry in a loop.
    NITROGEN -> CARBON -> GPS MAP -> back.
 5. **Long hold still starts a new run** and does not also flip a page.
 
-## 6. If the panel comes back wrong
+## 8. If the panel comes back wrong
 
 The previous sketch is the one the board ran for weeks:
 
@@ -115,7 +152,7 @@ The previous sketch is the one the board ran for weeks:
 ssh uno-q 'cd ~/FieldSense/FieldSense && git show 9235002:firmware/fieldsense_unoq/fieldsense_unoq.ino > firmware/fieldsense_unoq/fieldsense_unoq.ino'
 ```
 
-Then repeat steps 2-4. That blob is `6673ff14f2628f64b7e83a0b3bd0a74d83800f09`;
+Then repeat steps 2-5, copy included. That blob is `6673ff14f2628f64b7e83a0b3bd0a74d83800f09`;
 check it with `git hash-object` before flashing so you know what you are putting
 back.
 
