@@ -456,7 +456,18 @@ static const uint8_t  CMD_Y         = 0x90;
 static const uint32_t TOUCH_SAMPLE_MS = 40;
 static const uint16_t TOUCH_Z_MIN   = 400;   // below this is noise or no contact
 static const uint16_t TOUCH_Z_MAX   = 4000;  // above this is a rail, not a finger
-static const uint32_t TOUCH_HOLD_MS = 180;   // deliberate press, not a phantom
+// A TAP is anything from here up to the hold threshold. 48 ms, not 180: with
+// HD reporting real durations, a session of ordinary taps measured 58, 63, 73,
+// 118, 178, 262, 427, 537 and 887 ms - so 180 was throwing away five taps in
+// nine, which is what made the panel feel dead. Phantom contacts in the same
+// session measured 25, 25 and 42 ms, and the ISR already drops anything under
+// TOUCH_BOUNCE_MS, so 48 clears the noise with room to spare.
+//
+// A low floor is safe because of an asymmetry: nothing below HOLD_FIRE_MS can
+// start a run. The worst a stray brush can do is turn a page, which is
+// cosmetic and self-correcting. Setting the floor high to guard against that
+// cost real taps instead.
+static const uint32_t TOUCH_HOLD_MS = 48;    // deliberate tap, not a phantom
 
 // A longer hold for the one action that throws something away.
 //
@@ -474,8 +485,18 @@ static const uint32_t TOUCH_HOLD_MS = 180;   // deliberate press, not a phantom
 // This is not an arbitrary delay. It is the only defence available once
 // position is unavailable, it is scoped to the single destructive action, and
 // it is proportionate to that action rather than applied to every press.
+// The hold fires AT this instant, while the finger is still down - it does not
+// wait for release. That is what a phone does, and it is why there is no longer
+// a dead band between "tap" and "hold": the boundary is a moment the operator
+// can watch arriving on the progress bar, not a window they have to guess.
+static const uint32_t HOLD_FIRE_MS = 1000;
+// Retained for the panel-position helper below, which predates all of this.
 static const uint32_t RESULT_HOLD_MS = 1200;
-static const uint32_t PRESS_LOCKOUT_MS = 1200;  // one press per press
+// One press per contact, not one press per 1200 ms. The hold now fires the
+// instant it qualifies, so back-to-back deliberate actions are legitimate and a
+// long lockout would eat the second one. Duplicate suppression is the
+// holdFired latch below, which is exact; this only catches electrical bounce.
+static const uint32_t PRESS_LOCKOUT_MS = 250;
 
 static bool     touchPresent   = false;
 // True once the controller has answered an SPI read with anything non-zero.
@@ -686,37 +707,102 @@ static bool contactInBar() {
   return y >= BAR_Y;
 }
 
-// One finished contact, classified by how long the finger was actually down.
+// --- the interaction model ------------------------------------------------
 //
-// The duration comes from the interrupt, so it is the contact, not the interval
-// between two polls that happened to notice it. That distinction is the whole
-// bug this replaced: polled durations were inflated by up to 600 ms, so every
-// press cleared RESULT_HOLD_MS and read as a new-run hold.
+// Two gestures, and it should feel like a phone.
 //
-// On the result screen a short press turns the page and a long one starts a new
-// run. Everywhere else the screen offers exactly one action, so any deliberate
-// contact is that action.
+//   TAP    48 ms .. HOLD_FIRE_MS, judged on release. On a screen whose only
+//          action is "go", it fires the moment it qualifies instead - there is
+//          nothing to disambiguate, so there is no reason to wait for a lift.
+//   HOLD   fires AT HOLD_FIRE_MS with the finger still down, and says so on the
+//          glass while it fills. Waiting for release to act is what made a hold
+//          feel like it had failed: the operator gets no acknowledgement until
+//          after they have already given up and let go.
 //
-// Acting on RELEASE rather than part-way through a hold is deliberate: you
-// cannot know a press was short until it ends, and one decision point cannot
-// fire twice.
-static void completeContact(uint32_t held) {
-  if (held < TOUCH_HOLD_MS) {
-    return;                      // a phantom, or a sleeve brushing the glass
-  }
-  // Position is only a filter when the controller answers over SPI. It does not
-  // on this unit, which is why hold length is the whole defence - stated here
-  // rather than papered over. contactWasInBar was sampled while the finger was
-  // still down; reading it now would read an empty panel.
-  if (spiAnswering && !contactWasInBar) {
+// The old scheme asked for a release inside a 180-1200 ms window, on a screen
+// that offered no indication of where that window was. Measured, it rejected
+// five taps in nine and read every remaining press as a hold.
+//
+// Accidental activation is still guarded, by three things rather than by making
+// the gesture hard: nothing under HOLD_FIRE_MS can start a run, measured
+// phantoms are 25-42 ms against a 48 ms floor, and the bar fills visibly for a
+// full second before anything happens.
+static bool holdHasAction() {
+  // Screens that offer a hold at all. Elsewhere a tap IS the action.
+  return !strcmp(workflowState, "RESULT") || !strcmp(workflowState, "ERROR");
+}
+
+// Position is only a filter when the controller answers over SPI, which it does
+// not on this unit - stated plainly rather than papered over. contactWasInBar
+// is sampled while the finger is still down, because reading SPI after release
+// reads an empty panel.
+static bool contactAllowed() {
+  return !spiAnswering || contactWasInBar;
+}
+
+// The filling bar under the button. Drawn straight from the input path rather
+// than from renderValues(), because it has to move while a finger is down and
+// renderValues only runs on new data or once a second.
+//
+// Incremental and throttled on purpose. The input path runs every ~2 ms inside
+// the drain window, and repainting a 308 px bar at 500 Hz would put more SPI on
+// the bus than the whole rest of the panel. Only the newly grown sliver is
+// drawn, and only once it is at least PROGRESS_STEP_PX wide - which caps this
+// at about 75 short writes across the full second.
+static const int16_t PROGRESS_STEP_PX = 4;
+static int16_t holdFillDrawn = -1;
+
+static void resetHoldProgress() {
+  holdFillDrawn = -1;
+}
+
+static void renderHoldProgress(uint32_t held) {
+  int16_t w = PANEL_W - 2 * MARGIN;
+  int32_t fill = (int32_t)w * (int32_t)held / (int32_t)HOLD_FIRE_MS;
+  if (fill < 0) fill = 0;
+  if (fill > w) fill = w;
+  int16_t target = (int16_t)fill;
+  if (holdFillDrawn >= 0 && target - holdFillDrawn < PROGRESS_STEP_PX && target < w) {
     return;
   }
-  if (!strcmp(workflowState, "RESULT") && held < RESULT_HOLD_MS) {
-    nextPage();
+  int16_t from = holdFillDrawn > 0 ? holdFillDrawn : 0;
+  if (target > from) {
+    tft.fillRect(MARGIN + from, BAR_Y + BAR_H - 9, target - from, 6, COL_ACCENT);
+  }
+  holdFillDrawn = target;
+}
+
+// Acted on this contact already: the hold fired, so the release must not also
+// be read as a tap.
+static bool holdFired = false;
+
+static void completeContact(uint32_t held) {
+  resetHoldProgress();
+  if (holdFired) {
+    holdFired = false;           // the hold already acted; the lift is nothing
+    barShapeKnown = false;       // let the bar repaint over the progress fill
     dirty = true;
     return;
   }
-  notePress();
+  if (held < TOUCH_HOLD_MS || !contactAllowed()) {
+    barShapeKnown = false;       // a rejected contact may still have drawn a sliver
+    dirty = true;
+    return;                      // a phantom, or a sleeve brushing the glass
+  }
+  if (holdHasAction()) {
+    // Released before the hold matured, so it was a tap. On the result screen
+    // that turns the page; on the error screen there is no page to turn.
+    if (!strcmp(workflowState, "RESULT")) {
+      nextPage();
+      dirty = true;
+    } else {
+      notePress();
+    }
+    barShapeKnown = false;
+    dirty = true;
+    return;
+  }
+  notePress();                   // screens where a tap is the only action
 }
 
 // Register a START press from whichever input produced it.
@@ -742,6 +828,32 @@ static void serviceOperatorInput() {
   // Read the sequence, read the duration, then re-read the sequence: if the
   // interrupt landed between the two reads the pair may be torn, so leave it
   // for the next pass rather than masking interrupts around a panel poll.
+  // LIVE: the finger is still down. This is where a hold acts, and where the
+  // operator finds out it is going to.
+  if (isrDown) {
+    uint32_t downFor = millis() - isrDownMs;
+    if (!touchPresent) {
+      touchPresent = true;
+      dirty = true;
+    }
+    if (!holdFired && downFor >= TOUCH_HOLD_MS && contactAllowed()) {
+      if (holdHasAction()) {
+        renderHoldProgress(downFor);
+        if (downFor >= HOLD_FIRE_MS) {
+          notePress();            // act NOW, with the finger still on the glass
+          holdFired = true;
+          renderHoldProgress(HOLD_FIRE_MS);   // fill it, as the acknowledgement
+        }
+      } else if (downFor >= TOUCH_HOLD_MS) {
+        // Nothing to disambiguate on this screen, so do not make the operator
+        // lift to be heard. notePress() is idempotent inside one contact via
+        // its lockout, and holdFired stops the release re-firing it.
+        notePress();
+        holdFired = true;
+      }
+    }
+  }
+
   static uint32_t seenSeq = 0;
   uint32_t seq = isrSeq;
   uint32_t held = isrHeldMs;
@@ -2058,7 +2170,16 @@ void loop() {
 
   // available() costs ~595 ms on this transport, so one call per pass and take
   // everything it offers. Never poll it in a tight inner loop.
-  int avail = Serial.available();
+  //
+  // AND SKIP IT ENTIRELY WHILE A FINGER IS DOWN. Nothing in loop() runs during
+  // those 595 ms, which is why touch used to be unobserved for three fifths of
+  // every second - and it is equally why a progress bar drawn from the input
+  // path would freeze mid-fill. A panel record can wait a second or two; a
+  // gesture in progress cannot. The 3000 ms bound is a safety net: if a rising
+  // edge were ever missed, isrDown would latch and this would starve the panel
+  // link forever.
+  bool gestureInProgress = isrDown && (millis() - isrDownMs) < 3000;
+  int avail = gestureInProgress ? 0 : Serial.available();
   while (avail > 0) {
     int c = Serial.read();
     if (c < 0) break;
