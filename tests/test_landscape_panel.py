@@ -364,16 +364,18 @@ def test_the_panel_draws_a_tile_per_sample_and_per_zone(path):
 
 
 def test_the_panel_rotation_matches_the_orientation_the_unit_was_read_in():
-    """Rotation 1, established by holding the unit - not by reasoning about it.
+    """Rotation 3, established by holding the unit while it ran a rotation-3 sketch.
 
-    This was briefly changed to 3, on the argument that 3 is "the orientation it
-    is actually held". Nobody had held it: the board ran the rotation-1 sketch
-    continuously, so the 3 never reached the glass, and when the panel was
-    finally looked at in the hand it was already upright. Flashing 3 would have
-    turned a correct display upside down.
+    An earlier version of this test asserted 1, on the argument that the board
+    "ran the rotation-1 sketch continuously" and was upright. It did not: App
+    Lab flashes its own copy of the sketch, and that copy was 209ae8a, which
+    sets 3. The upright panel somebody looked at was a rotation-3 panel, so
+    asserting 1 pinned the display upside down.
 
     Both values are landscape and the layout is identical either way, which is
-    precisely why this is worth pinning - nothing else in the sketch, and no
-    other test, would notice the difference.
+    why this is worth pinning at all - nothing else in either sketch, and no
+    other test, can tell the difference. It is also why a wrong value here
+    survives every check except a human looking at the glass, so change it only
+    on that evidence and say whose eyes.
     """
-    assert _const(_read(DEPLOYED), "PANEL_ROTATION") == 1,         "the unit reads upright at rotation 1; 3 is the same surface upside down"
+    assert _const(_read(DEPLOYED), "PANEL_ROTATION") == 3,         "the unit reads upright at rotation 3; 1 is the same surface upside down"
