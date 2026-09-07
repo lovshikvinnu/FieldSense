@@ -1238,6 +1238,13 @@ static void serviceGPS() {
 //       unit's actual state: the panel detects touch but the SPI wires do not
 //       carry, so presses work and coordinates do not.
 //   IQ  live PENIRQ level.   IL  1 once PENIRQ has ever read low.
+//   HD  milliseconds the LAST COMPLETED contact actually lasted, as timed by
+//       touchIsr() from the two PENIRQ edges. Diagnostic, and the only way to
+//       tell a press that was rejected as too short from one that was never
+//       seen: both leave UI unchanged and look identical from the host.
+//   PG  page index currently on the glass. 0 is the result card; 1-5 are the
+//       map pages. A page turn is entirely MCU-local, so without this there is
+//       no evidence on the wire that a short press did anything at all.
 //       These two cost no SPI, so they work with touch compiled out. IL going
 //       to 1 on a finger proves the controller is powered and its IRQ is wired;
 //       IL stuck at 0 proves it is not, and no SPI change would help.
@@ -1284,15 +1291,21 @@ String get_gps_data() {
   // 288: the five counters are 76 characters at UINT32_MAX, hi= adds 13, and
   // raw= adds the 48-byte window. raw goes LAST because it is the only
   // free-form field - anything after it would be harder to find.
+  //
+  // HD and PG add at most 22 more (",HD:" + 10 digits + ",PG:" + 3), which 288
+  // still covers. They sit BEFORE the rx= block on purpose: a diagnostic that
+  // a short recv() truncates is a diagnostic nobody can read.
   char suffix[288];
   snprintf(suffix, sizeof(suffix),
            ",UI:%lu,TP:%d,SA:%d,TZ:%u,Z1:%u,Z2:%u,TY:%d,IQ:%u,IL:%d,RC:%lu"
+           ",HD:%lu,PG:%u"
            ",rx=%lu,lines=%lu,csum=%lu,gga=%lu,ovf=%lu,hi=%lu,age=%ld,raw=%s",
            (unsigned long)pressCount, touchPresent ? 1 : 0, spiAnswering ? 1 : 0,
            (unsigned)lastTouchZ,
            (unsigned)lastTouchZ1, (unsigned)lastTouchZ2, (int)lastTouchY,
            (unsigned)irqLevel, irqEverLow ? 1 : 0,
            (unsigned long)recordCount,
+           (unsigned long)isrHeldMs, (unsigned)pageIndex,
            (unsigned long)gpsBytes, (unsigned long)gpsLines,
            (unsigned long)gpsChecksumOk, (unsigned long)gpsGgaSeen,
            (unsigned long)gpsOverflows, (unsigned long)gpsHighBit,
