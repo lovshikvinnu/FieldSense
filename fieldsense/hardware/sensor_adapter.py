@@ -20,6 +20,12 @@ MEASUREMENT_FIELDS = (
 )
 
 
+#: Below this, the position is reported as weak. Mirrors the 0.70 the
+#: ValidationEngine already treats as the good/warning boundary, so the two
+#: numbers are read on the same scale. This flags; it never invalidates.
+POSITION_CONFIDENCE_WARN = 0.70
+
+
 class HardwareSensorAdapter(SensorAdapter):
     """Hardware Sensor Adapter implementing frozen SensorAdapter interface.
 
@@ -106,12 +112,17 @@ class HardwareSensorAdapter(SensorAdapter):
         #    acquisition. Asserting 1.0 unconditionally would hide a no-fix
         #    receiver and a half-answered probe from the ValidationEngine,
         #    which is the only component allowed to judge a sample.
-        quality = self._derive_quality(gps_pos, raw_reading.metadata)
+        quality, position_confidence = self._derive_quality(
+            gps_pos, raw_reading.metadata)
         self.last_acquisition_meta = {
             "gps_fix_valid": bool(gps_pos.fix_valid),
             "gps_quality": dict(gps_pos.quality or {}),
             "sensor_meta": dict(raw_reading.metadata),
             "measurement_quality": quality,
+            # Positional confidence is REPORTED, not folded into the score the
+            # soil verdict is taken from. See _derive_quality.
+            "position_confidence": position_confidence,
+            "position_weak": position_confidence < POSITION_CONFIDENCE_WARN,
         }
 
         # 4. Construct canonical FieldSample
@@ -136,21 +147,38 @@ class HardwareSensorAdapter(SensorAdapter):
             measurement_quality=quality,
         )
 
-    def _derive_quality(self, gps_pos, sensor_meta: Dict[str, Any]) -> float:
-        """Score acquisition health in [0.0, 1.0].
+    def _derive_quality(self, gps_pos, sensor_meta: Dict[str, Any]):
+        """Score the SOIL measurement, and the position, as two numbers.
 
-        Delegates the GPS and sensor-completeness weighting to the single
-        policy in `hardware_sample_adapter`, so there is one definition of
-        measurement quality in the codebase rather than two.
+        WHY THESE ARE NOT ONE NUMBER ANY MORE
+        -------------------------------------
+        They used to be multiplied together, and a field session lost all five
+        samples to it. session_20260907T073053Z read 7 of 7 registers on every
+        sample with no read errors and returned live, varying soil - EC
+        0.070-0.129, pH 6.24-6.43, N 5-9, P 7-12, K 14-25 - and every sample
+        came back SUSPICIOUS and map-ineligible.
+
+        The arithmetic made it unavoidable. The combined score was
+        gps_factor x hdop_factor x satellite_factor x completeness, and with
+        fewer than five satellites satellite_factor is 0.75, so the ceiling was
+        0.92 x 1.00 x 0.75 x 1.00 = 0.69 against a 0.70 threshold. No sample
+        taken on four satellites could be VALID however good the probe reading
+        was. The operator walked a field for nothing.
+
+        A weak fix is a real problem, but it is a problem with the LOCATION. It
+        says nothing about whether the probe read the soil, and folding it into
+        the same number made the soil verdict answer a question about the sky.
+        So the soil score is now completeness alone, and the positional term is
+        returned beside it to be recorded and flagged.
 
         Args:
             gps_pos: The acquired GPSPosition.
             sensor_meta: The transport's `_meta` block, when it supplies one.
 
         Returns:
-            Quality score rounded to three decimals. A transport that reports
-            no metadata is treated as a complete read, preserving the
-            behaviour of the mock transports.
+            (measurement_quality, position_confidence), both rounded to three
+            decimals. A transport that reports no metadata is treated as a
+            complete read, preserving the behaviour of the mock transports.
         """
         from fieldsense.hardware.gps_adapter import GPSData
         from fieldsense.hardware.hardware_sample_adapter import derive_measurement_quality
@@ -173,7 +201,19 @@ class HardwareSensorAdapter(SensorAdapter):
             name: 0.0 for name in list(JXBS_REGISTERS)[:max(0, min(read, expected))]
         })
 
-        return derive_measurement_quality(gps_view, soil_view)
+        # The soil score, from completeness alone. Reuses the one policy rather
+        # than restating the ratio, by handing it a position it cannot mark
+        # down: the GPS terms all evaluate to 1.0 for a DGPS fix at HDOP 0.
+        perfect_position = GPSData(latitude=0.0, longitude=0.0, fix_quality=2,
+                                   satellites=99, hdop=0.0)
+        measurement_quality = derive_measurement_quality(perfect_position, soil_view)
+
+        # The positional score, from the GPS terms alone - same trick the other
+        # way round: a complete soil read contributes a factor of 1.0.
+        full_soil = SoilData(**{name: 0.0 for name in JXBS_REGISTERS})
+        position_confidence = derive_measurement_quality(gps_view, full_soil)
+
+        return measurement_quality, position_confidence
 
     def get_sample(self) -> FieldSample:
         """Alias for acquire_sample()."""

@@ -786,3 +786,65 @@ def test_the_new_run_button_tells_the_operator_it_needs_a_hold(tmp_path):
     for state in (FieldState.READY, FieldState.READY_NEXT_SAMPLE):
         assert "HOLD" not in button_label(state)
     assert "HOLD" not in button_label(FieldState.READY, retrying=True)
+
+
+# ------------------------------- session_20260907T073053Z, the real thing
+
+
+def test_weak_gps_no_longer_costs_a_good_soil_reading():
+    """The five samples a field session lost, replayed from its own record.
+
+    session_20260907T073053Z read 7 of 7 registers on every sample with no read
+    errors, and returned live varying soil. Every sample came back SUSPICIOUS
+    and the panel said 0 of 5 usable, because measurement_quality was
+    gps_factor x hdop_factor x satellite_factor x completeness and three or
+    four satellites capped it at 0.69 against a 0.70 threshold. The verdict was
+    decided by the sky before the probe went in.
+
+    These are the recorded values from samples 2-5 of that session.
+    """
+    from fieldsense.field.plausibility import assess_reading
+    from fieldsense.field.states import SampleQuality
+
+    field_samples = [
+        {"moisture": 0.0, "ec": 0.129, "ph": 6.43, "temperature": 29.8,
+         "nitrogen": 9.0, "phosphorus": 12.0, "potassium": 25.0},
+        {"moisture": 0.0, "ec": 0.102, "ph": 6.38, "temperature": 29.8,
+         "nitrogen": 7.0, "phosphorus": 10.0, "potassium": 20.0},
+        {"moisture": 1.0, "ec": 0.070, "ph": 6.28, "temperature": 30.6,
+         "nitrogen": 5.0, "phosphorus": 7.0, "potassium": 14.0},
+        {"moisture": 1.3, "ec": 0.075, "ph": 6.24, "temperature": 30.6,
+         "nitrogen": 5.0, "phosphorus": 7.0, "potassium": 15.0},
+    ]
+    previous = None
+    for reading in field_samples:
+        verdict = assess_reading(
+            reading=reading, previous_reading=previous, gps_fix_valid=True,
+            validation_state="VALID",
+            # A complete 7-of-7 read. The receiver's weakness lives in
+            # position_confidence now and must not reach this verdict.
+            measurement_quality=1.0)
+        assert verdict.quality is SampleQuality.VALID,             "{} -> {} ({})".format(reading, verdict.quality.value, verdict.reasons)
+        assert verdict.map_eligible
+        previous = reading
+
+
+def test_the_sample_that_was_genuinely_bad_is_still_rejected():
+    """Sample 1 of that session must NOT be rescued by the same change.
+
+    Moisture 0.0, EC 0.006, N+P+K = 1.0. Every contact channel at its floor is
+    what this probe reports when it is not seated, and it is exactly the
+    reading the plausibility layer exists to catch. Fixing the GPS coupling
+    must not soften it.
+    """
+    from fieldsense.field.plausibility import assess_reading
+    from fieldsense.field.states import SampleQuality
+
+    verdict = assess_reading(
+        reading={"moisture": 0.0, "ec": 0.006, "ph": 6.34, "temperature": 29.4,
+                 "nitrogen": 0.0, "phosphorus": 0.0, "potassium": 1.0},
+        gps_fix_valid=True, validation_state="VALID", measurement_quality=1.0,
+        retry_count=2)
+    assert verdict.quality is SampleQuality.SUSPICIOUS
+    assert "CONTACT_CHANNELS_AT_FLOOR" in verdict.reasons
+    assert not verdict.map_eligible

@@ -381,10 +381,18 @@ def test_stdlib_modbus_transport_degrades_on_a_single_failed_register():
 
 
 def test_cold_start_without_a_gps_fix_still_produces_a_sample():
-    """A receiver with no fix yet must degrade quality, not abort the campaign.
+    """A receiver with no fix yet must degrade POSITION, not abort the campaign.
 
     A cold NEO-M8N needs minutes for its first fix. Raising GPS_NO_FIX for
     every sample meant an unattended boot recorded nothing at all.
+
+    This used to assert measurement_quality fell below 0.70 on a no-fix
+    receiver. It no longer does, and that is the fix rather than a regression:
+    a missing fix says nothing about whether the probe read the soil, and
+    scoring them as one number cost session_20260907T073053Z all five of its
+    samples. The degradation is still asserted - on position_confidence, which
+    is the number that now means it. A sample with no fix is still refused, by
+    the plausibility layer's require_gps_fix, which is where that belongs.
     """
     adapter = HardwareSensorAdapter(
         transport=MockHardwareTransport(mode="NORMAL"),
@@ -394,11 +402,14 @@ def test_cold_start_without_a_gps_fix_still_produces_a_sample():
     adapter.initialize()
     sample = adapter.acquire_sample()
 
-    assert sample.measurement_quality < 0.70   # visibly degraded
-    assert sample.measurement_quality >= 0.30  # still usable
+    meta = adapter.last_acquisition_meta
+    assert meta["position_confidence"] < 0.70   # visibly degraded position
+    assert meta["position_weak"] is True        # and flagged as such
+    assert meta["gps_fix_valid"] is False       # the cause is still recorded
+    # The soil read was complete, so the soil score is not marked down for it.
+    assert sample.measurement_quality >= 0.70
     result = ValidationEngine().validate(sample)
     assert result.pipeline_eligible is True
-    assert result.state.value == "VALID_WITH_WARNING"
 
 
 def test_strict_mode_still_raises_gps_no_fix():
@@ -415,10 +426,16 @@ def test_strict_mode_still_raises_gps_no_fix():
 
 
 def test_measurement_quality_reflects_acquisition_health():
-    """Quality must be derived, never asserted as 1.0.
+    """Acquisition health must be derived, never asserted as 1.0.
 
     A hardcoded 1.0 hid a no-fix receiver and a half-answered probe from the
     ValidationEngine, which is the only component allowed to judge a sample.
+
+    Health is now two numbers rather than one, so this asserts on the one that
+    carries the receiver's contribution. The probe's contribution is held by
+    test_partial_soil_read_lowers_quality_below_a_full_read, which still
+    asserts on measurement_quality and still passes - between them nothing has
+    stopped being derived.
     """
     good = HardwareSensorAdapter(
         transport=MockHardwareTransport(mode="NORMAL"),
@@ -435,9 +452,13 @@ def test_measurement_quality_reflects_acquisition_health():
     degraded.initialize()
     degraded_sample = degraded.acquire_sample()
 
-    assert degraded_sample.measurement_quality < good_sample.measurement_quality
+    assert (degraded.last_acquisition_meta["position_confidence"]
+            < good.last_acquisition_meta["position_confidence"])
+    assert degraded.last_acquisition_meta["position_weak"] is True
     assert good.last_acquisition_meta["gps_fix_valid"] is True
     assert degraded.last_acquisition_meta["gps_fix_valid"] is False
+    # Both read the probe completely, so the SOIL score must not differ.
+    assert degraded_sample.measurement_quality == good_sample.measurement_quality
 
 
 def test_partial_soil_read_lowers_quality_below_a_full_read():
